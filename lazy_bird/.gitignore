@@ -1,0 +1,45 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Local application data
+/src/lazy_bird/storages/uploads/
+/src/lazy_bird/database/storage/*.db
+/src/lazy_bird/database/storage/*.db-shm
+/src/lazy_bird/database/storage/*.db-wal
+/src/lazy_bird/database/storage/lance/
+/src/lazy_bird/database/config.json
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+refactor.md
+sandbox/*.db
+sandbox/*.db-shm
+sandbox/*.db-wal
+sandbox/models/
+sandbox/documents/
+sandbox/data/
+sandbox/lancedb/
+tests/tools/test_models/

@@ -1,0 +1,16 @@
+{
+  "sql_databases": {
+    "sqlite": {
+      "enabled": true,
+      "settings": {}
+    }
+  },
+  "vector_databases": {
+    "lancedb": {
+      "enabled": true,
+      "settings": {}
+    }
+  },
+  "selected_sql_database": "sqlite",
+  "selected_vector_database": "lancedb"
+}

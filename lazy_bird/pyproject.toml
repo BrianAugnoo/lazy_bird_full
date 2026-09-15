@@ -1,0 +1,58 @@
+[project]
+name = "lazy-bird"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Augnoo Brian", email = "augnoobrian@gmail.com" }
+]
+
+requires-python = ">=3.12, <3.14"
+
+dependencies = [
+    "alembic>=1.19.1",
+    "chonkie[hub]>=1.7.0",
+    "dataset>=2.0.0",
+    "datasets>=5.0.1",
+    "fastapi[standard]>=0.141.1",
+    "huey>=2.5.0",
+    "huggingface-hub>=1.27.0",
+    "jinja2>=3.1.6",
+    "lancedb>=0.37.1",
+    "markdown-it-py>=4.2.0",
+    "openai>=3.8.0",
+    "pandas>=3.0.5",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "pytest>=9.1.1",
+    "python-frontmatter>=1.3.0",
+    "python-multipart>=0.0.32",
+    "sentence-transformers>=5.0.0",
+    "sqlmodel>=0.0.39",
+    "tiktoken>=0.13.0",
+    "torch>=2.7.0",
+    "tqdm>=4.70.0",
+    "uvicorn>=0.52.1",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.scripts]
+lazy-bird = "lazy_bird:main"
+
+[build-system]
+requires = ["uv_build>=0.6.0,<0.13.0"
+]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
