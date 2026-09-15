@@ -6,13 +6,10 @@ def test_root_endpoint_returns_welcome_message(client):
     assert response.json()["message"] == "Welcome to Lazy Bird!"
 
 
-def test_codebase_view_displays_git_sync_metadata(client):
-    response = client.get("/codebase")
-
-    assert response.status_code == 200
-    assert "Codebase Atlas" in response.text
-    assert "HEAD actuel" in response.text
-    assert "Architecture en couches" in response.text
+def test_development_template_routes_are_not_exposed(client):
+    assert client.get("/codebase").status_code == 404
+    assert client.get("/upload_file").status_code == 404
+    assert client.get("/shemas").status_code == 404
 
 
 def test_openapi_contains_all_application_surfaces(client):
@@ -20,7 +17,7 @@ def test_openapi_contains_all_application_surfaces(client):
 
     assert "/models/" in paths
     assert "/files/upload" in paths
-    assert "/upload_file" in paths
+    assert "/upload_file" not in paths
     assert "/api-keys/api-keys" in paths
 from contextlib import contextmanager
 from fastapi.testclient import TestClient

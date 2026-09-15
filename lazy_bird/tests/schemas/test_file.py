@@ -7,10 +7,11 @@ from lazy_bird.schemas.files import FileOut
 
 def test_file_output_reads_model_attributes():
     schema = FileOut.model_validate(
-        File(name="report", path="uploads/report.pdf", extension=".pdf", size=42)
+        File(id=1, name="report", path="uploads/report.pdf", extension=".pdf", size=42)
     )
 
     assert schema.model_dump() == {
+        "id": 1,
         "name": "report",
         "size": 42,
         "extension": ".pdf",

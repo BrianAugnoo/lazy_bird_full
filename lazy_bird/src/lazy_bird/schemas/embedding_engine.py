@@ -7,6 +7,7 @@ class EmbeddingEngineOut(BaseModel):
     file_path: str
     formats: list[str]
     kwargs: dict
+    kwargs_keys: dict[str, list]
     model_config = ConfigDict(from_attributes=True)
 
 

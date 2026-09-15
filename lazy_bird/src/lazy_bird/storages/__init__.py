@@ -4,16 +4,30 @@ from fastapi import UploadFile
 
 storage_dir = Path(__file__).resolve().parent
 
-def store_file(dir: str, file: UploadFile) -> dict:
-    relative_dir = Path(dir)
+
+def _safe_path(path: Path) -> Path:
+    root = storage_dir.resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise ValueError("Invalid storage path") from error
+    return resolved
+
+
+def _safe_directory(directory: str) -> Path:
+    relative_dir = Path(directory)
     if relative_dir.is_absolute() or ".." in relative_dir.parts:
         raise ValueError("Invalid destination directory")
+    return _safe_path(storage_dir / relative_dir)
+
+def store_file(dir: str, file: UploadFile) -> dict:
+    target_dir = _safe_directory(dir)
 
     filename = Path(file.filename or "").name
     if not filename:
         raise ValueError("Invalid file name")
 
-    target_dir = storage_dir / relative_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / filename
     full_name = filename
@@ -33,3 +47,31 @@ def store_file(dir: str, file: UploadFile) -> dict:
         "extension": extension,
         "size": size
     }
+
+
+def read_file(path: str) -> bytes:
+    return _safe_path(Path(path)).read_bytes()
+
+
+def write_file(path: str, content: str) -> int:
+    target_path = _safe_path(Path(path))
+    target_path.write_text(content, encoding="utf-8")
+    return target_path.stat().st_size
+
+
+def rename_or_move_file(path: str, name: str | None = None, dir: str | None = None) -> str:
+    current_path = _safe_path(Path(path))
+    if name is not None:
+        if not name or Path(name).name != name or name in {".", ".."}:
+            raise ValueError("Invalid file name")
+        filename = f"{name}{current_path.suffix}"
+    else:
+        filename = current_path.name
+
+    target_dir = _safe_directory(dir) if dir is not None else current_path.parent
+    target_path = _safe_path(target_dir / filename)
+    if target_path != current_path and target_path.exists():
+        raise ValueError("A file with that name already exists")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    current_path.rename(target_path)
+    return str(target_path)

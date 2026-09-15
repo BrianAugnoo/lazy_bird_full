@@ -11,7 +11,6 @@ class EngineSettings(BaseModel):
     device: str | None = None
     model_path: str | None = None
     temperature: float | None = None
-    top_k: int | None = None
     model_config = ConfigDict(extra="forbid")
 
 

@@ -72,6 +72,7 @@ def test_find_returns_persisted_file(crud_database, db_session_factory):
     found = file_crud.find(record_id)
 
     assert found.model_dump() == {
+        "id": record_id,
         "name": "report",
         "size": 42,
         "extension": ".pdf",

@@ -45,13 +45,21 @@ def test_migrations_build_current_schema(migrated_database):
         "llm_model_id",
         "batch",
     }
+    assert {column["name"] for column in inspector.get_columns("embeddingengine")} == {
+        "id",
+        "name",
+        "file_path",
+        "formats",
+        "kwargs",
+        "kwargs_keys",
+    }
 
 
 def test_migrations_stamp_database_at_head(migrated_database):
     with migrated_database.engine.connect() as connection:
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
 
-    assert revision == "a4e7c9d1f2b3"
+    assert revision == "b5e8f1a2c3d4"
 
 
 def test_migrations_can_downgrade_and_upgrade_again(migrated_database):

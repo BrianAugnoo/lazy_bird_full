@@ -5,7 +5,7 @@ Documentation for the frontend of Lazy Bird.
 ## General information
 
 - Base URL in local development: `http://localhost:8000`
-- The API returns JSON unless the endpoint is explicitly marked as HTML or WebSocket.
+- The API returns JSON unless the endpoint is explicitly marked as WebSocket.
 - No authentication header is currently required by these routes.
 - During a startup failure, every route except `GET /` returns `503` with:
 
@@ -46,23 +46,6 @@ Successful response:
 
 When startup failed, the response is still `200`, with `success: false` and an `error` field.
 
-### `GET /codebase`
-
-Returns the HTML page showing Git/codebase documentation status. This route is not part of the JSON API.
-
-### `GET /codebase/changes`
-
-Returns the changes since the last documented commit:
-
-```json
-{
-  "commits": [],
-  "diff": "",
-  "paths": []
-}
-```
-
-Can return `503` with `{ "error": "..." }` if Git inspection fails.
 
 ## API keys
 
@@ -183,7 +166,19 @@ Request JSON:
 
 ### `GET /embedding-engines/`
 
-Lists available configured embedding engines. Each item contains `id`, `name`, `file_path`, `formats`, and `kwargs`.
+Lists available configured embedding engines. Each item contains `id`, `name`, `file_path`, `formats`, `kwargs`, and `kwargs_keys`.
+
+`kwargs_keys` describes the Python type and configuration of each supported keyword. A default value means the keyword is optional; `"required"` means it must be provided.
+
+Example:
+
+```json
+{
+  "device": ["str", null],
+  "model_path": ["str", null],
+  "temperature": ["float", null]
+}
+```
 
 ### `PUT /embedding-engines/{engine_id}`
 
@@ -209,7 +204,11 @@ Returns the active engine:
     "name": "...",
     "file_path": "...",
     "formats": ["..."],
-    "kwargs": {}
+    "kwargs": {},
+    "kwargs_keys": {
+      "device": ["str", null],
+      "model_path": ["str", null]
+    }
   }
 }
 ```
@@ -253,6 +252,7 @@ Response `200` is an array of file objects:
 ```json
 [
   {
+    "id": 1,
     "name": "notes",
     "size": 2048,
     "extension": ".md",
@@ -271,6 +271,38 @@ Lists all stored files. Response is an array with the same file object shape as 
 ### `GET /files/{file_id}`
 
 Gets one file. An unknown ID currently returns `200` with JSON `null`.
+
+### `GET /files/{file_id}/content`
+
+Returns the UTF-8 text content of a file as `text/plain`. Returns `404` when the file ID does not exist.
+
+### `PUT /files/{file_id}/content`
+
+Replaces the UTF-8 text content of a file. Editing resets its processing status to `pending` because existing embeddings may no longer match.
+
+Request JSON:
+
+```json
+{ "content": "Updated document text" }
+```
+
+Response `200` is the updated file object. Returns `404` when the file ID does not exist.
+
+### `GET /files/{file_id}/download`
+
+Downloads the stored file as a binary response. The `Content-Disposition` filename contains the original file name and extension. Returns `404` when the file ID does not exist.
+
+### `PATCH /files/{file_id}`
+
+Renames and/or moves a file. `name` is the base name without the extension; `dir` is a relative directory under the backend storage root. At least one field is required.
+
+Request JSON:
+
+```json
+{ "name": "renamed-notes", "dir": "archive" }
+```
+
+Response `200` is the updated file object. Invalid paths or duplicate destinations return `400`; an unknown ID returns `404`.
 
 ### `POST /files/{file_id}/process`
 
@@ -390,11 +422,7 @@ Request JSON:
 
 Errors return `422`.
 
-## Real-time and HTML routes
-
-### `GET /upload_file` and `POST /upload_file`
-
-HTML upload page for browser use. The POST expects form fields `directory` and repeated `files`, then renders HTML rather than returning JSON. The JSON frontend should use `POST /files/upload` instead.
+## Real-time routes
 
 ### `WebSocket /ws/upload-progress`
 
@@ -414,10 +442,6 @@ Opens a WebSocket and receives a status snapshot approximately every 500 ms:
 ```
 
 Possible display statuses are `queued`, `processing`, `finished`, and `failed`. The connection stays open until the client disconnects.
-
-### `GET /shemas`
-
-Renders the database schema as an HTML page. The spelling `shemas` is part of the current API.
 
 ## Recommended frontend flows
 

@@ -1,6 +1,3 @@
-import pytest
-
-
 def test_file_endpoint_uploads_multiple_files_and_lists_them(client):
     response = client.post(
         "/files/upload?dir=documents",
@@ -26,7 +23,7 @@ def test_file_endpoint_gets_a_file_by_id(client):
         "/files/upload?dir=documents",
         files={"files": ("report.txt", b"report", "text/plain")},
     )
-    file_id = created.json()[0]["id"] if "id" in created.json()[0] else 1
+    file_id = created.json()[0]["id"]
 
     response = client.get(f"/files/{file_id}")
 
@@ -48,7 +45,33 @@ def test_file_endpoint_requires_directory_and_files(client):
     assert missing_directory.status_code == 422
     assert missing_files.status_code == 422
 
-@pytest.mark.xfail(reason="The API does not translate storage validation errors to HTTP 400", strict=True)
+
+def test_file_endpoint_reads_edits_renames_moves_and_downloads_file(client):
+    created = client.post(
+        "/files/upload?dir=documents",
+        files={"files": ("report.txt", b"report", "text/plain")},
+    )
+    file_id = created.json()[0]["id"]
+
+    content = client.get(f"/files/{file_id}/content")
+    assert content.status_code == 200
+    assert content.text == "report"
+
+    edited = client.put(f"/files/{file_id}/content", json={"content": "updated"})
+    assert edited.status_code == 200
+    assert edited.json()["size"] == 7
+    assert client.get(f"/files/{file_id}/content").text == "updated"
+
+    moved = client.patch(f"/files/{file_id}", json={"name": "renamed", "dir": "archive"})
+    assert moved.status_code == 200
+    assert moved.json()["name"] == "renamed"
+    assert moved.json()["path"].endswith("archive\\renamed.txt") or moved.json()["path"].endswith("archive/renamed.txt")
+
+    download = client.get(f"/files/{file_id}/download")
+    assert download.status_code == 200
+    assert download.content == b"updated"
+    assert "renamed.txt" in download.headers["content-disposition"]
+
 def test_file_endpoint_rejects_parent_directory(client):
     response = client.post(
         "/files/upload?dir=../outside",
