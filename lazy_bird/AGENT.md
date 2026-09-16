@@ -231,7 +231,7 @@ Format modules own parsing and token-boundary logic only. The Markdown implement
 ### Queue preferences
 
 `preference.yaml` contains runtime preferences for document processing. Its
-current option is `auto-embedding.enabled`, which defaults to `true`. When it
+current option is `auto-embedding.enable`, which defaults to `true`. When it
 is enabled, every uploaded file is committed first and then enqueued for
 embedding. The Huey consumer drains the SQLite queue until no pending task
 remains. When it is disabled, uploads are persisted but are not enqueued

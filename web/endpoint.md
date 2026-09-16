@@ -162,6 +162,41 @@ Request JSON:
 
 `batch` defaults to `1`.
 
+## Preferences
+
+### `GET /preferences/`
+
+Returns the preferences currently stored in `src/lazy_bird/preference.yaml`.
+The response contains the complete YAML mapping:
+
+```json
+{
+  "auto-embedding": {
+    "enable": true
+  }
+}
+```
+
+### `PUT /preferences/`
+
+Replaces the YAML preferences mapping. The endpoint reapplies the preferences
+only when the new mapping is different from the current file contents.
+
+Request JSON:
+
+```json
+{
+  "auto-embedding": {
+    "enable": false
+  }
+}
+```
+
+When `auto-embedding.enable` is `true`, applying the preferences scans the
+database and queues pending files and completed files missing the selected
+model embedding or the chunks for the selected vector database. Queuing is
+asynchronous; the request does not wait for embeddings to finish.
+
 ## Embedding engines
 
 ### `GET /embedding-engines/`
@@ -262,7 +297,9 @@ Response `200` is an array of file objects:
 ]
 ```
 
-If automatic embedding is enabled, uploaded files are queued after being persisted.
+If `auto-embedding.enable` is enabled, uploaded files are queued after being
+persisted. If it is disabled, new files remain `pending` and are not queued
+automatically.
 
 ### `GET /files/`
 
@@ -306,7 +343,11 @@ Response `200` is the updated file object. Invalid paths or duplicate destinatio
 
 ### `POST /files/{file_id}/process`
 
-Queues an existing file for processing.
+Manually queues an existing file for processing. This endpoint works whether
+automatic embedding is enabled or disabled. A file is queued only when it is
+`pending`, or when it is `done` but lacks the embedding for the selected model
+or the chunks for the selected vector database. A file already present in the
+Huey queue, or a file that needs no processing, is not queued again.
 
 Successful response is `202`:
 
@@ -314,7 +355,22 @@ Successful response is `202`:
 { "file_id": 1, "task_id": "task-1" }
 ```
 
+When no processing is required, or the file is already queued, the response is
+also `202`:
+
+```json
+{ "file_id": 1, "queued": false }
+```
+
 Returns `404` when the file does not exist.
+
+### Queue worker behavior
+
+The backend starts one Huey consumer after successful application startup,
+regardless of the `auto-embedding.enable` value. The consumer processes tasks
+already stored in the queue, keeps consuming while tasks are available, and
+also picks up tasks added while another file is being processed. Therefore,
+manual processing remains useful when automatic embedding is disabled.
 
 ### `DELETE /files/?ids=1&ids=2`
 

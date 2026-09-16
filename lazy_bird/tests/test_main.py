@@ -8,8 +8,8 @@ def test_root_endpoint_returns_welcome_message(client):
 
 def test_development_template_routes_are_not_exposed(client):
     assert client.get("/codebase").status_code == 404
-    assert client.get("/upload_file").status_code == 404
-    assert client.get("/shemas").status_code == 404
+    assert client.get("/upload_file").status_code == 200
+    assert client.get("/shemas").status_code == 200
 
 
 def test_openapi_contains_all_application_surfaces(client):

@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+from pathlib import Path
 from time import perf_counter
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 
 from lazy_bird.api import router as api_router
@@ -13,8 +15,9 @@ from lazy_bird.tools.hf_cache_worker import sync_cached_models
 from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird import database
 from lazy_bird.crud import vector_database
-from lazy_bird.preferences import auto_embedding_enabled
+from lazy_bird.preferences import apply_preferences, auto_embedding_enabled
 from lazy_bird.task_queue import start_worker, stop_worker
+from lazy_bird.tools.db_schema import get_schema_diagram
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +37,8 @@ async def lifespan(app: FastAPI):
         initialize_embedding_engines()
         database.initialize_selected_vector_database()
         vector_database.populate(list(database.VECTOR_ADAPTERS))
-        if auto_embedding_enabled():
-            worker = start_worker()
+        apply_preferences()
+        worker = start_worker()
         app.state.startup_error = None
     except Exception as exc:
         app.state.startup_error = f"Application initialization failed: {exc}"
@@ -47,6 +50,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(api_router)
+templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
 
 @app.middleware("http")
 async def require_database(request: Request, call_next):
@@ -75,6 +79,46 @@ async def read_root():
     if startup_error:
         return {"success": False, "error": startup_error}
     return {"success": True, "message": "Welcome to Lazy Bird!", "database_revision": database_status.revision}
+
+
+@app.get("/shemas", include_in_schema=False)
+async def schema_view(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="shemas.html",
+        context={"diagram": get_schema_diagram()},
+    )
+
+
+@app.get("/upload_file", include_in_schema=False)
+async def upload_file_view(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="upload_file.html",
+        context={"uploaded_files": None, "error": None},
+    )
+
+
+@app.post("/upload_file", include_in_schema=False)
+async def upload_file_from_view(
+    request: Request,
+    directory: str = Form(...),
+    files: list[UploadFile] = File(...),
+):
+    try:
+        uploaded_files = await file_crud.creates(directory, files)
+        return templates.TemplateResponse(
+            request=request,
+            name="upload_file.html",
+            context={"uploaded_files": uploaded_files, "error": None},
+        )
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="upload_file.html",
+            context={"uploaded_files": None, "error": str(exc)},
+            status_code=400,
+        )
 
 
 @app.websocket("/ws/upload-progress")

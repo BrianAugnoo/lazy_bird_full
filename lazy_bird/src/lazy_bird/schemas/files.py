@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 class FileOut(BaseModel):
     id: int
@@ -7,6 +7,8 @@ class FileOut(BaseModel):
     extension: str
     path: str
     status: str
+    embedded_by: list[int] = Field(default_factory=list)
+    vetor_db: list[int] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

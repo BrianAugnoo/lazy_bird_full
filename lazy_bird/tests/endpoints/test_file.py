@@ -1,3 +1,8 @@
+from lazy_bird.models.embedded import Embedded, EmbeddedVectorDatabase
+from lazy_bird.models.llm_model import LLMModel
+from lazy_bird.models.vector_database import VectorDatabase
+
+
 def test_file_endpoint_uploads_multiple_files_and_lists_them(client):
     response = client.post(
         "/files/upload?dir=documents",
@@ -29,6 +34,51 @@ def test_file_endpoint_gets_a_file_by_id(client):
 
     assert response.status_code == 200
     assert response.json()["name"] == "report"
+
+
+def test_file_output_includes_embedding_and_vector_database_ids(client, crud_database):
+    created = client.post(
+        "/files/upload?dir=documents",
+        files={"files": ("report.txt", b"report", "text/plain")},
+    )
+    file_id = created.json()[0]["id"]
+
+    with crud_database() as session:
+        first_vector_db = VectorDatabase(name="test-vector-a")
+        second_vector_db = VectorDatabase(name="test-vector-b")
+        llm_model = LLMModel(
+            name="test-model",
+            hf_path="test/model",
+            local_path="test/model",
+            dimension=3,
+        )
+        session.add_all([first_vector_db, second_vector_db, llm_model])
+        session.flush()
+        llm_model_id = llm_model.id
+        first_vector_db_id = first_vector_db.id
+        second_vector_db_id = second_vector_db.id
+        embedded = Embedded(file_id=file_id, llm_model_id=llm_model.id)
+        session.add(embedded)
+        session.flush()
+        session.add_all(
+            [
+                EmbeddedVectorDatabase(
+                    embedded_id=embedded.id,
+                    vector_database_id=first_vector_db.id,
+                ),
+                EmbeddedVectorDatabase(
+                    embedded_id=embedded.id,
+                    vector_database_id=second_vector_db.id,
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get(f"/files/{file_id}")
+
+    assert response.status_code == 200
+    assert response.json()["embedded_by"] == [llm_model_id]
+    assert response.json()["vetor_db"] == [first_vector_db_id, second_vector_db_id]
 
 
 def test_file_endpoint_returns_null_for_unknown_id(client):

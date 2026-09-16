@@ -38,6 +38,14 @@ def enqueue_file(file_id: int):
     return process_file_task(file_id)
 
 
+def queued_file_ids() -> set[int]:
+    return {
+        task.args[0]
+        for task in huey.pending()
+        if task.name == process_file_task.name and task.args
+    }
+
+
 def _run_worker() -> None:
     from huey.consumer import Consumer
 

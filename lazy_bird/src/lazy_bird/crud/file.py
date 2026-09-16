@@ -1,8 +1,12 @@
 from pathlib import Path
 
+from lazy_bird import database
 from lazy_bird.database import db
+from lazy_bird.models.embedded import Embedded, EmbeddedVectorDatabase
 from lazy_bird.models.file import File as FileORM
-from lazy_bird.task_queue import enqueue_file
+from lazy_bird.models.selected_model_embeding import SelectedModelEmbeding
+from lazy_bird.models.vector_database import VectorDatabase
+from lazy_bird.task_queue import enqueue_file, queued_file_ids
 from lazy_bird.preferences import auto_embedding_enabled
 from lazy_bird.schemas.files import FileOut
 from sqlmodel import select
@@ -10,6 +14,104 @@ from lazy_bird.storages import store_file
 from lazy_bird.storages import read_file, rename_or_move_file, write_file
 from fastapi import UploadFile
 import mimetypes
+
+
+def _with_embedding_details(session, files: list[FileORM]) -> list[FileOut]:
+    if not files:
+        return []
+
+    file_ids = [file.id for file in files]
+    embedded_rows = session.exec(
+        select(Embedded).where(Embedded.file_id.in_(file_ids))
+    ).all()
+    embedded_by_file: dict[int, list[int]] = {file_id: [] for file_id in file_ids}
+    embedded_ids: list[int] = []
+    for embedded in embedded_rows:
+        embedded_by_file[embedded.file_id].append(embedded.llm_model_id)
+        embedded_ids.append(embedded.id)
+
+    vector_by_file: dict[int, list[int]] = {file_id: [] for file_id in file_ids}
+    if embedded_ids:
+        links = session.exec(
+            select(EmbeddedVectorDatabase).where(
+                EmbeddedVectorDatabase.embedded_id.in_(embedded_ids)
+            )
+        ).all()
+        file_by_embedded = {embedded.id: embedded.file_id for embedded in embedded_rows}
+        for link in links:
+            file_id = file_by_embedded[link.embedded_id]
+            vector_by_file[file_id].append(link.vector_database_id)
+
+    return [
+        FileOut.model_validate(file).model_copy(
+            update={
+                "embedded_by": embedded_by_file[file.id],
+                "vetor_db": vector_by_file[file.id],
+            }
+        )
+        for file in files
+    ]
+
+
+def files_requiring_embedding() -> list[int]:
+    with db() as session:
+        files = session.exec(
+            select(FileORM).where(FileORM.status.in_(["pending", "done"]))
+        ).all()
+        pending_ids = {file.id for file in files if file.status == "pending"}
+        done_files = [file for file in files if file.status == "done"]
+        if not done_files:
+            return sorted(pending_ids)
+
+        selection = session.exec(select(SelectedModelEmbeding)).first()
+        if selection is None:
+            return sorted(pending_ids)
+
+        vector_database = session.exec(
+            select(VectorDatabase).where(
+                VectorDatabase.name == database.config.selected_vector_database
+            )
+        ).first()
+        if vector_database is None:
+            return sorted(pending_ids | {file.id for file in done_files})
+
+        done_ids = {file.id for file in done_files}
+        embedded_rows = session.exec(
+            select(Embedded).where(
+                Embedded.file_id.in_(done_ids),
+                Embedded.llm_model_id == selection.llm_model_id,
+            )
+        ).all()
+        embedded_by_file = {embedded.file_id: embedded.id for embedded in embedded_rows}
+        linked_embedded_ids = {
+            link.embedded_id
+            for link in session.exec(
+                select(EmbeddedVectorDatabase).where(
+                    EmbeddedVectorDatabase.embedded_id.in_(embedded_by_file.values()),
+                    EmbeddedVectorDatabase.vector_database_id == vector_database.id,
+                )
+            ).all()
+        }
+        done_needing_embedding = {
+            file_id
+            for file_id in done_ids
+            if file_id not in embedded_by_file
+            or embedded_by_file[file_id] not in linked_embedded_ids
+        }
+        return sorted(pending_ids | done_needing_embedding)
+
+
+def enqueue_files_requiring_embedding(file_ids: list[int] | None = None) -> list[int]:
+    candidates = files_requiring_embedding() if file_ids is None else file_ids
+    queued = queued_file_ids()
+    enqueued = []
+    for file_id in candidates:
+        if file_id in queued:
+            continue
+        enqueue_file(file_id)
+        queued.add(file_id)
+        enqueued.append(file_id)
+    return enqueued
 
 async def creates(dir: str, files: list[UploadFile]):
     downloaded_files = []
@@ -25,13 +127,14 @@ async def creates(dir: str, files: list[UploadFile]):
             session.add(file_record)
             session.flush()
             session.refresh(file_record)
-            downloaded_files.append(FileOut.model_validate(file_record))
+            downloaded_files.append(file_record)
             file_ids.append(file_record.id)
         session.commit()
 
+        downloaded_files = _with_embedding_details(session, downloaded_files)
+
     if auto_embedding_enabled():
-        for file_id in file_ids:
-            enqueue_file(file_id)
+        enqueue_files_requiring_embedding(file_ids)
 
     return downloaded_files
 
@@ -39,7 +142,7 @@ def get_all():
     with db() as session:
         statement = select(FileORM)
         files = session.exec(statement).all()
-        return [FileOut.model_validate(file) for file in files]
+        return _with_embedding_details(session, files)
 
 
 def get_processing_status() -> list[dict]:
@@ -65,7 +168,7 @@ def find(id: int):
         file = session.get(FileORM, id)
         if file is None:
             return None
-        return FileOut.model_validate(file)
+        return _with_embedding_details(session, [file])[0]
 
 
 def get(id: int):
@@ -99,7 +202,7 @@ def update_content(id: int, value: str):
         session.add(file)
         session.commit()
         session.refresh(file)
-        return FileOut.model_validate(file)
+        return _with_embedding_details(session, [file])[0]
 
 
 def update_file(id: int, name: str | None = None, dir: str | None = None):
@@ -114,7 +217,7 @@ def update_file(id: int, name: str | None = None, dir: str | None = None):
             session.add(file)
             session.commit()
             session.refresh(file)
-        return FileOut.model_validate(file)
+        return _with_embedding_details(session, [file])[0]
 
 
 def update_status(id: int, status: str) -> bool:
