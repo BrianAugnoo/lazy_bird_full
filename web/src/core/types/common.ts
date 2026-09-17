@@ -32,4 +32,5 @@ export type TabType =
   | 'embeddings' 
   | 'databases' 
   | 'api-keys' 
-  | 'search';
+  | 'search'
+  | 'preferences';

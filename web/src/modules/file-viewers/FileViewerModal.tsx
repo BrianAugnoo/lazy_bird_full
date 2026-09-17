@@ -40,12 +40,12 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
           ) : (
             <div className="state-empty">
               <span style={{ fontSize: '2rem' }}>⚠️</span>
-              <div className="state-title">Aucun visualiseur compatible</div>
+              <div className="state-title">No compatible viewer</div>
               <p className="state-desc">
-                Le format {file.extension} n'est pas pris en charge par les modules installés.
+                Format {file.extension} is not supported by installed viewer modules.
               </p>
               <button type="button" className="btn btn-secondary" onClick={onClose}>
-                Fermer
+                Close
               </button>
             </div>
           )}

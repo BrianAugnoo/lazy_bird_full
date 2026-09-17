@@ -292,14 +292,85 @@ Response `200` is an array of file objects:
     "size": 2048,
     "extension": ".md",
     "path": "documents/notes.md",
-    "status": "pending"
+    "status": "pending",
+    "embedded_by": [],
+    "vector_db": []
   }
 ]
 ```
 
+`embedded_by` contains the IDs of the embedding models used for the file.
+`vector_db` contains the names of the vector databases that contain chunks for
+the file, not their database IDs.
+
 If `auto-embedding.enable` is enabled, uploaded files are queued after being
 persisted. If it is disabled, new files remain `pending` and are not queued
 automatically.
+
+### `POST /files/directory`
+
+Creates an empty directory below the backend storage root. The `path` query
+parameter may contain nested relative directories, but must not be absolute or
+contain `..` path components.
+
+Example:
+
+```http
+POST /files/directory?path=documents/archive
+```
+
+Response `200`:
+
+```json
+{
+  "path": "/path/to/lazy_bird/storage/documents/archive"
+}
+```
+
+Creating an already existing directory is successful and leaves its contents
+unchanged. A path occupied by a file, or an invalid path, returns `400`.
+
+### `PATCH /files/directory`
+
+Moves a directory and all its contents to a new relative path. The `source`
+and `destination` query parameters are required. File paths stored in the
+database are updated as part of the operation.
+
+```http
+PATCH /files/directory?source=documents/archive&destination=archive/2026
+```
+
+Response `200`:
+
+```json
+{
+  "path": "/path/to/lazy_bird/storage/archive/2026"
+}
+```
+
+The destination must not already exist. Moving the storage root, moving a
+directory inside itself, invalid paths, or a missing source returns an error.
+
+### `DELETE /files/directory`
+
+Deletes a directory recursively, including its files and subdirectories. File
+records and their embedding metadata belonging to that directory are deleted
+from the database as well.
+
+```http
+DELETE /files/directory?path=archive/2026
+```
+
+Response `200`:
+
+```json
+{
+  "path": "/path/to/lazy_bird/storage/archive/2026"
+}
+```
+
+The storage root cannot be deleted. A missing directory returns `404`; an
+invalid path or a path that is not a directory returns `400`.
 
 ### `GET /files/`
 
@@ -308,6 +379,13 @@ Lists all stored files. Response is an array with the same file object shape as 
 ### `GET /files/{file_id}`
 
 Gets one file. An unknown ID currently returns `200` with JSON `null`.
+
+### `GET /files/{file_id}/full`
+
+Returns the complete file by ID as a binary response. The response preserves
+the stored bytes, sets the detected MIME type when available, and includes the
+file name in `Content-Disposition`. Returns `404` when the file ID does not
+exist.
 
 ### `GET /files/{file_id}/content`
 
@@ -372,9 +450,13 @@ already stored in the queue, keeps consuming while tasks are available, and
 also picks up tasks added while another file is being processed. Therefore,
 manual processing remains useful when automatic embedding is disabled.
 
-### `DELETE /files/?ids=1&ids=2`
+### `DELETE /files/`
 
-Deletes selected files. `ids` is a repeated query parameter, not a JSON body.
+Deletes selected files. The request body is a JSON array of file IDs.
+
+```json
+[1, 2]
+```
 
 Response:
 
@@ -425,6 +507,31 @@ Response `200` is an array of matching chunks:
 ```
 
 ## Databases
+
+### `GET /vector-databases/`
+
+Returns all vector databases registered in the `vectordatabase` table.
+
+Response `200`:
+
+```json
+[
+  { "id": 1, "name": "lancedb" },
+  { "id": 2, "name": "another-vector-db" }
+]
+```
+
+### `GET /vector-databases/{vector_database_id}`
+
+Returns one vector database by its ID.
+
+Response `200`:
+
+```json
+{ "id": 1, "name": "lancedb" }
+```
+
+An unknown ID returns `404` with `{ "detail": "Vector database not found" }`.
 
 ### `GET /databases/`
 

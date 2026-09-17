@@ -1,22 +1,38 @@
 # Context Module — file-viewers
 
-## Objectif
-Fournit le système de visualisation et d'édition de fichiers de lazy_bird, articulé autour d'un contrat extensible Open/Closed (`registry.ts`).
+## Goal
+Provides the extensible file viewing and editing system for lazy_bird, following the Open/Closed contract defined in `src/core/file-viewers/registry.ts`. Files can be edited in dedicated tabs with live preview, toolbar formatting, and direct persistence via `PUT /files/{id}/content`.
 
-## API publique exposée
-- `registerAllBuiltinViewers()` : enregistre les modules natifs (Markdown, Texte/Code, Métadonnées universelles).
-- `FileViewerModal` : modale d'affichage dynamique qui résout automatiquement le meilleur visualiseur selon l'extension du fichier.
-- Types : `FileViewerProps`, `FileViewerModule` exportés depuis `@/core/file-viewers/types`.
+## Public API Exposed
+- `registerAllBuiltinViewers()`: Registers standard viewers (MarkdownViewer, TextCodeViewer).
+- `MarkdownViewer`: Rich Markdown editor using `marked` + `DOMPurify` with Edit, Split, and Preview modes.
+- `TextCodeViewer`: Code and plain text viewer/editor with line numbering.
+- `UnsupportedViewerModal`: Dialog shown when an unsupported file format is opened, offering direct download.
+- `FileViewerModal`: Optional standalone modal wrapper for viewers.
+- Types: `FileViewerProps`, `FileViewerModule` exported from `@/core/file-viewers/types`.
 
-## Dépendances
-- `src/core/file-viewers/registry.ts`
-- `src/core/types/api.ts` (`FileItem`)
+## Dependencies
+- `marked` & `dompurify`: Safe, high-performance client-side Markdown parsing and sanitization.
+- `src/core/file-viewers/registry.ts`: Priority-based viewer resolution.
+- `src/api/endpoints/files.ts`: `getFileContent`, `updateFileContent`, `downloadFile`, `processFile`.
+- `src/core/types/api.ts`: `FileItem`.
 
-## Comment l'étendre
-Pour ajouter la prise en charge d'un nouveau format de fichier (ex: visualiseur PDF ou images) :
-1. Créez un nouveau sous-dossier dans `src/modules/file-viewers/<nouveau-format>/`.
-2. Développez le composant respectant l'interface `FileViewerProps`.
-3. Appelez `registerViewer({ id, name, canHandle: (ext) => ext === 'pdf', Component })` dans son point d'entrée ou lors de l'initialisation de l'application.
+## How to Extend
+To support a new file format (e.g. PDF or Image):
+1. Create a subfolder in `src/modules/file-viewers/<format>/`.
+2. Implement a React component conforming to `FileViewerProps`.
+3. Register the viewer:
+   ```ts
+   registerViewer({
+     id: 'pdf-viewer',
+     name: 'PDF Reader',
+     icon: '📄',
+     priority: 10,
+     canHandle: (ext) => ext.toLowerCase() === 'pdf',
+     Component: PDFViewer,
+   });
+   ```
 
-## Limitations connues / TODO
-- La lecture du contenu textuel de fichiers existants stockés sur le serveur dépend de la capacité du navigateur à lire les fichiers locaux ou d'un futur endpoint backend de streaming de contenu brut.
+## Known Limitations / TODO
+- Monaco editor or syntax highlighter can be added to `TextCodeViewer` for full syntax coloration of complex programming languages.
+- The application loads editor text through `GET /files/{file_id}/content`; binary files are not supported by the text editors.

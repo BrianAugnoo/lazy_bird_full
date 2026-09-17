@@ -14,7 +14,7 @@ export const EmbeddingSettings: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Valeurs locales éditables pour chaque moteur (engineId -> kwargs)
+  // Editable local values for each engine (engineId -> kwargs)
   const [editedKwargs, setEditedKwargs] = useState<Record<number, Record<string, any>>>({});
   const [savingEngineId, setSavingEngineId] = useState<number | null>(null);
 
@@ -29,14 +29,14 @@ export const EmbeddingSettings: React.FC = () => {
       setEngines(enginesList);
       setSelectedEngineState(activeEngine);
 
-      // Initialiser les kwargs locaux
+      // Initialize local kwargs
       const initialMap: Record<number, Record<string, any>> = {};
       for (const eng of enginesList) {
         initialMap[eng.id] = { ...(eng.kwargs || {}) };
       }
       setEditedKwargs(initialMap);
     } catch (err: any) {
-      setError(err?.message || 'Erreur lors de la récupération des moteurs d’embedding');
+      setError(err?.message || 'Failed to retrieve embedding engines');
     } finally {
       setLoading(false);
     }
@@ -46,7 +46,7 @@ export const EmbeddingSettings: React.FC = () => {
     loadData();
   }, [loadData]);
 
-  // Modification d'un argument
+  // Modify argument value
   const handleKwargChange = (engineId: number, key: string, value: any) => {
     setEditedKwargs((prev) => ({
       ...prev,
@@ -57,7 +57,7 @@ export const EmbeddingSettings: React.FC = () => {
     }));
   };
 
-  // Sauvegarde des kwargs
+  // Save kwargs
   const handleSaveKwargs = async (engineId: number) => {
     setSavingEngineId(engineId);
     setError(null);
@@ -65,26 +65,26 @@ export const EmbeddingSettings: React.FC = () => {
     try {
       const kwargs = editedKwargs[engineId] || {};
       await updateEngineKwargs(engineId, kwargs);
-      setSuccessMessage(`Paramètres du moteur #${engineId} enregistrés avec succès`);
+      setSuccessMessage(`Parameters for engine #${engineId} saved successfully.`);
       setTimeout(() => setSuccessMessage(null), 3000);
       await loadData();
     } catch (err: any) {
-      setError(err?.message || 'Échec de sauvegarde des paramètres du moteur');
+      setError(err?.message || 'Failed to save engine parameters');
     } finally {
       setSavingEngineId(null);
     }
   };
 
-  // Définir le moteur actif
+  // Set active engine
   const handleSelectEngine = async (engineId: number) => {
     setError(null);
     try {
       const result = await setSelectedEmbeddingEngine(engineId);
       setSelectedEngineState(result);
-      setSuccessMessage(`Moteur #${engineId} défini comme moteur actif pour l'application`);
+      setSuccessMessage(`Engine #${engineId} set as active embedding engine.`);
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
-      setError(err?.message || 'Échec de la sélection du moteur actif');
+      setError(err?.message || 'Failed to set active embedding engine');
     }
   };
 
@@ -95,9 +95,9 @@ export const EmbeddingSettings: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '1.25rem' }}>⚡</span>
             <div>
-              <h2 className="card-title">Moteurs d'Embedding</h2>
+              <h2 className="card-title">Embedding Engines</h2>
               <p className="card-description">
-                Configuration dynamique des backends de vectorisation et sélection du moteur actif
+                Dynamic configuration of vector computation backends and active engine selection
               </p>
             </div>
           </div>
@@ -120,42 +120,42 @@ export const EmbeddingSettings: React.FC = () => {
             </div>
           )}
 
-          {/* Résumé du moteur actif */}
+          {/* Active Engine Summary */}
           <div style={{ backgroundColor: 'rgba(99, 102, 241, 0.05)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Moteur Actif Courant
+                  Current Active Engine
                 </span>
                 <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>
                   {selectedEngineState?.configured && selectedEngineState.engine
                     ? `${selectedEngineState.engine.name} (ID #${selectedEngineState.engine.id})`
-                    : 'Aucun moteur configuré'}
+                    : 'No engine configured'}
                 </div>
               </div>
               <span className={`badge ${selectedEngineState?.configured ? 'badge-success' : 'badge-warning'}`}>
-                {selectedEngineState?.configured ? 'Opérationnel' : 'Non configuré'}
+                {selectedEngineState?.configured ? 'Operational' : 'Not Configured'}
               </span>
             </div>
           </div>
 
-          {/* Liste des moteurs disponibles */}
+          {/* Available Engines List */}
           <div>
             <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '14px' }}>
-              Moteurs disponibles ({engines.length})
+              Available Engines ({engines.length})
             </h3>
 
             {loading ? (
               <div className="state-loading">
                 <span className="spinner" />
-                <div className="state-title">Chargement des moteurs d'embedding...</div>
+                <div className="state-title">Loading embedding engines...</div>
               </div>
             ) : engines.length === 0 ? (
               <div className="state-empty">
                 <span style={{ fontSize: '2rem' }}>⚡</span>
-                <div className="state-title">Aucun moteur d'embedding disponible</div>
+                <div className="state-title">No embedding engines available</div>
                 <p className="state-desc">
-                  Vérifiez la configuration des extensions de calcul côté backend.
+                  Check the backend computation extension configuration.
                 </p>
               </div>
             ) : (
@@ -177,27 +177,27 @@ export const EmbeddingSettings: React.FC = () => {
                       <div className="card-header">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <span style={{ fontWeight: 600, fontSize: '1rem' }}>{eng.name}</span>
-                          {isActive && <span className="badge badge-success">Actif</span>}
+                          {isActive && <span className="badge badge-success">Active</span>}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <span className="badge badge-muted">Formats : {eng.formats.join(', ')}</span>
+                          <span className="badge badge-muted">Formats: {eng.formats.join(', ')}</span>
                           <span className="badge badge-muted">ID #{eng.id}</span>
                         </div>
                       </div>
 
                       <div className="card-body">
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                          Fichier source : <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{eng.file_path}</span>
+                          Source file: <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{eng.file_path}</span>
                         </div>
 
-                        {/* Formulaire dynamique généré depuis kwargs_keys */}
+                        {/* Dynamic form generated from kwargs_keys */}
                         <h4 style={{ fontSize: '0.825rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                          Paramètres spécifiques (kwargs)
+                          Specific Parameters (kwargs)
                         </h4>
 
                         {keys.length === 0 ? (
                           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                            Ce moteur ne requiert aucun paramètre spécifique.
+                            This engine does not require any specific parameters.
                           </p>
                         ) : (
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
@@ -210,7 +210,7 @@ export const EmbeddingSettings: React.FC = () => {
                                   <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>{k}</span>
                                     <span style={{ fontSize: '0.7rem', color: isRequired ? 'var(--color-error)' : 'var(--text-muted)' }}>
-                                      {expectedType} {isRequired ? '(requis)' : '(opt)'}
+                                      {expectedType} {isRequired ? '(required)' : '(optional)'}
                                     </span>
                                   </label>
                                   <input
@@ -234,7 +234,7 @@ export const EmbeddingSettings: React.FC = () => {
                           onClick={() => handleSaveKwargs(eng.id)}
                           disabled={savingEngineId === eng.id}
                         >
-                          {savingEngineId === eng.id ? 'Enregistrement...' : 'Sauvegarder les paramètres'}
+                          {savingEngineId === eng.id ? 'Saving...' : 'Save Parameters'}
                         </button>
                         <button
                           type="button"
@@ -242,7 +242,7 @@ export const EmbeddingSettings: React.FC = () => {
                           onClick={() => handleSelectEngine(eng.id)}
                           disabled={isActive}
                         >
-                          {isActive ? '✓ Moteur actif' : 'Activer ce moteur'}
+                          {isActive ? '✓ Active Engine' : 'Activate Engine'}
                         </button>
                       </div>
                     </div>

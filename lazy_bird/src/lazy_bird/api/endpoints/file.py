@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 import lazy_bird.crud.file as FileCrud
 from lazy_bird.schemas.files import FileContentIn, FileOut, FileUpdate
 from lazy_bird.task_queue import enqueue_file, queued_file_ids
@@ -12,6 +12,37 @@ async def upload_files(dir: str, files: list[UploadFile] = File(...)):
         return await FileCrud.creates(dir, files)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post("/directory")
+def create_directory(path: str):
+    try:
+        created_path = FileCrud.create_empty_directory(path)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"path": created_path}
+
+
+@router.patch("/directory")
+def move_directory(source: str, destination: str):
+    try:
+        moved_path = FileCrud.move_directory(source, destination)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"path": moved_path}
+
+
+@router.delete("/directory")
+def delete_directory(path: str):
+    try:
+        deleted_path = FileCrud.delete_empty_directory(path)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"path": deleted_path}
 
 @router.get("/", response_model=list[FileOut])
 async def get_all_files():
@@ -29,6 +60,19 @@ async def get_file_content(file_id: int):
         raise HTTPException(status_code=404, detail="File not found")
     file, content = result
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+
+@router.get("/{file_id}/full")
+async def get_full_file(file_id: int):
+    result = FileCrud.full(file_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    content, filename, media_type = result
+    return Response(
+        content=content,
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.get("/{file_id}/download")
@@ -78,5 +122,8 @@ async def delete_files(ids: list[int]):
 
 @router.delete("/delete_all")
 async def delete_all_files():
-    FileCrud.delete_all()
-    return {"message": "All files deleted successfully."}
+    try:
+        FileCrud.delete_all()
+        return {"message": "All files deleted successfully."}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error

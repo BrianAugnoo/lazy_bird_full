@@ -10,7 +10,12 @@ from lazy_bird.task_queue import enqueue_file, queued_file_ids
 from lazy_bird.preferences import auto_embedding_enabled
 from lazy_bird.schemas.files import FileOut
 from sqlmodel import select
-from lazy_bird.storages import store_file
+from lazy_bird.storages import (
+    create_directory,
+    delete_directory,
+    move_directory as move_storage_directory,
+    store_file,
+)
 from lazy_bird.storages import read_file, rename_or_move_file, write_file
 from fastapi import UploadFile
 import mimetypes
@@ -30,23 +35,29 @@ def _with_embedding_details(session, files: list[FileORM]) -> list[FileOut]:
         embedded_by_file[embedded.file_id].append(embedded.llm_model_id)
         embedded_ids.append(embedded.id)
 
-    vector_by_file: dict[int, list[int]] = {file_id: [] for file_id in file_ids}
+    vector_by_file: dict[int, list[str]] = {file_id: [] for file_id in file_ids}
     if embedded_ids:
         links = session.exec(
             select(EmbeddedVectorDatabase).where(
                 EmbeddedVectorDatabase.embedded_id.in_(embedded_ids)
             )
         ).all()
+        vector_databases = {
+            vector_database.id: vector_database.name
+            for vector_database in session.exec(select(VectorDatabase)).all()
+        }
         file_by_embedded = {embedded.id: embedded.file_id for embedded in embedded_rows}
         for link in links:
             file_id = file_by_embedded[link.embedded_id]
-            vector_by_file[file_id].append(link.vector_database_id)
+            vector_database_name = vector_databases.get(link.vector_database_id)
+            if vector_database_name is not None:
+                vector_by_file[file_id].append(vector_database_name)
 
     return [
         FileOut.model_validate(file).model_copy(
             update={
                 "embedded_by": embedded_by_file[file.id],
-                "vetor_db": vector_by_file[file.id],
+                "vector_db": vector_by_file[file.id],
             }
         )
         for file in files
@@ -112,6 +123,58 @@ def enqueue_files_requiring_embedding(file_ids: list[int] | None = None) -> list
         queued.add(file_id)
         enqueued.append(file_id)
     return enqueued
+
+
+def create_empty_directory(path: str) -> str:
+    return create_directory(path)
+
+
+def delete_empty_directory(path: str) -> str:
+    with db() as session:
+        directory_path = Path(delete_directory(path))
+        files = session.exec(select(FileORM)).all()
+        affected_files = []
+        for file in files:
+            try:
+                Path(file.path).resolve().relative_to(directory_path)
+            except ValueError:
+                continue
+            affected_files.append(file)
+
+        for file in affected_files:
+            embedded_rows = session.exec(
+                select(Embedded).where(Embedded.file_id == file.id)
+            ).all()
+            for embedded in embedded_rows:
+                links = session.exec(
+                    select(EmbeddedVectorDatabase).where(
+                        EmbeddedVectorDatabase.embedded_id == embedded.id
+                    )
+                ).all()
+                for link in links:
+                    session.delete(link)
+                session.delete(embedded)
+            session.delete(file)
+        session.commit()
+    return str(directory_path)
+
+
+def move_directory(source: str, destination: str) -> str:
+    source_path, destination_path = move_storage_directory(source, destination)
+    source_root = Path(source_path)
+    destination_root = Path(destination_path)
+    with db() as session:
+        files = session.exec(select(FileORM)).all()
+        for file in files:
+            file_path = Path(file.path)
+            try:
+                relative_path = file_path.resolve().relative_to(source_root)
+            except ValueError:
+                continue
+            file.path = str(destination_root / relative_path)
+            session.add(file)
+        session.commit()
+    return str(destination_root)
 
 async def creates(dir: str, files: list[UploadFile]):
     downloaded_files = []
@@ -184,6 +247,18 @@ def content(id: int):
         return file, read_file(file.path)
 
 
+def full(id: int):
+    with db() as session:
+        file = session.get(FileORM, id)
+        if file is None:
+            return None
+        return (
+            read_file(file.path),
+            f"{file.name}{file.extension}",
+            mimetypes.guess_type(file.path)[0],
+        )
+
+
 def download_info(id: int):
     with db() as session:
         file = session.get(FileORM, id)
@@ -230,11 +305,28 @@ def update_status(id: int, status: str) -> bool:
         session.commit()
         return True
 
+
+def _delete_file_dependencies(session, file_id: int) -> None:
+    embedded_rows = session.exec(
+        select(Embedded).where(Embedded.file_id == file_id)
+    ).all()
+    for embedded in embedded_rows:
+        links = session.exec(
+            select(EmbeddedVectorDatabase).where(
+                EmbeddedVectorDatabase.embedded_id == embedded.id
+            )
+        ).all()
+        for link in links:
+            session.delete(link)
+        session.delete(embedded)
+
+
 def deletes(ids: list[int]):
     with db() as session:
         for id in ids:
             file = session.get(FileORM, id)
             if file:
+                _delete_file_dependencies(session, file.id)
                 session.delete(file)
                 path = Path(file.path)
                 if path.exists():
@@ -246,6 +338,7 @@ def delete_all():
         statement = select(FileORM)
         files = session.exec(statement).all()
         for file in files:
+            _delete_file_dependencies(session, file.id)
             session.delete(file)
             path = Path(file.path)
             if path.exists():

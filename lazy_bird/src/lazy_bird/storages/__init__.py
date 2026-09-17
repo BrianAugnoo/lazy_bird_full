@@ -21,6 +21,45 @@ def _safe_directory(directory: str) -> Path:
         raise ValueError("Invalid destination directory")
     return _safe_path(storage_dir / relative_dir)
 
+
+def create_directory(path: str) -> str:
+    target_dir = _safe_directory(path)
+    if target_dir.exists() and not target_dir.is_dir():
+        raise ValueError("A file with that path already exists")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return str(target_dir)
+
+
+def delete_directory(path: str) -> str:
+    target_dir = _safe_directory(path)
+    if target_dir == storage_dir.resolve():
+        raise ValueError("The storage root cannot be deleted")
+    if not target_dir.exists():
+        raise FileNotFoundError("Directory not found")
+    if not target_dir.is_dir():
+        raise ValueError("The path is not a directory")
+    shutil.rmtree(target_dir)
+    return str(target_dir)
+
+
+def move_directory(source: str, destination: str) -> tuple[str, str]:
+    source_dir = _safe_directory(source)
+    destination_dir = _safe_directory(destination)
+    if source_dir == storage_dir.resolve():
+        raise ValueError("The storage root cannot be moved")
+    if not source_dir.exists():
+        raise FileNotFoundError("Directory not found")
+    if not source_dir.is_dir():
+        raise ValueError("The source path is not a directory")
+    if destination_dir.exists():
+        raise ValueError("A file or directory with that path already exists")
+    if source_dir in destination_dir.parents:
+        raise ValueError("A directory cannot be moved inside itself")
+    destination_dir.parent.mkdir(parents=True, exist_ok=True)
+    source_dir.rename(destination_dir)
+    return str(source_dir), str(destination_dir)
+
+
 def store_file(dir: str, file: UploadFile) -> dict:
     target_dir = _safe_directory(dir)
 

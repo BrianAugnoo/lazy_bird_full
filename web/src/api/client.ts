@@ -112,3 +112,53 @@ export async function request<T>(
 
   return data as T;
 }
+
+export async function downloadFileBlob(path: string, filename: string): Promise<void> {
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (networkErr) {
+    throw new ApiError(
+      `Impossible de joindre le serveur Lazy Bird (${baseUrl}). Vérifiez qu'il est bien démarré.`,
+      0,
+      networkErr
+    );
+  }
+
+  if (!response.ok) {
+    throw new ApiError(`Impossible de télécharger le fichier (${response.status}).`, response.status);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function requestBlob(path: string): Promise<Blob> {
+  const baseUrl = getApiBaseUrl();
+  const url = `${baseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (networkErr) {
+    throw new ApiError(
+      `Impossible de joindre le serveur Lazy Bird (${baseUrl}). Vérifiez qu'il est bien démarré.`,
+      0,
+      networkErr
+    );
+  }
+
+  if (!response.ok) {
+    throw new ApiError(`Impossible de récupérer le contenu du fichier (${response.status}).`, response.status);
+  }
+
+  return response.blob();
+}

@@ -69,6 +69,24 @@ export interface FileItem {
   extension: string;
   path: string;
   status: string; // 'pending' | 'processing' | 'done' | 'format-error' | 'chunck-error' | 'incomplete-vectors'
+  embedded_by?: number[];
+  vector_db?: string[];
+}
+
+export interface DirectoryResponse {
+  path: string;
+}
+
+export interface FilePatchIn {
+  name?: string;
+  dir?: string;
+}
+
+// 5.1 Preferences (/preferences/)
+export interface PreferencesPayload {
+  'auto-embedding': {
+    enable: boolean;
+  };
 }
 
 export interface FileProcessResponse {

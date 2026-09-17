@@ -1,20 +1,34 @@
 # Context Module — file-explorer
 
-## Objectif
-Interface d'exploration, d'organisation, d'upload multiple par glisser-déposer, d'édition et de traitement RAG des fichiers stockés dans lazy_bird.
+## Goal
+Google Drive-style file explorer interface featuring vertical folder and file navigation, interactive breadcrumbs, folder creation, modal drag-and-drop upload, multi-selection, clipboard copy & paste, embedding status badges, and direct open-in-tab editor integration.
 
-## API publique exposée
-- `FileExplorer` : composant principal React du gestionnaire de fichiers.
+## Public API Exposed
+- `FileExplorer` (React.FC<{ onOpenFile?: (file: FileItem) => void }>): Main file manager component.
 
-## Dépendances
-- `src/api/endpoints/files.ts` (`getFiles`, `uploadFiles`, `deleteFiles`, `deleteAllFiles`, `processFile`)
-- `src/api/ws.ts` (`progressWs`) pour le suivi en temps réel
-- `src/modules/file-viewers/` (`FileViewerModal`)
-- `src/core/types/api.ts` (`FileItem`, `FileProgressItem`)
+## Dependencies
+- `src/api/endpoints/files.ts`:
+  - `getFiles`
+  - `uploadFiles`
+  - `deleteFiles`
+  - `deleteAllFiles`
+  - `processFile`
+  - `createDirectory`
+  - `deleteDirectory`
+  - `getFileContent`
+  - `getFullFileContent`
+  - `downloadFile`
+- `src/api/ws.ts`: `progressWs` for real-time Huey worker progress updates
+- `src/core/file-viewers/registry.ts`: `resolveViewer`
+- `src/core/types/api.ts`: `FileItem`, `FileProgressItem`, `DirectoryResponse`
+- `src/modules/file-viewers/UnsupportedViewerModal.tsx`: Unsupported format dialog
 
-## Comment l'étendre
-- Pour ajouter des filtres (par statut, taille, type), étendre les états de filtrage dans `FileExplorer.tsx`.
-- Pour connecter un nouvel endpoint backend (ex: renommage ou déplacement), ajouter la méthode correspondante dans `src/api/endpoints/files.ts` et ajouter le bouton d'action dans la table.
+## How to Extend
+- **File Actions**: Add new contextual toolbar actions by extending the selection action bar in `FileExplorer.tsx`.
+- **Filtering & Search**: Add column sorting or search filtering over `currentDirectoryFiles`.
+- **Folder nesting**: Uses standard Unix/Windows relative paths matching `endpoint.md`.
 
-## Limitations connues / TODO
-- L'arborescence des dossiers est actuellement virtuelle et calculée à partir des chemins de fichiers.
+## Known Limitations / TODO
+- Renaming existing folders uses `PATCH /files/directory?source=...&destination=...`.
+- Selection is performed by clicking rows; the contextual action bar reserves its layout space so rows do not move when it appears.
+- Drag-and-drop between rows can be added using HTML5 drag API.

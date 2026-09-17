@@ -18,7 +18,7 @@ def test_file_output_reads_model_attributes():
         "path": "uploads/report.pdf",
         "status": "pending",
         "embedded_by": [],
-        "vetor_db": [],
+        "vector_db": [],
     }
 
 

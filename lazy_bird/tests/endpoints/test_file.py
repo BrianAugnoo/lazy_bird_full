@@ -1,6 +1,7 @@
 from lazy_bird.models.embedded import Embedded, EmbeddedVectorDatabase
 from lazy_bird.models.llm_model import LLMModel
 from lazy_bird.models.vector_database import VectorDatabase
+from sqlmodel import select
 
 
 def test_file_endpoint_uploads_multiple_files_and_lists_them(client):
@@ -34,6 +35,21 @@ def test_file_endpoint_gets_a_file_by_id(client):
 
     assert response.status_code == 200
     assert response.json()["name"] == "report"
+
+
+def test_file_endpoint_returns_the_entire_file_by_id(client):
+    created = client.post(
+        "/files/upload?dir=documents",
+        files={"files": ("archive.bin", b"\x00\x01complete", "application/octet-stream")},
+    )
+    file_id = created.json()[0]["id"]
+
+    response = client.get(f"/files/{file_id}/full")
+
+    assert response.status_code == 200
+    assert response.content == b"\x00\x01complete"
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert 'filename="archive.bin"' in response.headers["content-disposition"]
 
 
 def test_file_output_includes_embedding_and_vector_database_ids(client, crud_database):
@@ -86,6 +102,44 @@ def test_file_endpoint_returns_null_for_unknown_id(client):
 
     assert response.status_code == 200
     assert response.json() is None
+
+
+def test_file_endpoint_deletes_file_with_embedding_dependencies(client, crud_database):
+    created = client.post(
+        "/files/upload?dir=documents",
+        files={"files": ("embedded.md", b"# document", "text/markdown")},
+    )
+    file_id = created.json()[0]["id"]
+
+    with crud_database() as session:
+        llm_model = LLMModel(
+            name="test-model",
+            hf_path="test/model",
+            local_path="test/model",
+            dimension=3,
+        )
+        session.add(llm_model)
+        session.flush()
+        embedded = Embedded(file_id=file_id, llm_model_id=llm_model.id)
+        session.add(embedded)
+        session.flush()
+        vector_database = VectorDatabase(name="test-vector")
+        session.add(vector_database)
+        session.flush()
+        session.add(
+            EmbeddedVectorDatabase(
+                embedded_id=embedded.id,
+                vector_database_id=vector_database.id,
+            )
+        )
+        session.commit()
+
+    response = client.request("DELETE", "/files/", json=[file_id])
+
+    assert response.status_code == 200, response.text
+    assert client.get(f"/files/{file_id}").json() is None
+    with crud_database() as session:
+        assert session.exec(select(Embedded).where(Embedded.file_id == file_id)).first() is None
 
 
 def test_file_endpoint_requires_directory_and_files(client):

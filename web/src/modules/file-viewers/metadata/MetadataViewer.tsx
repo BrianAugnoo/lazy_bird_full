@@ -13,7 +13,7 @@ export const MetadataViewer: React.FC<FileViewerProps> = ({
           <span style={{ fontSize: '1.4rem' }}>📁</span>
           <div>
             <strong>{file.name}{file.extension}</strong>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Détails et métadonnées</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Metadata & Properties</div>
           </div>
         </div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
@@ -23,23 +23,23 @@ export const MetadataViewer: React.FC<FileViewerProps> = ({
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
         <div className="card" style={{ padding: '12px' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Identifiant</div>
-          <div style={{ fontWeight: 600, marginTop: '4px' }}>{file.id ?? 'Non assigné'}</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Identifier</div>
+          <div style={{ fontWeight: 600, marginTop: '4px' }}>{file.id ?? 'Unassigned'}</div>
         </div>
         <div className="card" style={{ padding: '12px' }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Format / Extension</div>
-          <div style={{ fontWeight: 600, marginTop: '4px' }}>{file.extension || 'Aucune'}</div>
+          <div style={{ fontWeight: 600, marginTop: '4px' }}>{file.extension || 'None'}</div>
         </div>
         <div className="card" style={{ padding: '12px' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Taille du fichier</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>File Size</div>
           <div style={{ fontWeight: 600, marginTop: '4px' }}>
             {file.size >= 1048576
-              ? `${(file.size / 1048576).toFixed(2)} Mo`
-              : `${(file.size / 1024).toFixed(1)} Ko`}
+              ? `${(file.size / 1048576).toFixed(2)} MB`
+              : `${(file.size / 1024).toFixed(1)} KB`}
           </div>
         </div>
         <div className="card" style={{ padding: '12px' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Statut de traitement</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Processing Status</div>
           <div style={{ marginTop: '4px' }}>
             <span className={`badge ${
               file.status === 'done' ? 'badge-success' :
@@ -53,9 +53,9 @@ export const MetadataViewer: React.FC<FileViewerProps> = ({
       </div>
 
       <div className="card" style={{ padding: '12px' }}>
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Chemin de stockage serveur</div>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Server Storage Path</div>
         <div style={{ marginTop: '4px', fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all', color: 'var(--text-secondary)' }}>
-          {file.path || 'Non spécifié'}
+          {file.path || 'Not specified'}
         </div>
       </div>
 
@@ -66,11 +66,11 @@ export const MetadataViewer: React.FC<FileViewerProps> = ({
             className="btn btn-primary btn-sm"
             onClick={() => onProcess(file.id!)}
           >
-            ⚡ Lancer le traitement RAG
+            ⚡ Trigger RAG Processing
           </button>
         )}
         <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
-          Fermer
+          Close
         </button>
       </div>
     </div>

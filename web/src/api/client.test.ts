@@ -57,6 +57,6 @@ describe('API Client Layer', () => {
   it('remonte une erreur réseau claire si le serveur est inaccessible', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
-    await expect(request('/')).rejects.toThrow(/Impossible de joindre le serveur/);
+    await expect(request('/')).rejects.toThrow(/Unable to connect to Lazy Bird server/);
   });
 });

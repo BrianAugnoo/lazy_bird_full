@@ -8,7 +8,7 @@ class FileOut(BaseModel):
     path: str
     status: str
     embedded_by: list[int] = Field(default_factory=list)
-    vetor_db: list[int] = Field(default_factory=list)
+    vector_db: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

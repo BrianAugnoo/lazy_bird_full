@@ -21,7 +21,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ onRefreshAll }) => {
         setError(data.error);
       }
     } catch (err: any) {
-      setError(err?.message || 'Impossible de joindre le backend');
+      setError(err?.message || 'Unable to connect to backend');
     } finally {
       setLoading(false);
     }
@@ -29,7 +29,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ onRefreshAll }) => {
 
   useEffect(() => {
     fetchHealth();
-    // Rafraîchissement périodique toutes les 30s
+    // Periodic refresh every 30s
     const interval = setInterval(fetchHealth, 30000);
     return () => clearInterval(interval);
   }, [fetchHealth]);
@@ -42,22 +42,22 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ onRefreshAll }) => {
   return (
     <div className="top-bar">
       <div className="page-heading">
-        <span className="page-title">Tableau de bord</span>
-        {loading && <span className="spinner" title="Vérification de l'état système..." />}
+        <span className="page-title">Dashboard</span>
+        {loading && <span className="spinner" title="Checking system health..." />}
         {!loading && health?.success && (
           <span className="badge badge-success">
             <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'currentColor' }} />
-            Système opérationnel
+            System Operational
           </span>
         )}
         {!loading && (!health?.success || error) && (
           <span className="badge badge-error">
             <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'currentColor' }} />
-            Backend indisponible
+            Backend Unavailable
           </span>
         )}
         {health?.database_revision && (
-          <span className="badge badge-muted" title={`Révision Alembic : ${health.database_revision}`}>
+          <span className="badge badge-muted" title={`Alembic Revision: ${health.database_revision}`}>
             DB rev: {health.database_revision.slice(0, 7)}
           </span>
         )}
@@ -74,9 +74,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ onRefreshAll }) => {
           className="btn btn-secondary btn-sm"
           onClick={handleManualRefresh}
           disabled={loading}
-          title="Rafraîchir les données de l'application"
+          title="Refresh application data"
         >
-          ↻ Actualiser
+          ↻ Refresh
         </button>
       </div>
     </div>

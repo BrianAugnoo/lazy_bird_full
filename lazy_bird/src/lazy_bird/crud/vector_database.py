@@ -11,3 +11,8 @@ def populate(names: list[str]):
 
 def get_all():
     with db() as session: return session.exec(select(VectorDatabase)).all()
+
+
+def get(vector_database_id: int):
+    with db() as session:
+        return session.get(VectorDatabase, vector_database_id)

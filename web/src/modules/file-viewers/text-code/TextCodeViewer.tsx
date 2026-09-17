@@ -36,20 +36,20 @@ export const TextCodeViewer: React.FC<FileViewerProps> = ({
           <div>
             <strong>{file.name}{file.extension}</strong>
             <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              ({lines.length} lignes · {(file.size / 1024).toFixed(1)} Ko)
+              ({lines.length} lines · {(file.size / 1024).toFixed(1)} KB)
             </span>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {saveSuccess && <span style={{ color: 'var(--color-success)', fontSize: '0.8rem' }}>✓ Enregistré</span>}
+          {saveSuccess && <span style={{ color: 'var(--color-success)', fontSize: '0.8rem' }}>✓ Saved</span>}
           {onSave && (
             <button
               type="button"
               className={`btn btn-sm ${isEditing ? 'btn-secondary' : 'btn-ghost'}`}
               onClick={() => setIsEditing(!isEditing)}
             >
-              {isEditing ? 'Lecture seule' : 'Éditer'}
+              {isEditing ? 'Read-only' : 'Edit'}
             </button>
           )}
           {isEditing && onSave && (
@@ -59,7 +59,7 @@ export const TextCodeViewer: React.FC<FileViewerProps> = ({
               onClick={handleSave}
               disabled={saving}
             >
-              {saving ? 'Sauvegarde...' : 'Sauvegarder'}
+              {saving ? 'Saving...' : 'Save'}
             </button>
           )}
           {file.id && onProcess && (
@@ -67,12 +67,12 @@ export const TextCodeViewer: React.FC<FileViewerProps> = ({
               type="button"
               className="btn btn-secondary btn-sm"
               onClick={() => onProcess(file.id!)}
-              title="Lancer le traitement RAG"
+              title="Trigger RAG processing"
             >
-              ⚡ Traiter
+              ⚡ Process RAG
             </button>
           )}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} title="Close">
             ✕
           </button>
         </div>
@@ -97,7 +97,7 @@ export const TextCodeViewer: React.FC<FileViewerProps> = ({
             }}
             value={currentContent}
             onChange={(e) => setCurrentContent(e.target.value)}
-            placeholder="Saisissez ou collez du code / texte ici..."
+            placeholder="Type or paste code / text here..."
           />
         ) : (
           <div style={{ display: 'flex', width: '100%', fontFamily: 'monospace', fontSize: '0.85rem' }}>
@@ -107,7 +107,7 @@ export const TextCodeViewer: React.FC<FileViewerProps> = ({
               ))}
             </div>
             <div style={{ padding: '12px', flex: 1, overflowX: 'auto', whiteSpace: 'pre' }}>
-              {currentContent || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Fichier vide</span>}
+              {currentContent || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Empty file</span>}
             </div>
           </div>
         )}

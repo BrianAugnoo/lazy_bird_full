@@ -8,7 +8,7 @@ export const ApiKeyManager: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Formulaire d'ajout
+  // Creation form
   const [newKeyName, setNewKeyName] = useState<string>('');
   const [newKeyValue, setNewKeyValue] = useState<string>('');
   const [isCreating, setIsCreating] = useState<boolean>(false);
@@ -23,7 +23,7 @@ export const ApiKeyManager: React.FC = () => {
       const data = await listApiKeys();
       setKeys(data);
     } catch (err: any) {
-      setError(err?.message || 'Erreur lors de la récupération des clés API');
+      setError(err?.message || 'Failed to retrieve API keys');
     } finally {
       setLoading(false);
     }
@@ -42,12 +42,12 @@ export const ApiKeyManager: React.FC = () => {
     setSuccessMessage(null);
     try {
       await createApiKey(newKeyName.trim(), newKeyValue.trim());
-      setSuccessMessage(`Clé "${newKeyName.trim()}" enregistrée avec succès !`);
+      setSuccessMessage(`Key "${newKeyName.trim()}" registered successfully!`);
       setNewKeyName('');
       setNewKeyValue('');
       await loadKeys();
     } catch (err: any) {
-      setError(err?.message || 'Échec de l’enregistrement de la clé API');
+      setError(err?.message || 'Failed to register API key');
     } finally {
       setIsCreating(false);
     }
@@ -58,7 +58,7 @@ export const ApiKeyManager: React.FC = () => {
       const keyData = await getApiKey(name);
       setInspectedKey(keyData);
     } catch (err: any) {
-      setError(err?.message || `Impossible de récupérer la clé ${name}`);
+      setError(err?.message || `Failed to fetch key "${name}"`);
     }
   };
 
@@ -69,9 +69,9 @@ export const ApiKeyManager: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '1.25rem' }}>🔑</span>
             <div>
-              <h2 className="card-title">Clés API Externes</h2>
+              <h2 className="card-title">External API Keys</h2>
               <p className="card-description">
-                Gestion sécurisée des jetons d'accès pour les services tiers (OpenAI, Hugging Face, etc.)
+                Secure management of access tokens for third-party services (OpenAI, Hugging Face, etc.)
               </p>
             </div>
           </div>
@@ -94,7 +94,7 @@ export const ApiKeyManager: React.FC = () => {
             </div>
           )}
 
-          {/* Formulaire d'ajout sécurisé */}
+          {/* Secure Add Form */}
           <form
             onSubmit={handleCreateKey}
             style={{
@@ -107,18 +107,18 @@ export const ApiKeyManager: React.FC = () => {
               gap: '12px',
             }}
           >
-            <h3 style={{ fontSize: '0.9rem', fontWeight: 600 }}>Enregistrer une nouvelle clé API</h3>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 600 }}>Register a New API Key</h3>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Note de sécurité : la valeur secrète de la clé est acceptée et stockée de manière sécurisée, mais n'est jamais renvoyée en clair par le serveur.
+              Security Note: The secret value is accepted and encrypted/stored securely by the backend, and is never returned in plain text.
             </p>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Nom du service ou identifiant</label>
+                <label className="form-label">Service Name / Identifier</label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="ex: OpenAI, Cohere, HuggingFace"
+                  placeholder="e.g. OpenAI, Cohere, HuggingFace"
                   value={newKeyName}
                   onChange={(e) => setNewKeyName(e.target.value)}
                   required
@@ -126,7 +126,7 @@ export const ApiKeyManager: React.FC = () => {
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Valeur du secret / Token API</label>
+                <label className="form-label">Secret Value / API Token</label>
                 <input
                   type="password"
                   className="form-input"
@@ -144,28 +144,28 @@ export const ApiKeyManager: React.FC = () => {
                 className="btn btn-primary btn-sm"
                 disabled={isCreating || !newKeyName.trim() || !newKeyValue.trim()}
               >
-                {isCreating ? 'Enregistrement...' : 'Enregistrer la clé'}
+                {isCreating ? 'Saving...' : 'Save API Key'}
               </button>
             </div>
           </form>
 
-          {/* Liste des clés enregistrées */}
+          {/* Configured Keys List */}
           <div>
             <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '12px' }}>
-              Clés configurées ({keys.length})
+              Configured Keys ({keys.length})
             </h3>
 
             {loading ? (
               <div className="state-loading">
                 <span className="spinner" />
-                <div className="state-title">Chargement des clés API...</div>
+                <div className="state-title">Loading API keys...</div>
               </div>
             ) : keys.length === 0 ? (
               <div className="state-empty">
                 <span style={{ fontSize: '2rem' }}>🔑</span>
-                <div className="state-title">Aucune clé API configurée</div>
+                <div className="state-title">No API keys configured</div>
                 <p className="state-desc">
-                  Utilisez le formulaire ci-dessus pour associer des clés d'accès aux services externes.
+                  Use the form above to add credentials for external providers.
                 </p>
               </div>
             ) : (
@@ -173,8 +173,8 @@ export const ApiKeyManager: React.FC = () => {
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Nom du service</th>
-                      <th>Statut</th>
+                      <th>Service Name</th>
+                      <th>Status</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
@@ -183,7 +183,7 @@ export const ApiKeyManager: React.FC = () => {
                       <tr key={k.name}>
                         <td style={{ fontWeight: 500 }}>{k.name}</td>
                         <td>
-                          <span className="badge badge-success">Configuré (secret masqué)</span>
+                          <span className="badge badge-success">Configured (Secret Masked)</span>
                         </td>
                         <td style={{ textAlign: 'right' }}>
                           <button
@@ -191,7 +191,7 @@ export const ApiKeyManager: React.FC = () => {
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleInspectKey(k.name)}
                           >
-                            Détails
+                            Details
                           </button>
                         </td>
                       </tr>
@@ -204,32 +204,32 @@ export const ApiKeyManager: React.FC = () => {
         </div>
       </div>
 
-      {/* Modale d'inspection */}
+      {/* Inspection Modal */}
       {inspectedKey && (
         <div className="modal-backdrop" onClick={() => setInspectedKey(null)}>
           <div className="modal-window" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="card-title">Détails de la clé API</h3>
+              <h3 className="card-title">API Key Details</h3>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setInspectedKey(null)}>✕</button>
             </div>
             <div className="modal-body">
               <div className="card" style={{ padding: '16px', gap: '8px' }}>
                 <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Nom enregistré : </span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Service: </span>
                   <strong>{inspectedKey.name}</strong>
                 </div>
                 <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>État : </span>
-                  <span className="badge badge-success">Actif dans le trousseau</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Status: </span>
+                  <span className="badge badge-success">Active in Keyring</span>
                 </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
-                  Conformément aux directives de sécurité, le serveur backend ne diffuse jamais le secret en clair après son enregistrement.
+                  In accordance with security best practices, the backend server never transmits the secret value in plain text after registration.
                 </p>
               </div>
             </div>
             <div className="modal-footer">
               <button type="button" className="btn btn-secondary btn-sm" onClick={() => setInspectedKey(null)}>
-                Fermer
+                Close
               </button>
             </div>
           </div>
