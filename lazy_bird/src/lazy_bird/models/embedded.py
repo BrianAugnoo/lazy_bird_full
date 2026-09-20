@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from sqlalchemy import UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, Relationship
 
 
 class Embedded(SQLModel, table=True):
@@ -10,6 +10,7 @@ class Embedded(SQLModel, table=True):
     llm_model_id: int = Field(foreign_key="llmmodel.id", nullable=False)
     status: str = Field(default="pending", nullable=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
+    
 
 
 class EmbeddedVectorDatabase(SQLModel, table=True):

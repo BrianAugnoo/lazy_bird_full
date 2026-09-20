@@ -21,4 +21,7 @@ def get_api_key(name: str):
 
 @router.get("/api-keys", response_model=list[APIKeyOut])
 def list_api_keys():
-    return APIKey.get_all()
+    try:
+        return APIKey.get_all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

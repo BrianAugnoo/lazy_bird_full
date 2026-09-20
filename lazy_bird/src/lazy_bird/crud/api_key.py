@@ -25,6 +25,11 @@ def find(name: str):
             return None
         return APIKeyOut.model_validate(api_key)
 
+def find_key(name: str) -> str | None:
+    with db() as session:
+        api_key = session.get(APIKeyORM, name)
+        return api_key.key if api_key else None
+
 def get_all():
     with db() as session:
         statement = select(APIKeyORM)

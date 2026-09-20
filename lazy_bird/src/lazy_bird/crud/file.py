@@ -318,8 +318,9 @@ def _delete_file_dependencies(session, file_id: int) -> None:
         ).all()
         for link in links:
             session.delete(link)
+        session.flush()
         session.delete(embedded)
-
+        session.flush()  
 
 def deletes(ids: list[int]):
     with db() as session:

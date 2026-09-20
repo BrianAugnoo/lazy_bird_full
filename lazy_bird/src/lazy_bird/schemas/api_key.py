@@ -4,6 +4,7 @@ class APIKeyIn(BaseModel):
     name: str
     key: str
 
+    model_config = ConfigDict(from_attributes=True)
 
 class APIKeyOut(BaseModel):
     name: str

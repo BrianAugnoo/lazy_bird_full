@@ -13,6 +13,7 @@ from lazy_bird.crud import file as file_crud
 from lazy_bird.tools.hf_auth import authenticate_hf
 from lazy_bird.tools.hf_cache_worker import sync_cached_models
 from lazy_bird.embedding import initialize_embedding_engines
+from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
 from lazy_bird.crud import vector_database
 from lazy_bird.preferences import apply_preferences, auto_embedding_enabled
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
         authenticate_hf()
         sync_cached_models()
         initialize_embedding_engines()
+        initialize_inference_engines()
         database.initialize_selected_vector_database()
         vector_database.populate(list(database.VECTOR_ADAPTERS))
         apply_preferences()

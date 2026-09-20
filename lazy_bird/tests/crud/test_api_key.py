@@ -27,6 +27,13 @@ def test_find_returns_none_for_unknown_name(crud_database):
     assert api_key_crud.find("missing") is None
 
 
+def test_find_key_returns_secret_without_exposing_it(crud_database):
+    api_key_crud.create(APIKeyIn(name="OpenAI", key="secret"))
+
+    assert api_key_crud.find_key("OpenAI") == "secret"
+    assert api_key_crud.find_key("missing") is None
+
+
 def test_get_all_returns_all_records(crud_database):
     api_key_crud.create(APIKeyIn(name="OpenAI", key="one"))
     api_key_crud.create(APIKeyIn(name="Anthropic", key="two"))
