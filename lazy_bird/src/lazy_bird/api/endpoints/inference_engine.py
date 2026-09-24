@@ -20,3 +20,10 @@ def single_turn(query: str, instructions: str=None):
         return crud.single_turn(query, instructions)
     except Exception as e:
         return {"success": False, "error": str(e)}
+    
+@router.post("/agentic-loop")
+def agentic_loop(conversation_id: int, tools: list[dict] = None, max_iter: int = 20):
+    try:
+        return crud.chat(conversation_id, tools, max_iter)
+    except Exception as e:
+        return {"success": False, "error": str(e)}

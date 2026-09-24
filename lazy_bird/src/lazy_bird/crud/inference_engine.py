@@ -8,7 +8,7 @@ from sqlmodel import select
 from lazy_bird.database import db
 from lazy_bird.models.inference_engine import InferenceEngine
 from lazy_bird.schemas.inference_engine import InferenceEngineOut
-
+from lazy_bird.crud.conversation import messages
 
 def _kwargs_keys(module) -> dict[str, list]:
     keys = {}
@@ -105,3 +105,9 @@ def single_turn(query: str, instructions: str = None):
     from lazy_bird.inference import single_turn as inference_single_turn
 
     return inference_single_turn(query, instructions)
+
+def chat(conversation_id: int, tools: list[dict] = None, max_iter: int = 20):
+    from lazy_bird.inference import agentic_loop
+
+    agentic_loop(conversation_id, tools, max_iter)
+    return messages(conversation_id)
