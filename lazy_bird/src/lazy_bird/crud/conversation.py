@@ -36,11 +36,20 @@ def messages(conversation_id: int):
         messages = session.exec(statement).all()
         return [MessageOut.model_validate(msg) for msg in messages]
 
-def delete(id: int):
+def delete_conversation(id: int):
     with db() as session:
         conversation = session.get(ConversationORM, id)
         if conversation is None:
             return False
         session.delete(conversation)
+        session.commit()
+        return True
+    
+def delete_all():
+    with db() as session:
+        # Delete messages first (foreign key constraint)
+        session.execute(delete(MessageORM))
+        # Then delete conversations
+        session.execute(delete(ConversationORM))
         session.commit()
         return True

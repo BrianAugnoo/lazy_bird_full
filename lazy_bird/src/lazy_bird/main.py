@@ -19,9 +19,27 @@ from lazy_bird.crud import vector_database
 from lazy_bird.preferences import apply_preferences, auto_embedding_enabled
 from lazy_bird.task_queue import start_worker, stop_worker
 from lazy_bird.tools.db_schema import get_schema_diagram
+from lazy_bird.agents.tools import initialize_tools
 
 logger = logging.getLogger(__name__)
 
+
+def tools_initialization():
+    validation = initialize_tools()
+    for error, success in zip(validation["failed"], validation["success"]):
+        logger.info(
+            "Tool loaded: %s.%s.%s",
+            success["package"],
+            success["module"],
+            success["name"],
+        )
+        logger.warning(
+            "Tool failed to load: %s.%s.%s - %s",
+            error["package"],
+            error["module"],
+            error["name"],
+            error["error"],
+        )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,6 +55,7 @@ async def lifespan(app: FastAPI):
         sync_cached_models()
         initialize_embedding_engines()
         initialize_inference_engines()
+        tools_initialization()
         database.initialize_selected_vector_database()
         vector_database.populate(list(database.VECTOR_ADAPTERS))
         apply_preferences()

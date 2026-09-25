@@ -10,6 +10,18 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 async def get_conversations():
     return ConversationCrud.get_all()
 
+@router.delete("/")
+async def delete_all_conversations():
+    try:
+        ConversationCrud.delete_all()
+        return {"message": "All conversations deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/", response_model=ConversationOut)
+async def create_conversation(conversation: ConversationIn):
+    return ConversationCrud.create(conversation)
+
 @router.get("/{id}", response_model=ConversationOut)
 async def get_conversation(id: int):
     conversation = ConversationCrud.get(id)
@@ -17,9 +29,6 @@ async def get_conversation(id: int):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
 
-@router.post("/", response_model=ConversationOut)
-async def create_conversation(conversation: ConversationIn):
-    return ConversationCrud.create(conversation)
 
 @router.get("/{id}/messages", response_model=list[MessageOut])
 async def get_conversation_messages(id: int):
@@ -31,7 +40,10 @@ async def get_conversation_messages(id: int):
 
 @router.delete("/{id}")
 async def delete_conversation(id: int):
-    success = ConversationCrud.delete(id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return {"message": "Conversation deleted"}
+    try:
+        success = ConversationCrud.delete_conversation(id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {"message": "Conversation deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
