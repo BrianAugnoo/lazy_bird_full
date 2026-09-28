@@ -8,9 +8,7 @@ from datetime import datetime, timezone
 
 def create(conversation_in: ConversationIn):
     with db() as session:
-        conversation = ConversationORM(
-            title=conversation_in.title,
-        )
+        conversation = ConversationORM(**conversation_in.model_dump())
         session.add(conversation)
         session.commit()
         session.refresh(conversation)

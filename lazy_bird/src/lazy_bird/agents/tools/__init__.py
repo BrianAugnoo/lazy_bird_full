@@ -42,3 +42,6 @@ def initialize_tools():
                         }
                         validation["failed"].append(error)                       
     return validation
+
+def get_tools(tools_names: list[str] = None) -> list[dict]:
+    return [t for t in tools if t["function"]["name"] in tools_names]

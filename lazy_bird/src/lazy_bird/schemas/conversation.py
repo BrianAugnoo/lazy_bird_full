@@ -5,6 +5,7 @@ from lazy_bird.schemas.message import MessageOut
 
 class ConversationOut(BaseModel):
     id: int
+    agent_id: int
     title: str
     created_at: datetime
     updated_at: datetime
@@ -14,5 +15,6 @@ class ConversationOut(BaseModel):
 
 class ConversationIn(BaseModel):
     title: str
+    agent_id: int
 
     model_config = ConfigDict(from_attributes=True)
