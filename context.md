@@ -184,4 +184,173 @@ gestion des erreur tres limiter, peut d'enpoint possede des codes d'erreur assez
 - controller:
 manque des transparance au niveau des erreurs, ce qui resultes a des erreurs silencieuse ou internal server error tres dur a indentifier, ceux doivent contenir des Erreurs custom propre a chaque model et qui recouvre au maximium tout les cas d'usage.
 
+### Models: File, LLMModel et le package embedding/
+
+#### File Model
+**Location:** `models/file.py`
+
+Le modèle `File` représente un fichier stocké dans le système. C'est l'entité centrale autour de laquelle s'articule le traitement de documents.
+
+**Champs principaux:**
+- `id` : Clé primaire
+- `name` : Nom du fichier (sans extension)
+- `path` : Chemin absolu vers le fichier stocké
+- `extension` : Extension du fichier (ex: `.pdf`, `.txt`, `.md`)
+- `size` : Taille en octets
+- `status` : État du traitement (`pending`, `processing`, `format-error`, `chunck-error`, `incomplete-vectors`, `done`, `embedding-error`)
+
+**Cycle de vie du status:**
+1. `pending` : Fichier uploadé, en attente de traitement
+2. `processing` : Chunking en cours
+3. `format-error` / `chunck-error` : Échec lors du chunking (format non supporté ou erreur technique)
+4. `incomplete-vectors` : Chunking réussi mais embedding partiel/échoué
+5. `done` : Traitement complet (chunking + embedding vectoriel)
+6. `embedding-error` : Échec lors de la génération d'embeddings
+
+Le modèle `File` est lié aux modèles `Embedded` (relation 1:N) qui représentent les embeddings générés pour ce fichier avec différents modèles LLM.
+
+#### LLMModel
+**Location:** `models/llm_model.py`
+
+Le modèle `LLMModel` représente un modèle de langage/embedding disponible dans le système. Il stocke les métadonnées nécessaires pour charger et utiliser le modèle.
+
+**Champs principaux:**
+- `id` : Clé primaire
+- `name` : Nom lisible du modèle
+- `hf_path` : Identifiant Hugging Face (ex: `sentence-transformers/all-MiniLM-L6-v2`)
+- `local_path` : Chemin local où le modèle est stocké (cache HF ou téléchargement manuel)
+- `dimension` : Dimension des vecteurs d'embedding (ex: 384, 768, 1024)
+- `max_context_length` : Longueur maximale de contexte en tokens
+- `selected_context` : Contexte réellement utilisé (peut être < max_context_length)
+- `formats` : Liste des formats supportés (ex: `["safetensors", "ONNX"]`) - stocké en JSON
+- `selected_format` : Format actuellement sélectionné pour l'inférence
+
+**Particularités:**
+- La table utilise une contrainte d'unicité implicite sur `hf_path` + `local_path` via la logique métier
+- `selected_format` doit être l'un des formats listés dans `formats`
+- Le modèle est découvert soit par téléchargement HF (`download_model`), soit par scan du cache local (`hf_cache_worker`)
+
+#### Package embedding/
+**Location:** `embedding/`
+
+Le package `embedding` gère la génération de vecteurs d'embedding à partir de chunks de texte. Il suit le pattern d'interface dynamique du projet.
+
+**Architecture:**
+```
+embedding/
+├── __init__.py           # Point d'entrée: initialize_embedding_engines, generate_embeddings, generate_query_embedding
+└── engines/
+    ├── __init__.py       # detect_device() - détection automatique CUDA/MPS/CPU
+    └── sentence_transformers.py  # Implémentation actuelle (seule engine)
+```
+
+**Fonctionnement:**
+1. **Découverte des engines** : `initialize_embedding_engines()` scanne `embedding/engines/` via `pkgutil`, importe chaque module (ignorant ceux préfixés `_`), et enregistre le moteur via `engine_crud.upsert(name, file_path, formats)`.
+
+2. **Contrat d'un engine** : Chaque module dans `engines/` doit exposer:
+   - `name` : Identifiant unique (ex: `"sentence-transformers"`)
+   - `formats` : Liste des formats supportés (ex: `["safetensors", "ONNX"]`)
+   - `EngineSettings` : Pydantic BaseModel pour valider la configuration
+   - `validate_kwargs(kwargs)` : Validation de la config
+   - `embed(docs, ctx_size, batch_size, settings)` : Fonction principale retournant `list[list[float]]`
+
+3. **Génération d'embeddings** : `generate_embeddings(chunks)` :
+   - Récupère le moteur sélectionné + le modèle LLM sélectionné + sa config
+   - Injecte `model_path` (local_path du LLMModel) dans les settings
+   - Traite les chunks par batchs (`batch_size` configurable)
+   - Retourne `[{**chunk, "vector": vector}, ...]`
+
+4. **Embedding de requête** : `generate_query_embedding(query)` utilise le même contexte pour vectoriser une requête utilisateur.
+
+**Extensibilité :** Ajouter un nouvel engine = créer un fichier dans `engines/` respectant le contrat. Aucune modification du code central n'est nécessaire.
+
+### Tools: model_extraction et hf_cache_worker
+
+#### model_extraction.py
+**Location:** `tools/model_extraction.py`
+
+Module utilitaire pour télécharger et inspecter des modèles Hugging Face.
+
+**Fonctions:**
+- `download_model(hf_path, local_dir=None)` : Télécharge un modèle via `huggingface_hub.snapshot_download`. Retourne le chemin local.
+- `extract(local_path)` : Lit `config.json` du modèle local et extrait les métadonnées clés:
+  - `formats` : Détecte `safetensors` (toujours) + `ONNX` (si dossier `onnx/` existe)
+  - `name` : `_name_or_path` du config
+  - `dimension` : `hidden_size`
+  - `max_context_length` : `max_position_embeddings`
+
+**Utilisation :** Appelé par `llm_model_crud.create()` (téléchargement + extraction) et `llm_model_crud.create_from_local_path()` (extraction seule). Sert à peupler automatiquement les champs du modèle `LLMModel`.
+
+#### hf_cache_worker.py
+**Location:** `tools/hf_cache_worker.py`
+
+Worker de synchronisation qui scanne le cache Hugging Face local (`~/.cache/huggingface/hub`) et importe automatiquement les modèles trouvés dans la base de données.
+
+**Fonctionnement:**
+1. `find_cached_model_paths(cache_path)` : Parcourt le cache HF, identifie les dossiers `models--*`, extrait le `repo_id` (ex: `sentence-transformers/all-MiniLM-L6-v2`), et trouve le snapshot unique dans `snapshots/`. Retourne `[(hf_path, local_path), ...]`.
+
+2. `sync_cached_models(cache_path)` : 
+   - Récupère les `local_path` déjà connus en base (`llm_model_crud.get_all()`)
+   - Pour chaque modèle du cache non encore en base : appelle `llm_model_crud.create_from_local_path(hf_path, local_path)`
+   - Gère les erreurs silencieusement (log warning) : modèle corrompu, config.json manquant, etc.
+   - Retourne le nombre de modèles nouvellement créés
+
+**Intégration :** Peut être appelé manuellement via API/CLI, ou planifié comme tâche périodique pour maintenir la base à jour avec les modèles téléchargés en dehors de l'application.
+
+### Préférences: preference.yaml, preferences.py et task_queue.py
+
+#### preference.yaml
+**Location:** `preference.yaml` (à la racine de `src/lazy_bird/`)
+
+Fichier de configuration YAML simple pour les préférences globales de l'application.
+
+**Structure actuelle:**
+```yaml
+auto-embedding:
+  enable: true
+```
+
+**Design :** Extensible - de nouvelles sections peuvent être ajoutées sans migration de schéma. Le fichier est lu/écrit atomiquement par `preferences.py`.
+
+#### preferences.py
+**Location:** `preferences.py`
+
+Module de gestion des préférences - façade unique pour lire/écrire `preference.yaml`.
+
+**Fonctions principales:**
+- `_read_preferences()` : Lecture brute du YAML, retourne `dict`
+- `get_preferences()` : Accès lecture complet
+- `update_preferences(values)` : Écriture atomique (écrase le fichier), retourne `True` si modifié
+- `auto_embedding_enabled()` : Accès typé à `auto-embedding.enable` (gère aussi l'alias `enabled`), validation booléenne
+- `auto_embedding()` : Si activé, appelle `file_crud.enqueue_files_requiring_embedding()` pour mettre en file d'attente les fichiers nécessitant un (ré)embedding
+- `apply_preferences()` : Point d'entrée unique - applique toutes les préférences actives (actuellement seulement auto-embedding), retourne la liste des `file_id` enfileés
+
+**Pattern :** Séparation lecture/écriture, validation stricte des types, valeurs par défaut sensées. Sert de "source of truth" pour la configuration runtime.
+
+#### task_queue.py
+**Location:** `task_queue.py`
+
+Système de file d'attente asynchrone basé sur **Huey** (backend SQLite) pour le traitement lourd (chunking + embedding) en arrière-plan.
+
+**Composants:**
+- `huey` : Instance `SqliteHuey` configurée avec `LAZY_BIRD_QUEUE_DB` ou chemin par défaut (`database/storage/lazy_bird_queue.db`)
+- `process_file_task(file_id)` : Tâche Huey principale
+  1. Initialise la DB SQL (migrations incluses)
+  2. Initialise les engines d'embedding
+  3. Initialise la DB vectorielle + populate les tables
+  4. Exécute `process_file(file_id)` (async) via `asyncio.run()`
+- `enqueue_file(file_id)` : Enfile une tâche, retourne le `Task` Huey
+- `queued_file_ids()` : Retourne l'ensemble des `file_id` actuellement en attente dans la queue
+- `start_worker()` : Lance un process `multiprocessing.Process` exécutant le consumer Huey (1 worker thread)
+- `stop_worker(worker)` : Arrêt propre (terminate + join timeout 5s)
+
+**Flux complet (auto-embedding) :**
+1. `preferences.apply_preferences()` → `file_crud.enqueue_files_requiring_embedding()`
+2. `file_crud.files_requiring_embedding()` identifie les fichiers `pending` + `done` sans embedding valide pour le modèle sélectionné + DB vectorielle active
+3. `enqueue_file()` ajoute chaque fichier à la queue Huey (déduplication via `queued_file_ids()`)
+4. Worker Huey (processus séparé) défile et exécute `process_file_task`
+5. `process_file` (dans `crud/file_processing.py`) : chunking → embedding → stockage vectoriel → MAJ statuts
+
+**Avantages :** Découplage total API ↔ traitement lourd, résilience (retry Huey), scalabilité (workers multiples possibles), persistance SQLite (survit au redémarrage).
+
 ###
