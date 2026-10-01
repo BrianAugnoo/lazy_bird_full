@@ -9,6 +9,7 @@ from lazy_bird.schemas.conversation import ConversationOut
 from lazy_bird.schemas.message import MessageIn
 import lazy_bird.crud.conversation as ConversationCRUD
 import lazy_bird.crud.message as MessageCRUD
+from lazy_bird.logging_config import traced
 
 
 def initialize_inference_engines():
@@ -19,7 +20,7 @@ def initialize_inference_engines():
         module = importlib.import_module(f"{package.__name__}.{info.name}")
         engine_crud.upsert(module.name, info.name)
 
-
+@traced
 def _inference_context():
     selected = selected_inference_engine.get()
     if selected is None:
@@ -29,11 +30,12 @@ def _inference_context():
     return module, settings
 
 
+@traced
 def single_turn(query: str, instructions: str = None):
     module, settings = _inference_context()
     return module.single_turn(query, settings, instructions)
 
-
+@traced
 def agentic_loop(conversation_id: int, tools: list[dict] = None, max_iter: int = 20):
     module, settings = _inference_context()
     tool_registry = {t["function"]["name"]: t.get("callable") for t in (tools or [])}

@@ -1,8 +1,11 @@
 from contextlib import asynccontextmanager
 import asyncio
-import logging
 from pathlib import Path
 from time import perf_counter
+
+from lazy_bird.logging_config import configure_logging
+
+configure_logging()
 
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
@@ -21,20 +24,20 @@ from lazy_bird.task_queue import start_worker, stop_worker
 from lazy_bird.tools.db_schema import get_schema_diagram
 from lazy_bird.agents.tools import initialize_tools
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def tools_initialization():
     validation = initialize_tools()
     for error, success in zip(validation["failed"], validation["success"]):
         logger.info(
-            "Tool loaded: %s.%s.%s",
+            "Tool loaded: {}.{}.{}",
             success["package"],
             success["module"],
             success["name"],
         )
         logger.warning(
-            "Tool failed to load: %s.%s.%s - %s",
+            "Tool failed to load: {}.{}.{} - {}",
             error["package"],
             error["module"],
             error["name"],
@@ -79,14 +82,14 @@ async def require_database(request: Request, call_next):
     database_status = getattr(request.app.state, "database_status", database.status)
     startup_error = getattr(request.app.state, "startup_error", database_status.error)
     if request.url.path != "/" and startup_error:
-        logger.warning("HTTP request rejected during startup: method=%s path=%s", request.method, request.url.path)
+        logger.warning("HTTP request rejected during startup: method={} path={}", request.method, request.url.path)
         return JSONResponse(status_code=503, content={"success": False, "error": startup_error})
     try:
         response = await call_next(request)
         return response
     finally:
         logger.info(
-            "HTTP request: method=%s path=%s status=%s duration_ms=%.2f",
+            "HTTP request: method={} path={} status={} duration_ms={:.2f}",
             request.method,
             request.url.path,
             getattr(locals().get("response"), "status_code", "error"),

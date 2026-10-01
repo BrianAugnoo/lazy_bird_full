@@ -9,6 +9,7 @@ from lazy_bird.schemas.message import MessageIn
 from lazy_bird.agents.tools import get_tools
 from lazy_bird.inference import agentic_loop
 import traceback
+from lazy_bird.logging_config import traced
 
 def _populate_agent_out(agent_orm: AgentORM) -> AgentOut:
     """Convert Agent ORM to AgentOut with sub_agents_ids and parent_agents_ids populated."""
@@ -162,6 +163,7 @@ def delete(id: int) -> bool:
 
 from sqlalchemy.orm import selectinload
 
+@traced
 def chat(agent_id: int, query: str, selected_conversation_id: int = None, max_iter=20) -> list[ConversationOut]:
     try:
         with db() as session:

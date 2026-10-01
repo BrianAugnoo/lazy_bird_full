@@ -5,6 +5,7 @@ from openai import OpenAI
 from lazy_bird.schemas.inference_engine import Response
 from lazy_bird.crud.api_key import find_key
 from lazy_bird.schemas.message import MessageOut
+from lazy_bird.logging_config import traced
 
 name = "openai-client"
 
@@ -37,7 +38,7 @@ def _client(settings: EngineSettings) -> OpenAI:
 def _strip_tools_for_api(tools: list[dict] | None) -> list[dict]:
     return [{"type": t["type"], "function": t["function"]} for t in (tools or [])]
 
-
+@traced
 def _to_openai_messages(history: list[MessageOut]) -> list[dict]:
     messages = []
     for msg in history:
@@ -83,7 +84,7 @@ def _to_openai_messages(history: list[MessageOut]) -> list[dict]:
 
     return messages
 
-
+@traced
 def single_turn(query: str, settings: EngineSettings, instructions: str = None, tools: list[dict] = None):
     invalid = validate_kwargs(settings)
     if invalid is not True:

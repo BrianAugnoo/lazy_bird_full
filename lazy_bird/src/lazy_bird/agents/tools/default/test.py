@@ -1,7 +1,9 @@
 from lazy_bird.embedding import generate_query_embedding
 from lazy_bird import database
 import json
+from lazy_bird.logging_config import traced
 
+@traced
 def search_knowledge_base(query: str, top_k: int = 5) -> str:
     """
     Search the Lazy Bird knowledge base.
