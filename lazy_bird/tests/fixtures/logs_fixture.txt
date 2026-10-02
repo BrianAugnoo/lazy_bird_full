@@ -1,0 +1,13 @@
+2026-10-01 21:52:04.849 | INFO     | Worker:1 | Thread:2 | lazy_bird.api:_log_event:1 | {"event":"function_call","call_id":"root1","parent_id":null,"module":"lazy_bird.api","function":"root_call","args":{"value":"1"}}
+2026-10-01 21:52:04.850 | INFO     | Worker:1 | Thread:2 | lazy_bird.crud:create:2 | {"event":"function_call","call_id":"child1","parent_id":"root1","module":"lazy_bird.crud","function":"createAPIKey","args":{}}
+2026-10-01 21:52:04.851 | INFO     | Worker:1 | Thread:2 | lazy_bird.crud:_log_event:3 | {"event":"function_return","call_id":"child1","parent_id":"root1","module":"lazy_bird.crud","function":"createAPIKey","status":"success","duration_ms":1.2,"result":"ok"}
+2026-10-01 21:52:04.852 | INFO     | Worker:1 | Thread:2 | lazy_bird.api:_log_event:4 | {"event":"function_return","call_id":"root1","parent_id":null,"module":"lazy_bird.api","function":"root_call","status":"success","duration_ms":3.4,"result":"ok"}
+2026-10-01 21:53:00.000 | ERROR    | Worker:1 | Thread:2 | lazy_bird.crud:_log_event:5 | {"event":"function_call","call_id":"error1","parent_id":null,"module":"lazy_bird.crud","function":"broken_call","args":{}}
+2026-10-01 21:53:00.100 | ERROR    | Worker:1 | Thread:2 | lazy_bird.crud:_log_event:6 | {"event":"function_return","call_id":"error1","parent_id":null,"module":"lazy_bird.crud","function":"broken_call","status":"error","duration_ms":100.0}
+Traceback (most recent call last):
+  File "worker.py", line 10, in broken_call
+    raise ValueError("broken")
+ValueError: broken
+2026-10-01 21:54:00.000 | INFO     | Worker:1 | Thread:2 | lazy_bird.api:_log_event:7 | {"event":"function_call","call_id":"interrupted","parent_id":null,"module":"lazy_bird.api","function":"interrupted_call","args":{}}
+2026-10-01 21:55:00.000 | WARNING  | Worker:1 | Thread:2 | lazy_bird.api:_log_event:8 | message with broken {json
+2026-10-01 21:56:00.000 | INFO     | Worker:1 | Thread:2 | lazy_bird.api:_log_event:9 | final entry without newline

@@ -5,7 +5,8 @@ from time import perf_counter
 
 from lazy_bird.logging_config import configure_logging
 
-configure_logging()
+TRACE_ALL_LAZY_BIRD = True
+configure_logging(trace_all=TRACE_ALL_LAZY_BIRD)
 
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates

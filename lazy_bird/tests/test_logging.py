@@ -1,8 +1,18 @@
 import asyncio
+import json
 
 from loguru import logger
 
 from lazy_bird.logging_config import traced
+
+
+def _json_events(messages):
+    events = []
+    for message in messages:
+        for line in message.splitlines():
+            if line.startswith("{"):
+                events.append(json.loads(line))
+    return events
 
 
 def test_traced_logs_sync_call_return_and_exception():
@@ -27,10 +37,15 @@ def test_traced_logs_sync_call_return_and_exception():
         logger.remove(sink_id)
 
     output = "\n".join(messages)
-    assert "CALL function test_traced_logs_sync_call_return_and_exception.<locals>.add" in output
-    assert "RETURN function test_traced_logs_sync_call_return_and_exception.<locals>.add" in output
-    assert "status=success duration_ms=" in output
-    assert "ERROR function test_traced_logs_sync_call_return_and_exception.<locals>.fail" in output
+    events = _json_events(messages)
+    add_call = next(event for event in events if event["function"].endswith(".add") and event["event"] == "function_call")
+    add_return = next(event for event in events if event["function"].endswith(".add") and event["event"] == "function_return")
+    fail_return = next(event for event in events if event["function"].endswith(".fail") and event["event"] == "function_return")
+    assert add_call["call_id"] == add_return["call_id"]
+    assert add_return["status"] == "success"
+    assert add_return["duration_ms"] >= 0
+    assert fail_return["status"] == "error"
+    assert add_call["parent_id"] is None
     assert "ValueError: broken" in output
 
 
@@ -47,6 +62,50 @@ def test_traced_logs_async_call():
     finally:
         logger.remove(sink_id)
 
-    output = "\n".join(messages)
-    assert "CALL function test_traced_logs_async_call.<locals>.fetch_value" in output
-    assert "RETURN function test_traced_logs_async_call.<locals>.fetch_value" in output
+    events = _json_events(messages)
+    fetch_call = next(event for event in events if event["function"].endswith(".fetch_value") and event["event"] == "function_call")
+    fetch_return = next(event for event in events if event["function"].endswith(".fetch_value") and event["event"] == "function_return")
+    assert fetch_call["call_id"] == fetch_return["call_id"]
+    assert fetch_return["result"] == "'ready'"
+
+
+def test_traced_parent_id_links_nested_calls():
+    messages = []
+    sink_id = logger.add(messages.append, format="{message}")
+
+    @traced
+    def child():
+        return "child"
+
+    @traced
+    def parent():
+        return child()
+
+    try:
+        assert parent() == "child"
+    finally:
+        logger.remove(sink_id)
+
+    events = _json_events(messages)
+    parent_call = next(event for event in events if event["function"].endswith(".parent") and event["event"] == "function_call")
+    child_call = next(event for event in events if event["function"].endswith(".child") and event["event"] == "function_call")
+    assert child_call["parent_id"] == parent_call["call_id"]
+
+
+def test_package_function_is_traced_without_decorator():
+    import lazy_bird.main as main_module
+
+    messages = []
+    sink_id = logger.add(messages.append, format="{message}")
+    try:
+        asyncio.run(main_module.read_root())
+    finally:
+        logger.remove(sink_id)
+
+    events = _json_events(messages)
+    assert any(
+        event["event"] == "function_call"
+        and event["module"] == "lazy_bird.main"
+        and event["function"] == "read_root"
+        for event in events
+    )
