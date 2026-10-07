@@ -5,24 +5,29 @@ from lazy_bird.database import DatabaseStatus
 
 
 @pytest.mark.anyio
-async def test_lifespan_starts_and_stops_worker_when_auto_embedding_enabled(migrated_database, monkeypatch):
-    worker = object()
-    started = []
-    stopped = []
-    monkeypatch.setattr(
-        main_module.database,
-        "initialize_selected_sql_database",
-        lambda: DatabaseStatus(ready=True, revision="test"),
-    )
+async def test_lifespan_starts_and_stops_the_task_scheduler(migrated_database, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main_module.database, "initialize_selected_sql_database", lambda: DatabaseStatus(ready=True, revision="test"))
     monkeypatch.setattr(main_module, "authenticate_hf", lambda: None)
     monkeypatch.setattr(main_module, "sync_cached_models", lambda: 0)
-    monkeypatch.setattr(main_module, "initialize_embedding_engines", lambda: None)
-    monkeypatch.setattr(main_module.database, "initialize_selected_vector_database", lambda: None)
-    monkeypatch.setattr(main_module, "auto_embedding_enabled", lambda: True)
-    monkeypatch.setattr(main_module, "start_worker", lambda: started.append(True) or worker)
-    monkeypatch.setattr(main_module, "stop_worker", lambda value: stopped.append(value))
+    monkeypatch.setattr(main_module, "start_scheduler", lambda: calls.append("start"))
+    monkeypatch.setattr(main_module, "stop_scheduler", lambda: calls.append("stop"))
 
     async with main_module.lifespan(main_module.app):
-        assert started == [True]
+        assert calls == ["start"]
 
-    assert stopped == [worker]
+    assert calls == ["start", "stop"]
+
+
+@pytest.mark.anyio
+async def test_scheduler_is_not_started_when_initialization_fails(migrated_database, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main_module.database, "initialize_selected_sql_database", lambda: DatabaseStatus(ready=True, revision="test"))
+    monkeypatch.setattr(main_module, "authenticate_hf", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(main_module, "start_scheduler", lambda: calls.append("start"))
+    monkeypatch.setattr(main_module, "stop_scheduler", lambda: calls.append("stop"))
+
+    async with main_module.lifespan(main_module.app):
+        assert main_module.app.state.startup_error == "Application initialization failed: offline"
+
+    assert calls == []

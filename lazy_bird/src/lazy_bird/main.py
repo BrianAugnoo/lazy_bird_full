@@ -25,7 +25,7 @@ from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
 from lazy_bird.preferences import apply_preferences, auto_embedding_enabled
-from lazy_bird.task_queue import start_worker, stop_worker
+from lazy_bird.tasks import start_scheduler, stop_scheduler
 from lazy_bird.tools.db_schema import get_schema_diagram
 from lazy_bird.agents.tools import initialize_tools
 
@@ -43,13 +43,13 @@ def tools_initialization():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    worker = None
     database_status = database.initialize_selected_sql_database()
     app.state.database_status = database_status
     app.state.startup_error = database_status.error
     if not database_status.ready:
         yield
         return
+    scheduler_started = False
     try:
         authenticate_hf()
         sync_cached_models()
@@ -58,14 +58,17 @@ async def lifespan(app: FastAPI):
         tools_initialization()
         database.initialize_selected_vector_database()
         apply_preferences()
-        worker = start_worker()
+        start_scheduler()
+        scheduler_started = True
         app.state.startup_error = None
     except Exception as exc:
+        logger.opt(exception=exc).error("Application initialization failed")
         app.state.startup_error = f"Application initialization failed: {exc}"
     try:
         yield
     finally:
-        stop_worker(worker)
+        if scheduler_started:
+            stop_scheduler()
 
 
 app = FastAPI(lifespan=lifespan)

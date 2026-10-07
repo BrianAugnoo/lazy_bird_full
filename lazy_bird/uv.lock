@@ -763,15 +763,6 @@ wheels = [
 ]
 
 [[package]]
-name = "huey"
-version = "3.4.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/57/25/1281d8f3febc30b5facbfc5e4163447241711591c094dac642d32c827eb0/huey-3.4.0.tar.gz", hash = "sha256:ac9b02e741f13da4092ea19bcaafc73669e97d3153914d2fed2868df144f6dfa", size = 630013, upload-time = "2026-09-04T02:04:34.521Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/31/cee585bd4d1e39947a426a6736f4e17d22b454952370fb9cf48eb3103085/huey-3.4.0-py3-none-any.whl", hash = "sha256:d0580762397744026f83baae5f2b97a62474a62b8565ac75bbafefe72f9c784f", size = 136493, upload-time = "2026-09-04T02:04:32.848Z" },
-]
-
-[[package]]
 name = "huggingface-hub"
 version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
@@ -954,7 +945,6 @@ dependencies = [
     { name = "dataset" },
     { name = "datasets" },
     { name = "fastapi", extra = ["standard"] },
-    { name = "huey" },
     { name = "huggingface-hub" },
     { name = "jinja2" },
     { name = "lancedb" },
@@ -983,7 +973,6 @@ requires-dist = [
     { name = "dataset", specifier = ">=2.0.0" },
     { name = "datasets", specifier = ">=5.0.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
-    { name = "huey", specifier = ">=2.5.0" },
     { name = "huggingface-hub", specifier = ">=1.27.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "lancedb", specifier = ">=0.37.1" },

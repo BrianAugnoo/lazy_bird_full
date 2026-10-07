@@ -81,3 +81,18 @@ def test_extract_reports_safetensors_when_onnx_directory_is_missing(tmp_path: Pa
 def test_extract_requires_existing_model_directory(tmp_path):
     with pytest.raises(FileNotFoundError, match="does not exist"):
         extraction.extract(str(tmp_path / "missing"))
+
+
+def test_weights_size_counts_only_the_loaded_format(tmp_path):
+    from lazy_bird.tools.model_extraction import weights_size_mb
+
+    (tmp_path / "onnx").mkdir()
+    (tmp_path / "model.safetensors").write_bytes(b"\0" * 1024 * 1024)
+    (tmp_path / "pytorch_model.bin").write_bytes(b"\0" * 2 * 1024 * 1024)
+    (tmp_path / "onnx" / "model.onnx").write_bytes(b"\0" * 3 * 1024 * 1024)
+    (tmp_path / "onnx" / "model_qint8.onnx").write_bytes(b"\0" * 1024 * 1024)
+
+    assert weights_size_mb(str(tmp_path), "safetensors") == 1
+    assert weights_size_mb(str(tmp_path), "bin") == 2
+    assert weights_size_mb(str(tmp_path), "ONNX") == 3
+    assert weights_size_mb(str(tmp_path / "missing")) == 0

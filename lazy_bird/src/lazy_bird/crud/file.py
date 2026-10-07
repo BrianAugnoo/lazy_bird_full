@@ -4,7 +4,6 @@ from lazy_bird import database
 from lazy_bird.crud import chunk as chunk_crud
 from lazy_bird.database import db
 from lazy_bird.models.file import File as FileORM
-from lazy_bird.task_queue import enqueue_file, queued_file_ids
 from lazy_bird.preferences import auto_embedding_enabled
 from lazy_bird.errors import AppError
 from lazy_bird.schemas.files import FileOut
@@ -55,17 +54,20 @@ def files_requiring_embedding() -> list[int]:
     return sorted(pending_ids | {file_id for file_id in done_ids if _missing_vectors(model_name, file_id)})
 
 
+def enqueue_file(file_id: int):
+    """Queue the processing task of a file (an already active one is reused)."""
+    from lazy_bird.tasks.default.files import process_file
+
+    file = get(file_id)
+    title = f"Process {file.name}{file.extension}" if file else None
+    return process_file.submit(file_id=file_id, title=title, dedupe_key=f"files.process:{file_id}")
+
+
 def enqueue_files_requiring_embedding(file_ids: list[int] | None = None) -> list[int]:
     candidates = files_requiring_embedding() if file_ids is None else file_ids
-    queued = queued_file_ids()
-    enqueued = []
     for file_id in candidates:
-        if file_id in queued:
-            continue
         enqueue_file(file_id)
-        queued.add(file_id)
-        enqueued.append(file_id)
-    return enqueued
+    return list(candidates)
 
 
 def create_empty_directory(path: str) -> str:

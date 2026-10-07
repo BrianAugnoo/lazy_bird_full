@@ -113,8 +113,8 @@ def db_session_factory(migrated_database: MigratedDatabase):
 
 @pytest.fixture
 def crud_database(db_session_factory, monkeypatch: pytest.MonkeyPatch):
-    """Migrated database used by every CRUD module; background enqueueing is disabled."""
-    monkeypatch.setattr(file_crud, "enqueue_file", lambda file_id: None)
+    """Migrated database used by every CRUD module; uploads are not auto-embedded."""
+    monkeypatch.setattr(file_crud, "auto_embedding_enabled", lambda: False)
     return db_session_factory
 
 
@@ -159,8 +159,8 @@ def client(
     monkeypatch.setattr(hf_auth_module, "authenticate_hf", lambda: None)
     monkeypatch.setattr(main_module, "sync_cached_models", lambda: 0)
     monkeypatch.setattr(hf_cache_worker_module, "sync_cached_models", lambda: 0)
-    monkeypatch.setattr(main_module, "start_worker", lambda: None)
-    monkeypatch.setattr(main_module, "stop_worker", lambda worker: None)
+    monkeypatch.setattr(main_module, "start_scheduler", lambda: None)
+    monkeypatch.setattr(main_module, "stop_scheduler", lambda: None)
 
     with TestClient(main_module.app, raise_server_exceptions=False) as test_client:
         yield test_client

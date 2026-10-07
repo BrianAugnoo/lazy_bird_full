@@ -27,6 +27,18 @@ fields = {
 }
 
 
+CUDA_OVERHEAD_MB = 512
+
+
+def resources(settings, model):
+    """GPU runs hold the model weights plus the CUDA context in VRAM."""
+    from lazy_bird.tools.model_extraction import weights_size_mb
+
+    if (settings.device or detect_device()) != "cuda":
+        return {"cpu": 1}
+    return {"cpu": 1, "vram_mb": round(weights_size_mb(model.local_path, model.selected_format) + CUDA_OVERHEAD_MB)}
+
+
 @lru_cache(maxsize=1)
 def _load(path: str, device: str, backend: str):
     try:

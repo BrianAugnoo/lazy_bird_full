@@ -1,17 +1,16 @@
 import pytest
 
-from lazy_bird.crud.file_processing import process_file
+from lazy_bird.tasks.default.files import process_file
 
 
-async def upload_and_process(client, name: str, content: bytes) -> int:
+def upload_and_process(client, name: str, content: bytes) -> int:
     file_id = client.post("/files/upload?dir=docs", files={"files": (name, content, "text/markdown")}).json()[0]["id"]
-    await process_file(file_id)
+    process_file.run(file_id=file_id)
     return file_id
 
 
-@pytest.mark.anyio
-async def test_search_returns_chunks_with_their_file(client, fake_embedding):
-    await upload_and_process(client, "zoo.md", b"zzzz zebra zone\n\naaaa apple")
+def test_search_returns_chunks_with_their_file(client, fake_embedding):
+    upload_and_process(client, "zoo.md", b"zzzz zebra zone\n\naaaa apple")
 
     response = client.post("/search/", json={"query": "zzz", "top_k": 1})
 
@@ -22,10 +21,9 @@ async def test_search_returns_chunks_with_their_file(client, fake_embedding):
     assert result["distance"] is not None
 
 
-@pytest.mark.anyio
-async def test_search_can_be_limited_to_some_files(client, fake_embedding):
-    first = await upload_and_process(client, "a.md", b"zzzz")
-    second = await upload_and_process(client, "b.md", b"zzzz too")
+def test_search_can_be_limited_to_some_files(client, fake_embedding):
+    first = upload_and_process(client, "a.md", b"zzzz")
+    second = upload_and_process(client, "b.md", b"zzzz too")
 
     response = client.post("/search/", json={"query": "zzzz", "top_k": 5, "file_ids": [second]})
 

@@ -2,3 +2,6 @@ auto-embedding:
   enable: true
 chunking:
   max_tokens: 512
+tasks:
+  workers: 4
+  resources: {}

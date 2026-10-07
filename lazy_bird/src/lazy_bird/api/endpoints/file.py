@@ -1,8 +1,9 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from lazy_bird.errors import NotFoundError
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 import lazy_bird.crud.file as FileCrud
 from lazy_bird.schemas.files import FileContentIn, FileOut, FileUpdate
-from lazy_bird.task_queue import enqueue_file, queued_file_ids
+from lazy_bird.schemas.task import TaskOut
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -104,16 +105,12 @@ async def update_file(file_id: int, payload: FileUpdate):
         raise HTTPException(status_code=404, detail="File not found")
     return result
 
-@router.post("/{file_id}/process", status_code=202)
+@router.post("/{file_id}/process", status_code=202, response_model=TaskOut)
 async def process_file(file_id: int):
+    """Queue (or return the already active) processing task of a file."""
     if FileCrud.get(file_id) is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    if file_id not in FileCrud.files_requiring_embedding():
-        return {"file_id": file_id, "queued": False}
-    if file_id in queued_file_ids():
-        return {"file_id": file_id, "queued": False}
-    task = enqueue_file(file_id)
-    return {"file_id": file_id, "task_id": task.id}
+        raise NotFoundError("File", file_id)
+    return FileCrud.enqueue_file(file_id)
 
 @router.delete("/")
 async def delete_files(ids: list[int]):

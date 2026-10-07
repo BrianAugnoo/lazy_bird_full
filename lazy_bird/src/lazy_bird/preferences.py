@@ -56,6 +56,23 @@ def chunking_max_tokens() -> int:
     return value
 
 
+DEFAULT_TASK_WORKERS = 4
+
+
+def task_preferences() -> dict[str, Any]:
+    """``tasks.workers`` (parallel runs) and ``tasks.resources`` (capacity overrides)."""
+    tasks = _read_preferences().get("tasks", {}) or {}
+    if not isinstance(tasks, dict):
+        raise ValueError("preference.yaml: tasks must contain a mapping")
+    workers = tasks.get("workers", DEFAULT_TASK_WORKERS)
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError("preference.yaml: tasks.workers must be a positive integer")
+    resources = tasks.get("resources", {}) or {}
+    if not isinstance(resources, dict) or not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in resources.values()):
+        raise ValueError("preference.yaml: tasks.resources must map resource names to numbers")
+    return {"workers": workers, "resources": {name: float(value) for name, value in resources.items()}}
+
+
 def auto_embedding() -> list[int]:
     if not auto_embedding_enabled():
         return []

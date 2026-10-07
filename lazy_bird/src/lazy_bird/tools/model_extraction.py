@@ -37,3 +37,33 @@ def extract(local_path: str):
     except Exception as e:
         print(f"Error extracting model: {e}")
         raise e
+
+
+FORMAT_SUFFIXES = {
+    "safetensors": (".safetensors",),
+    "onnx": (".onnx",),
+    "gguf": (".gguf",),
+    "bin": (".bin",),
+    "pth": (".pth", ".pt"),
+    "ckpt": (".ckpt",),
+}
+
+
+def weights_size_mb(local_path: str, weight_format: str | None = None) -> float:
+    """Size of the weights a model loads, in MiB.
+
+    Repositories often ship the same weights in several formats; only the files of
+    ``weight_format`` are counted. For ONNX, the main ``model.onnx`` is preferred over
+    quantized variants.
+    """
+    root = Path(local_path)
+    if root.is_file():
+        return root.stat().st_size / 1024**2
+    if not root.is_dir():
+        return 0.0
+    suffixes = FORMAT_SUFFIXES.get((weight_format or "").lower(), tuple(suffix for group in FORMAT_SUFFIXES.values() for suffix in group))
+    files = [path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in suffixes]
+    if (weight_format or "").lower() == "onnx" and files:
+        main = [path for path in files if path.name == "model.onnx"]
+        files = main[:1] or [max(files, key=lambda path: path.stat().st_size)]
+    return sum(path.stat().st_size for path in files) / 1024**2
