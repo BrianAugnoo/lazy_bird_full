@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 class FileOut(BaseModel):
     id: int
@@ -7,8 +7,7 @@ class FileOut(BaseModel):
     extension: str
     path: str
     status: str
-    embedded_by: list[int] = Field(default_factory=list)
-    vector_db: list[str] = Field(default_factory=list)
+    chunk_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -53,13 +53,12 @@ def test_successful_startup_runs_services_after_database_is_ready(migrated_datab
     monkeypatch.setattr(main_module, "sync_cached_models", lambda: calls.append("sync"))
     monkeypatch.setattr(main_module, "initialize_embedding_engines", lambda: calls.append("engines"))
     monkeypatch.setattr(main_module.database, "initialize_selected_vector_database", lambda: calls.append("vector"))
-    monkeypatch.setattr(main_module.vector_database, "populate", lambda names: calls.append("populate"))
 
     with TestClient(main_module.app) as client:
         response = client.get("/")
 
     assert response.json()["success"] is True
-    assert calls == ["database", "auth", "sync", "engines", "vector", "populate"]
+    assert calls == ["database", "auth", "sync", "engines", "vector"]
 
 
 def test_service_initialization_failure_is_exposed_without_starting_later_services(migrated_database, monkeypatch):

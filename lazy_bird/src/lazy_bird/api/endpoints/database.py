@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from lazy_bird import database
-from lazy_bird.schemas.database import DatabaseDisconnectIn, DatabaseSelectionIn, SelectedDatabaseOut
+from lazy_bird.schemas.database import DatabaseDisconnectIn, DatabaseSelectionIn, SelectedDatabaseOut, VectorTableOut
 
 router = APIRouter(prefix="/databases", tags=["databases"])
 
@@ -33,3 +33,15 @@ def disconnect_database(payload: DatabaseDisconnectIn):
         return database.disconnect_database(payload.kind, payload.name, payload.drop)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/vector/tables", response_model=list[VectorTableOut])
+def list_vector_tables():
+    """Model tables of the selected vector database, with their number of vectors."""
+    return [VectorTableOut(model_name=name, vectors=database.vector_count(name)) for name in database.vector_tables()]
+
+
+@router.delete("/vector/tables/{model_name:path}", status_code=204)
+def drop_vector_table(model_name: str):
+    database.vector_drop(model_name)
+    return Response(status_code=204)

@@ -33,12 +33,14 @@ class DatabaseConfig(BaseModel):
     selected_vector_database: str = "lancedb"
     model_config = ConfigDict(extra="forbid")
 
+SQL_ADAPTER_ATTRIBUTES = ("name", "messages", "initialize", "disconnect")
+VECTOR_ADAPTER_ATTRIBUTES = SQL_ADAPTER_ATTRIBUTES + ("tables", "create", "delete", "count", "retrieve", "drop")
+
+
 def _discover(package_name: str) -> dict[str, ModuleType]:
     package = importlib.import_module(package_name)
     modules = {}
-    required = ("name", "initialize", "disconnect")
-    if package_name.endswith("vector_db"):
-        required += ("create", "delete", "retrieve")
+    required = VECTOR_ADAPTER_ATTRIBUTES if package_name.endswith("vector_db") else SQL_ADAPTER_ATTRIBUTES
     for info in pkgutil.iter_modules(package.__path__):
         if not info.name.startswith("_"):
             module = importlib.import_module(f"{package_name}.{info.name}")
@@ -200,11 +202,28 @@ def disconnect_database(kind: str, name: str, drop: bool = False):
     CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
     return {"selected_sql": config.selected_sql_database, "selected_vector": config.selected_vector_database}
 
-def vector_create(model_name: str, embedded_id: int, chunks: list[dict]):
-    return vector_adapter().create(model_name, embedded_id, chunks)
+def vector_tables() -> list[str]:
+    """Model names having a vector table in the selected vector database."""
+    return vector_adapter().tables()
 
-def vector_delete(model_name: str, embedded_id: int):
-    return vector_adapter().delete(model_name, embedded_id)
+def vector_create(model_name: str, rows: list[dict]) -> int:
+    """Insert or replace ``{"chunk_id", "vector"}`` rows in the table of a model."""
+    return vector_adapter().create(model_name, rows)
 
-def vector_retrieve(model_name: str, top_k: int, vector: list[float]):
-    return vector_adapter().retrieve(model_name, top_k, vector)
+def vector_delete(model_name: str, chunk_ids: list[int]) -> int:
+    return vector_adapter().delete(model_name, chunk_ids)
+
+def vector_delete_chunks(chunk_ids: list[int]) -> int:
+    """Delete the vectors of these chunks from every model table."""
+    if not chunk_ids:
+        return 0
+    return sum(vector_delete(model_name, chunk_ids) for model_name in vector_tables())
+
+def vector_count(model_name: str, chunk_ids: list[int] | None = None) -> int:
+    return vector_adapter().count(model_name, chunk_ids)
+
+def vector_retrieve(model_name: str, top_k: int, vector: list[float], chunk_ids: list[int] | None = None) -> list[dict]:
+    return vector_adapter().retrieve(model_name, top_k, vector, chunk_ids)
+
+def vector_drop(model_name: str) -> None:
+    vector_adapter().drop(model_name)

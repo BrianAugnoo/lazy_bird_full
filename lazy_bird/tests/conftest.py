@@ -9,12 +9,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from types import ModuleType
 from typing import Iterator
 
 from alembic import command
 from alembic.config import Config
 from fastapi import UploadFile
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 from sqlmodel import Session
 from starlette.datastructures import Headers
 import pytest
@@ -162,3 +164,34 @@ def client(
 
     with TestClient(main_module.app, raise_server_exceptions=False) as test_client:
         yield test_client
+
+
+class FakeEmbeddingSettings(BaseModel):
+    dimension: int = 4
+
+
+def _fake_embed(texts, settings, model):
+    """Deterministic vectors: letter frequencies folded on ``dimension`` axes."""
+    vectors = []
+    for text in texts:
+        vector = [0.0] * settings.dimension
+        for character in text.lower():
+            if character.isalpha():
+                vector[ord(character) % settings.dimension] += 1.0
+        vectors.append(vector)
+    return vectors
+
+
+@pytest.fixture
+def fake_embedding(crud_database, monkeypatch):
+    """Register a fake embedding engine and make one of its presets the default."""
+    from lazy_bird.embedding import engine_family
+
+    module = ModuleType("fake_embedding_engine")
+    module.name = "fake-embedding"
+    module.EngineSettings = FakeEmbeddingSettings
+    module.embed = _fake_embed
+    module.vector_space = lambda settings: f"fake/space-{settings.dimension}"
+    monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
+    engine = engine_family.register(module)
+    return engine_family.create_preset("fake", engine.id, {}, default=True)

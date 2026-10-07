@@ -15,3 +15,8 @@ class DatabaseDisconnectIn(BaseModel):
 class SelectedDatabaseOut(BaseModel):
     sql: str
     vector: str
+
+
+class VectorTableOut(BaseModel):
+    model_name: str
+    vectors: int

@@ -11,8 +11,7 @@ describe('MarkdownViewer Component', () => {
     size: 2048,
     path: 'documents/readme.md',
     status: 'done',
-    embedded_by: [1],
-    vector_db: ['lancedb'],
+    chunk_count: 1,
   };
 
   it('renders markdown content and parses headers', () => {

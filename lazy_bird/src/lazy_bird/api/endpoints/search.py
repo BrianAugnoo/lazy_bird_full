@@ -1,12 +1,11 @@
 from fastapi import APIRouter
-from lazy_bird import database
-from lazy_bird.embedding import embed_query, vector_space
-from lazy_bird.schemas.search import ChunkOut, SearchIn
+
+from lazy_bird.crud import search as search_crud
+from lazy_bird.schemas.search import SearchIn, SearchResultOut
 
 router = APIRouter(prefix="/search", tags=["search"])
 
-@router.post("/", response_model=list[ChunkOut])
+
+@router.post("/", response_model=list[SearchResultOut])
 def search(payload: SearchIn):
-    vector, resolved = embed_query(payload.query, payload.preset_id)
-    rows = database.vector_retrieve(vector_space(resolved), payload.top_k, vector)
-    return [ChunkOut.model_validate({**row, "distance": row.get("_distance")}) for row in rows]
+    return search_crud.search(payload.query, payload.top_k, payload.preset_id, payload.file_ids)

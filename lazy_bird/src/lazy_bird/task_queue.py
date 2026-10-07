@@ -22,7 +22,6 @@ huey = SqliteHuey("lazy-bird", filename=queue_database_path())
 def process_file_task(file_id: int):
     from lazy_bird import database
     from lazy_bird.embedding import initialize_embedding_engines
-    from lazy_bird.crud import vector_database
     from lazy_bird.crud.file_processing import process_file
 
     database_status = database.initialize_selected_sql_database()
@@ -30,7 +29,6 @@ def process_file_task(file_id: int):
         raise RuntimeError(database_status.error or "Database is unavailable")
     initialize_embedding_engines()
     database.initialize_selected_vector_database()
-    vector_database.populate(list(database.VECTOR_ADAPTERS))
     return asyncio.run(process_file(file_id))
 
 

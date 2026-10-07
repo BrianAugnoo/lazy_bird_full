@@ -649,8 +649,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onOpenFile }) => {
                   <tr>
                     <th>Name</th>
                     <th>Status / Type</th>
-                    <th>Embedded By</th>
-                    <th>Vector DB</th>
+                    <th>Chunks</th>
                     <th>Size</th>
                     <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
@@ -736,31 +735,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onOpenFile }) => {
                             {file.status}
                           </span>
                         </td>
-                        <td>
-                          {file.embedded_by && file.embedded_by.length > 0 ? (
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                              {file.embedded_by.map((modelId) => (
-                                <span key={modelId} className="badge badge-muted" style={{ fontSize: '0.7rem' }}>
-                                  Model #{modelId}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>None</span>
-                          )}
-                        </td>
-                        <td>
-                          {file.vector_db && file.vector_db.length > 0 ? (
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                              {file.vector_db.map((vdb) => (
-                                <span key={vdb} className="badge badge-info" style={{ fontSize: '0.7rem' }}>
-                                  {vdb}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>None</span>
-                          )}
+                        <td style={{ color: 'var(--text-secondary)' }}>
+                          {file.chunk_count ? `${file.chunk_count} chunk${file.chunk_count > 1 ? 's' : ''}` : '—'}
                         </td>
                         <td style={{ color: 'var(--text-secondary)' }}>
                           {(file.size / 1024).toFixed(1)} KB

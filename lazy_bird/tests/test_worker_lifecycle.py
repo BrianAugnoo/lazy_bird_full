@@ -18,7 +18,6 @@ async def test_lifespan_starts_and_stops_worker_when_auto_embedding_enabled(migr
     monkeypatch.setattr(main_module, "sync_cached_models", lambda: 0)
     monkeypatch.setattr(main_module, "initialize_embedding_engines", lambda: None)
     monkeypatch.setattr(main_module.database, "initialize_selected_vector_database", lambda: None)
-    monkeypatch.setattr(main_module.vector_database, "populate", lambda names: None)
     monkeypatch.setattr(main_module, "auto_embedding_enabled", lambda: True)
     monkeypatch.setattr(main_module, "start_worker", lambda: started.append(True) or worker)
     monkeypatch.setattr(main_module, "stop_worker", lambda value: stopped.append(value))

@@ -67,9 +67,8 @@ export const DatabaseSettings: React.FC = () => {
         const [fileList, prefs] = await Promise.all([getFiles(), getPreferences()]);
         const autoEmbeddingEnabled = prefs['auto-embedding']?.enable ?? true;
         const currentVectorDb = catalog.selected_vector;
-        const affectedFiles = fileList.filter(
-          (f) => f.vector_db && f.vector_db.includes(currentVectorDb)
-        );
+        // Vectors stay in the previous database: every chunked file must be embedded again.
+        const affectedFiles = fileList.filter((f) => (f.chunk_count ?? 0) > 0);
         if (affectedFiles.length > 0) {
           setVectorImpactNotice({
             affectedCount: affectedFiles.length,

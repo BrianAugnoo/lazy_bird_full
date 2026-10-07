@@ -8,7 +8,7 @@ Expose une recherche sémantique sur l'index vectoriel et présente les chunks t
 
 ## Dépendances
 - `src/api/endpoints/search.ts` (`searchChunks`)
-- `src/core/types/api.ts` (`SearchResultChunk`)
+- `src/core/types/api.ts` (`SearchResult`)
 
 ## Comment l'étendre
 Pour ajouter un filtre ou une stratégie de tri, étendre `SearchPayload` et `searchChunks`, puis ajouter le contrôle dans le formulaire.

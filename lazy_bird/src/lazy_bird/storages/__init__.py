@@ -16,7 +16,8 @@ def _safe_path(path: Path) -> Path:
 
 
 def _safe_directory(directory: str) -> Path:
-    relative_dir = Path(directory)
+    # Client paths may use Windows separators; normalize them on every platform.
+    relative_dir = Path(directory.replace("\\", "/"))
     if relative_dir.is_absolute() or ".." in relative_dir.parts:
         raise ValueError("Invalid destination directory")
     return _safe_path(storage_dir / relative_dir)

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { searchChunks } from '@/api/endpoints/search';
-import type { SearchResultChunk } from '@/core/types/api';
+import type { SearchResult } from '@/core/types/api';
 
 export function SemanticSearch() {
   const [query, setQuery] = useState('');
   const [topK, setTopK] = useState(5);
-  const [results, setResults] = useState<SearchResultChunk[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,19 +92,19 @@ export function SemanticSearch() {
           {!loading && results.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '24px' }}>
               {results.map((result, index) => (
-                <article className="card" key={`${result.embedded_id}-${result.start_line}-${index}`}>
+                <article className="card" key={result.chunk.id}>
                   <div className="card-header">
-                    <span className="badge badge-muted">Result #{index + 1}</span>
+                    <span className="badge badge-muted">#{index + 1} · {result.file_name}</span>
                     <span className="badge badge-info">
-                      {result.distance === undefined ? 'Distance N/A' : `Distance: ${result.distance.toFixed(4)}`}
+                      {result.distance == null ? 'Distance N/A' : `Distance: ${result.distance.toFixed(4)}`}
                     </span>
                   </div>
                   <div className="card-body">
-                    <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.content}</p>
+                    <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.chunk.content}</p>
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '14px', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                      <span>Lines {result.start_line}-{result.end_line}</span>
-                      <span>Chunk #{result.embedded_id}</span>
-                      {result.meta_data && <span>{JSON.stringify(result.meta_data)}</span>}
+                      <span>Lines {result.chunk.start_line}-{result.chunk.end_line}</span>
+                      <span>Chunk #{result.chunk.position + 1}</span>
+                      <span title={result.file_path}>{result.file_path}</span>
                     </div>
                   </div>
                 </article>

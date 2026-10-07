@@ -105,12 +105,10 @@ def _build_chunks(file: File, max_token: int) -> list[dict[str, Any]]:
             max_token,
             encoding,
         ):
-            token_count = paragraph_chunk.pop("token_count")
-            paragraph_chunk["meta_data"] = {
+            paragraph_chunk["meta"] = {
                 **document_metadata,
                 "source": str(path),
                 "paragraph": paragraph_index,
-                "token_count": token_count,
             }
             chunks.append(paragraph_chunk)
 

@@ -17,8 +17,7 @@ def test_file_output_reads_model_attributes():
         "extension": ".pdf",
         "path": "uploads/report.pdf",
         "status": "pending",
-        "embedded_by": [],
-        "vector_db": [],
+        "chunk_count": 0,
     }
 
 

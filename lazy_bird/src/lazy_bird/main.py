@@ -24,7 +24,6 @@ from lazy_bird.tools.hf_cache_worker import sync_cached_models
 from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
-from lazy_bird.crud import vector_database
 from lazy_bird.preferences import apply_preferences, auto_embedding_enabled
 from lazy_bird.task_queue import start_worker, stop_worker
 from lazy_bird.tools.db_schema import get_schema_diagram
@@ -58,7 +57,6 @@ async def lifespan(app: FastAPI):
         initialize_inference_engines()
         tools_initialization()
         database.initialize_selected_vector_database()
-        vector_database.populate(list(database.VECTOR_ADAPTERS))
         apply_preferences()
         worker = start_worker()
         app.state.startup_error = None

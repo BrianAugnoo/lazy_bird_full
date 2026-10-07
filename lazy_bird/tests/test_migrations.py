@@ -58,7 +58,7 @@ def test_vector_migration_removes_relational_chunks(tmp_path, monkeypatch):
         connection.execute(text("INSERT INTO chunk (file_id, content, start_line, end_line) VALUES (1, 'content', 1, 1)"))
     engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "9d3f1a7c2b44")
 
     engine = create_engine(db_url)
     assert "chunk" not in _tables(engine)
@@ -113,3 +113,22 @@ def test_engine_preset_migration_keeps_engine_configuration(tmp_path, monkeypatc
         assert connection.execute(text("SELECT embedding_engine_id FROM selectedembeddingengine")).scalar() == 1
         assert connection.execute(text("SELECT kwargs FROM embeddingengine WHERE id = 1")).scalar() == '{"device": "cpu"}'
     engine.dispose()
+
+
+def test_chunk_migration_requeues_embedded_files(tmp_path, monkeypatch):
+    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "chunk-table.db", "39c55806b344")
+    engine = create_engine(db_url)
+    with engine.begin() as connection:
+        for name, status in [("done", "done"), ("broken", "format-error"), ("failed", "embedding-error")]:
+            connection.execute(text(f"INSERT INTO file (name, path, extension, size, status) VALUES ('{name}', '/tmp/{name}', '.md', 1, '{status}')"))
+    engine.dispose()
+
+    command.upgrade(config, "eee74044513a")
+
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        statuses = dict(connection.execute(text("SELECT name, status FROM file")).all())
+    tables = _tables(engine)
+    engine.dispose()
+    assert statuses == {"done": "pending", "broken": "format-error", "failed": "pending"}
+    assert "chunk" in tables and not {"embedded", "embeddedvectordatabase", "vectordatabase"} & tables

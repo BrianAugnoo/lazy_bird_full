@@ -19,8 +19,8 @@ async def test_markdown_chunks_paragraphs_and_preserves_metadata(tmp_path: Path)
 
     assert [chunk["content"] for chunk in chunks] == ["First paragraph.", "Second paragraph."]
     assert [(chunk["start_line"], chunk["end_line"]) for chunk in chunks] == [(4, 4), (6, 6)]
-    assert chunks[0]["meta_data"]["title"] == "Notes"
-    assert chunks[0]["meta_data"]["paragraph"] == 1
+    assert chunks[0]["meta"]["title"] == "Notes"
+    assert chunks[0]["meta"]["paragraph"] == 1
 
 
 @pytest.mark.anyio
@@ -32,7 +32,7 @@ async def test_markdown_splits_large_paragraph_with_overlap(tmp_path: Path):
     chunks = await Chunck(file=file, max_token=20)
 
     assert len(chunks) > 1
-    assert all(chunk["meta_data"]["token_count"] <= 20 for chunk in chunks)
+    assert all(chunk["token_count"] <= 20 for chunk in chunks)
     assert all(chunk["start_line"] == 1 and chunk["end_line"] == 1 for chunk in chunks)
     assert chunks[0]["content"][-5:] in chunks[1]["content"]
 

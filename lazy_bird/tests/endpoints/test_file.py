@@ -1,7 +1,5 @@
-from lazy_bird.models.embedded import Embedded, EmbeddedVectorDatabase
-from lazy_bird.models.llm_model import LLMModel
-from lazy_bird.models.vector_database import VectorDatabase
-from sqlmodel import select
+from lazy_bird import database
+from lazy_bird.crud import chunk as chunk_crud
 
 
 def test_file_endpoint_uploads_multiple_files_and_lists_them(client):
@@ -52,49 +50,19 @@ def test_file_endpoint_returns_the_entire_file_by_id(client):
     assert 'filename="archive.bin"' in response.headers["content-disposition"]
 
 
-def test_file_output_includes_embedding_and_vector_database_ids(client, crud_database):
+def test_file_output_includes_its_chunk_count(client, crud_database):
     created = client.post(
         "/files/upload?dir=documents",
         files={"files": ("report.txt", b"report", "text/plain")},
     )
     file_id = created.json()[0]["id"]
-
-    with crud_database() as session:
-        first_vector_db = VectorDatabase(name="test-vector-a")
-        second_vector_db = VectorDatabase(name="test-vector-b")
-        llm_model = LLMModel(
-            name="test-model",
-            hf_path="test/model",
-            local_path="test/model",
-            dimension=3,
-        )
-        session.add_all([first_vector_db, second_vector_db, llm_model])
-        session.flush()
-        llm_model_id = llm_model.id
-        first_vector_db_id = first_vector_db.id
-        second_vector_db_id = second_vector_db.id
-        embedded = Embedded(file_id=file_id, llm_model_id=llm_model.id)
-        session.add(embedded)
-        session.flush()
-        session.add_all(
-            [
-                EmbeddedVectorDatabase(
-                    embedded_id=embedded.id,
-                    vector_database_id=first_vector_db.id,
-                ),
-                EmbeddedVectorDatabase(
-                    embedded_id=embedded.id,
-                    vector_database_id=second_vector_db.id,
-                ),
-            ]
-        )
-        session.commit()
+    chunk_crud.replace(file_id, [{"content": "a", "start_line": 1, "end_line": 1}, {"content": "b", "start_line": 2, "end_line": 2}])
 
     response = client.get(f"/files/{file_id}")
 
     assert response.status_code == 200
-    assert response.json()["embedded_by"] == [llm_model_id]
-    assert response.json()["vector_db"] == ["test-vector-a", "test-vector-b"]
+    assert response.json()["chunk_count"] == 2
+    assert [chunk["content"] for chunk in client.get(f"/files/{file_id}/chunks").json()] == ["a", "b"]
 
 
 def test_file_endpoint_returns_null_for_unknown_id(client):
@@ -104,42 +72,21 @@ def test_file_endpoint_returns_null_for_unknown_id(client):
     assert response.json() is None
 
 
-def test_file_endpoint_deletes_file_with_embedding_dependencies(client, crud_database):
+def test_file_endpoint_deletes_file_with_its_chunks_and_vectors(client, crud_database):
     created = client.post(
         "/files/upload?dir=documents",
         files={"files": ("embedded.md", b"# document", "text/markdown")},
     )
     file_id = created.json()[0]["id"]
-
-    with crud_database() as session:
-        llm_model = LLMModel(
-            name="test-model",
-            hf_path="test/model",
-            local_path="test/model",
-            dimension=3,
-        )
-        session.add(llm_model)
-        session.flush()
-        embedded = Embedded(file_id=file_id, llm_model_id=llm_model.id)
-        session.add(embedded)
-        session.flush()
-        vector_database = VectorDatabase(name="test-vector")
-        session.add(vector_database)
-        session.flush()
-        session.add(
-            EmbeddedVectorDatabase(
-                embedded_id=embedded.id,
-                vector_database_id=vector_database.id,
-            )
-        )
-        session.commit()
+    chunks = chunk_crud.replace(file_id, [{"content": "document", "start_line": 1, "end_line": 1}])
+    database.vector_create("org/model", [{"chunk_id": chunks[0].id, "vector": [1.0, 0.0]}])
 
     response = client.request("DELETE", "/files/", json=[file_id])
 
     assert response.status_code == 200, response.text
     assert client.get(f"/files/{file_id}").json() is None
-    with crud_database() as session:
-        assert session.exec(select(Embedded).where(Embedded.file_id == file_id)).first() is None
+    assert chunk_crud.for_file(file_id) == []
+    assert database.vector_count("org/model") == 0
 
 
 def test_file_endpoint_requires_directory_and_files(client):

@@ -52,7 +52,7 @@ async def test_chunck_splits_with_the_chunking_preference_budget(crud_database, 
     records = await chunck(file_id)
 
     assert len(records) > 1
-    assert all(record["meta_data"]["token_count"] <= 4 for record in records)
+    assert all(record["token_count"] <= 4 for record in records)
 
 
 @pytest.mark.anyio

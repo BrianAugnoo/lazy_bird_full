@@ -81,9 +81,8 @@ export interface FileItem {
   size: number;
   extension: string;
   path: string;
-  status: string; // 'pending' | 'processing' | 'done' | 'format-error' | 'chunck-error' | 'incomplete-vectors'
-  embedded_by?: number[];
-  vector_db?: string[];
+  status: string; // 'pending' | 'processing' | 'done' | 'format-error' | 'chunck-error' | 'embedding-error'
+  chunk_count?: number;
 }
 
 export interface DirectoryResponse {
@@ -123,17 +122,33 @@ export interface SearchPayload {
   query: string;
   top_k?: number;
   preset_id?: number;
+  file_ids?: number[];
 }
 
-export interface SearchResultChunk {
+export interface Chunk {
+  id: number;
+  file_id: number;
+  position: number;
   content: string;
   start_line: number;
   end_line: number;
-  start_row?: number;
-  end_row?: number;
-  meta_data?: Record<string, any>;
-  embedded_id: number;
-  distance?: number;
+  start_row: number | null;
+  end_row: number | null;
+  token_count: number | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SearchResult {
+  chunk: Chunk;
+  file_name: string;
+  file_path: string;
+  distance: number | null;
+}
+
+export interface VectorTable {
+  model_name: string;
+  vectors: number;
 }
 
 // 7. Databases (/databases/)

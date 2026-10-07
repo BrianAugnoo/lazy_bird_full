@@ -93,7 +93,10 @@ class EngineFamily:
     # ----------------------------------------------------------------- discovery
     def load_module(self, import_path: str) -> LoadedEngine:
         """Import one engine module and check its contract."""
-        module = import_module(import_path)
+        return self.check_module(import_module(import_path))
+
+    def check_module(self, module: ModuleType) -> LoadedEngine:
+        """Check that a module respects the engine contract of this family."""
         require_attributes(module, ("name", "EngineSettings", *self.required))
         contract = settings_contract(module, "EngineSettings", required=True)
         loaded = LoadedEngine(module, contract)
@@ -111,10 +114,20 @@ class EngineFamily:
             except Exception as error:
                 failures.append(LoadFailure(f"{self.kind}_engine", import_path, str(error)))
                 continue
-            self._loaded[loaded.module.name] = loaded
-            self._upsert(loaded, f"{Path(loaded.module.__file__).name}")
+            self._register(loaded)
         record_failures(f"{self.kind}_engine", failures)
         return self.engines()
+
+    def register(self, module: ModuleType) -> EngineOut:
+        """Register an engine module that does not live in the engines package."""
+        loaded = self.check_module(module)
+        self._register(loaded)
+        return next(engine for engine in self.engines() if engine.name == module.name)
+
+    def _register(self, loaded: LoadedEngine) -> None:
+        self._loaded[loaded.module.name] = loaded
+        source = getattr(loaded.module, "__file__", None)
+        self._upsert(loaded, Path(source).name if source else loaded.module.__name__)
 
     def _upsert(self, loaded: LoadedEngine, file_path: str) -> None:
         with db() as session:
