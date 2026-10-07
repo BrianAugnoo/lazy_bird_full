@@ -42,6 +42,20 @@ def auto_embedding_enabled() -> bool:
     return enabled
 
 
+DEFAULT_CHUNK_MAX_TOKENS = 512
+
+
+def chunking_max_tokens() -> int:
+    """Token budget of one chunk (``chunking.max_tokens``), independent of embedding models."""
+    chunking = _read_preferences().get("chunking", {})
+    if not isinstance(chunking, dict):
+        raise ValueError("preference.yaml: chunking must contain a mapping")
+    value = chunking.get("max_tokens", DEFAULT_CHUNK_MAX_TOKENS)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 1:
+        raise ValueError("preference.yaml: chunking.max_tokens must be an integer greater than 1")
+    return value
+
+
 def auto_embedding() -> list[int]:
     if not auto_embedding_enabled():
         return []

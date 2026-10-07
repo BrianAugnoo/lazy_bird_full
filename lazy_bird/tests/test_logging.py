@@ -94,12 +94,15 @@ def test_traced_parent_id_links_nested_calls():
 
 def test_package_function_is_traced_without_decorator():
     import lazy_bird.main as main_module
+    from lazy_bird.logging_config import set_package_tracing
 
     messages = []
     sink_id = logger.add(messages.append, format="{message}")
+    set_package_tracing(True)
     try:
         asyncio.run(main_module.read_root())
     finally:
+        set_package_tracing(False)
         logger.remove(sink_id)
 
     events = _json_events(messages)
@@ -109,3 +112,21 @@ def test_package_function_is_traced_without_decorator():
         and event["function"] == "read_root"
         for event in events
     )
+
+def test_printed_lines_become_single_log_records():
+    from lazy_bird.logging_config import _StreamToLoguru
+
+    messages = []
+    sink_id = logger.add(messages.append, format="{message}")
+    stream = _StreamToLoguru("INFO")
+    try:
+        stream.write("value:")
+        stream.write(" ")
+        stream.write("42")
+        stream.write("\n")
+        stream.write("pending")
+        stream.flush()
+    finally:
+        logger.remove(sink_id)
+
+    assert [message.strip() for message in messages] == ["value: 42", "pending"]

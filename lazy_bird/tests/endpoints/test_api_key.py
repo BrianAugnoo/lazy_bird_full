@@ -1,11 +1,11 @@
 def test_api_key_endpoint_creates_gets_and_lists_records(client):
     payload = {"name": "OpenAI", "key": "secret"}
 
-    created = client.post("/api-keys/api-keys", json=payload)
-    fetched = client.get("/api-keys/api-keys/OpenAI")
-    listed = client.get("/api-keys/api-keys")
+    created = client.post("/api-keys/", json=payload)
+    fetched = client.get("/api-keys/OpenAI")
+    listed = client.get("/api-keys/")
 
-    assert created.status_code == 200, created.text
+    assert created.status_code == 201, created.text
     assert created.json() == {"name": "OpenAI"}
     assert fetched.status_code == 200
     assert fetched.json() == {"name": "OpenAI"}
@@ -14,24 +14,25 @@ def test_api_key_endpoint_creates_gets_and_lists_records(client):
 
 
 def test_api_key_endpoint_returns_not_found_for_unknown_name(client):
-    response = client.get("/api-keys/api-keys/missing")
+    response = client.get("/api-keys/missing")
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "API key not found"}
+    assert response.json()["error"]["code"] == "api_key_not_found"
 
 
 def test_api_key_endpoint_translates_duplicate_error(client):
     payload = {"name": "OpenAI", "key": "first"}
-    client.post("/api-keys/api-keys", json=payload)
+    client.post("/api-keys/", json=payload)
 
-    response = client.post("/api-keys/api-keys", json={"name": "OpenAI", "key": "second"})
+    response = client.post("/api-keys/", json={"name": "OpenAI", "key": "second"})
 
-    assert response.status_code == 400
-    assert "OpenAI" in response.json()["detail"]
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "unique_field_violation"
+    assert "OpenAI" in response.json()["error"]["message"]
 
 
 def test_api_key_endpoint_rejects_invalid_json(client):
-    response = client.post("/api-keys/api-keys", json={"name": "OpenAI"})
+    response = client.post("/api-keys/", json={"name": "OpenAI"})
 
     assert response.status_code == 422
 

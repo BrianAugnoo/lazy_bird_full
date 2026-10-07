@@ -1,2 +1,4 @@
 auto-embedding:
   enable: true
+chunking:
+  max_tokens: 512

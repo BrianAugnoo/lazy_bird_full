@@ -3,9 +3,12 @@ import asyncio
 from pathlib import Path
 from time import perf_counter
 
+import os
+
 from lazy_bird.logging_config import configure_logging
 
-TRACE_ALL_LAZY_BIRD = True
+# Tracing every lazy_bird call is very verbose; set LAZY_BIRD_TRACE_ALL=0 to disable it.
+TRACE_ALL_LAZY_BIRD = os.getenv("LAZY_BIRD_TRACE_ALL", "1") not in {"0", "false", "False"}
 configure_logging(trace_all=TRACE_ALL_LAZY_BIRD)
 
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -13,6 +16,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 
 from lazy_bird.api import router as api_router
+from lazy_bird.api.error_handlers import install_error_handlers
+from lazy_bird.errors import error_payload
 from lazy_bird.crud import file as file_crud
 from lazy_bird.tools.hf_auth import authenticate_hf
 from lazy_bird.tools.hf_cache_worker import sync_cached_models
@@ -30,19 +35,11 @@ from loguru import logger
 
 def tools_initialization():
     validation = initialize_tools()
-    for error, success in zip(validation["failed"], validation["success"]):
-        logger.info(
-            "Tool loaded: {}.{}.{}",
-            success["package"],
-            success["module"],
-            success["name"],
-        )
+    for success in validation["success"]:
+        logger.info("Tool loaded: {}.{}.{}", success["package"], success["module"], success["name"])
+    for error in validation["failed"]:
         logger.warning(
-            "Tool failed to load: {}.{}.{} - {}",
-            error["package"],
-            error["module"],
-            error["name"],
-            error["error"],
+            "Tool failed to load: {}.{}.{} - {}", error["package"], error["module"], error["name"], error["error"]
         )
 
 @asynccontextmanager
@@ -74,6 +71,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+install_error_handlers(app)
 app.include_router(api_router)
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
 
@@ -84,7 +82,7 @@ async def require_database(request: Request, call_next):
     startup_error = getattr(request.app.state, "startup_error", database_status.error)
     if request.url.path != "/" and startup_error:
         logger.warning("HTTP request rejected during startup: method={} path={}", request.method, request.url.path)
-        return JSONResponse(status_code=503, content={"success": False, "error": startup_error})
+        return JSONResponse(status_code=503, content=error_payload("startup_failed", startup_error))
     try:
         response = await call_next(request)
         return response

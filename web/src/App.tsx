@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AppHeader } from '@/modules/app-header/AppHeader';
 import { ApiKeyManager } from '@/modules/api-keys/ApiKeyManager';
 import { DatabaseSettings } from '@/modules/database-settings/DatabaseSettings';
-import { EmbeddingSettings } from '@/modules/embedding-settings/EmbeddingSettings';
+import { EnginePresets } from '@/modules/engine-presets/EnginePresets';
 import { FileExplorer } from '@/modules/file-explorer/FileExplorer';
 import { Preferences } from '@/modules/preferences/Preferences';
 import { registerAllBuiltinViewers } from '@/modules/file-viewers';
@@ -17,6 +17,7 @@ const navigation: Array<{ id: TabType; label: string; icon: string }> = [
   { id: 'files', label: 'Files', icon: '▦' },
   { id: 'models', label: 'Models', icon: '◈' },
   { id: 'embeddings', label: 'Embeddings', icon: '⌁' },
+  { id: 'inference', label: 'Inference', icon: '✦' },
   { id: 'search', label: 'Search', icon: '⌕' },
   { id: 'databases', label: 'Databases', icon: '▤' },
   { id: 'api-keys', label: 'API Keys', icon: '⚿' },
@@ -130,7 +131,9 @@ function App() {
       case 'models':
         return <ModelManager />;
       case 'embeddings':
-        return <EmbeddingSettings />;
+        return <EnginePresets kind="embedding" />;
+      case 'inference':
+        return <EnginePresets kind="inference" />;
       case 'search':
         return <SemanticSearch />;
       case 'databases':

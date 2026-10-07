@@ -1,42 +1,42 @@
-import importlib
-import pkgutil
-from pathlib import Path
+"""Inference: chat with LLMs through an inference preset.
 
-from lazy_bird.crud import inference_engine as engine_crud
-from lazy_bird.crud import selected_inference_engine
+Engine modules live in ``inference/engines/`` (see ``crud.engine`` for the shared
+contract). An inference engine additionally defines ``chat(settings, tools, history)``.
+"""
 
-from lazy_bird.schemas.conversation import ConversationOut
+from lazy_bird.crud.engine import EngineFamily
+from lazy_bird.errors import UnavailableError
+from lazy_bird.models.inference_engine import InferenceEngine, PresetInference
+from lazy_bird.schemas.inference_engine import PresetInferenceOut
 from lazy_bird.schemas.message import MessageIn
 import lazy_bird.crud.conversation as ConversationCRUD
 import lazy_bird.crud.message as MessageCRUD
 
+engine_family = EngineFamily(
+    kind="inference",
+    package="lazy_bird.inference.engines",
+    required=("chat",),
+    engine_table=InferenceEngine,
+    preset_table=PresetInference,
+    engine_fk="inference_engine_id",
+    preset_out=PresetInferenceOut,
+)
+
 
 def initialize_inference_engines():
-    package = importlib.import_module("lazy_bird.inference.engines")
-    for info in pkgutil.iter_modules(package.__path__):
-        if info.name.startswith("_"):
-            continue
-        module = importlib.import_module(f"{package.__name__}.{info.name}")
-        engine_crud.upsert(module.name, info.name)
+    return engine_family.discover()
 
 
-def _inference_context():
-    selected = selected_inference_engine.get()
-    if selected is None:
-        raise RuntimeError("No inference engine is selected")
-    module = importlib.import_module(f"lazy_bird.inference.engines.{Path(selected.file_path).stem}")
-    settings = module.EngineSettings.model_validate(selected.kwargs)
-    return module, settings
+def single_turn(query: str, instructions: str | None = None, preset_id: int | None = None):
+    resolved = engine_family.resolve(preset_id)
+    if not hasattr(resolved.module, "single_turn"):
+        raise UnavailableError(f"Engine '{resolved.engine.name}' does not support single-turn requests.", code="unsupported_operation")
+    return resolved.module.single_turn(query, resolved.settings, instructions)
 
 
-
-def single_turn(query: str, instructions: str = None):
-    module, settings = _inference_context()
-    return module.single_turn(query, settings, instructions)
-
-
-def agentic_loop(conversation_id: int, tools: list[dict] = None, max_iter: int = 20):
-    module, settings = _inference_context()
+def agentic_loop(conversation_id: int, tools: list[dict] = None, max_iter: int = 20, preset_id: int | None = None):
+    resolved = engine_family.resolve(preset_id)
+    module, settings = resolved.module, resolved.settings
     tool_registry = {t["function"]["name"]: t.get("callable") for t in (tools or [])}
 
     for _ in range(max_iter):

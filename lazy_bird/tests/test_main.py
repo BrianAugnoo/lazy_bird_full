@@ -18,7 +18,9 @@ def test_openapi_contains_all_application_surfaces(client):
     assert "/models/" in paths
     assert "/files/upload" in paths
     assert "/upload_file" not in paths
-    assert "/api-keys/api-keys" in paths
+    assert "/api-keys/" in paths
+    assert "/embedding-presets/" in paths
+    assert "/inference-presets/" in paths
 from contextlib import contextmanager
 from fastapi.testclient import TestClient
 
@@ -43,7 +45,7 @@ def test_root_reports_database_failure_without_running_startup_services(monkeypa
     assert calls == []
 
 
-def test_successful_startup_runs_services_after_database_is_ready(monkeypatch):
+def test_successful_startup_runs_services_after_database_is_ready(migrated_database, monkeypatch):
     calls = []
     ready = DatabaseStatus(ready=True, revision="head")
     monkeypatch.setattr(main_module.database, "initialize_selected_sql_database", lambda: calls.append("database") or ready)
@@ -60,7 +62,7 @@ def test_successful_startup_runs_services_after_database_is_ready(monkeypatch):
     assert calls == ["database", "auth", "sync", "engines", "vector", "populate"]
 
 
-def test_service_initialization_failure_is_exposed_without_starting_later_services(monkeypatch):
+def test_service_initialization_failure_is_exposed_without_starting_later_services(migrated_database, monkeypatch):
     calls = []
     monkeypatch.setattr(main_module.database, "initialize_selected_sql_database", lambda: DatabaseStatus(ready=True, revision="head"))
     monkeypatch.setattr(main_module, "authenticate_hf", lambda: calls.append("auth"))

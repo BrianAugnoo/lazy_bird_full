@@ -24,4 +24,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.add_column('inferenceengine', sa.Column('formats', sqlmodel.sql.sqltypes.JSON, nullable=False))
+    op.add_column('inferenceengine', sa.Column('formats', sa.JSON(), nullable=False, server_default='[]'))

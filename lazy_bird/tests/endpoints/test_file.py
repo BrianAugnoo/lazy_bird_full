@@ -94,7 +94,7 @@ def test_file_output_includes_embedding_and_vector_database_ids(client, crud_dat
 
     assert response.status_code == 200
     assert response.json()["embedded_by"] == [llm_model_id]
-    assert response.json()["vetor_db"] == [first_vector_db_id, second_vector_db_id]
+    assert response.json()["vector_db"] == ["test-vector-a", "test-vector-b"]
 
 
 def test_file_endpoint_returns_null_for_unknown_id(client):

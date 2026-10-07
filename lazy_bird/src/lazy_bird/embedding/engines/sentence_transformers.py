@@ -1,42 +1,52 @@
-from pydantic import BaseModel, ConfigDict
-import torch
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import detect_device
 
 name = "sentence-transformers"
-formats = ["safetensors", "ONNX"]
+formats = ["safetensors", "onnx"]
 
 
 class EngineSettings(BaseModel):
-    device: str | None = None
-    model_path: str | None = None
-    temperature: float | None = None
+    model_id: int = Field(title="Model", description="Local model used to compute the embeddings.")
+    device: Literal["cpu", "cuda", "mps"] | None = Field(
+        default=None, description="Torch device; empty selects the best available one."
+    )
+    batch_size: int = Field(default=32, ge=1, description="Number of texts encoded at once.")
     model_config = ConfigDict(extra="forbid")
 
 
-def validate_kwargs(kwargs):
-    try:
-        EngineSettings.model_validate(kwargs)
-        return True
-    except Exception as exc:
-        return sorted({str(error.get("loc", ["unknown"])[0]) for error in exc.errors()})
+fields = {
+    "model_id": {
+        "default_field": True,
+        "content": "default.basic.reference",
+        "args": {"endpoint": "/models/", "value_key": "id", "label_key": "name"},
+    },
+}
 
 
-def embed(docs, ctx_size, batch_size, settings):
+@lru_cache(maxsize=1)
+def _load(path: str, device: str, backend: str):
     try:
         from sentence_transformers import SentenceTransformer
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "The sentence-transformers dependency is missing. Install the project dependencies with 'uv sync'."
         ) from exc
-    if not settings.model_path:
-        raise ValueError("model_path is required for sentence-transformers")
-    model = SentenceTransformer(
-        settings.model_path, 
-        device=settings.device or detect_device(),
-        model_kwargs={
-            "torch_dtype": torch.float16
-        }
+    model_kwargs = {}
+    if backend == "torch" and device == "cuda":
+        import torch
+
+        model_kwargs["torch_dtype"] = torch.float16
+    return SentenceTransformer(path, device=device, backend=backend, model_kwargs=model_kwargs)
+
+
+def embed(texts, settings, model):
+    backend = "onnx" if (model.selected_format or "").lower() == "onnx" else "torch"
+    encoder = _load(model.local_path, settings.device or detect_device(), backend)
+    vectors = encoder.encode(
+        list(texts), batch_size=settings.batch_size, convert_to_numpy=True, show_progress_bar=False
     )
-    texts = [doc["content"] if isinstance(doc, dict) else str(doc) for doc in docs]
-    return model.encode(texts, batch_size=batch_size, convert_to_numpy=True, show_progress_bar=False).tolist()
+    return vectors.tolist()

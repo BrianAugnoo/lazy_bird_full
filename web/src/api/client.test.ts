@@ -6,7 +6,7 @@ describe('API Client Layer', () => {
     vi.restoreAllMocks();
   });
 
-  it('gère les réponses avec succès', async () => {
+  it('returns the JSON body of successful responses', async () => {
     const mockData = { success: true, message: 'Welcome' };
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
@@ -19,42 +19,40 @@ describe('API Client Layer', () => {
     expect(result).toEqual(mockData);
   });
 
-  it('intercepte les erreurs 503 (startup failure) et extrait le message d’erreur', async () => {
+  it('surfaces the uniform error payload (code, message, details)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       status: 503,
       statusText: 'Service Unavailable',
       headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => ({ success: false, error: 'Database is migrating' }),
+      json: async () => ({ error: { code: 'startup_failed', message: 'Database is migrating', details: {} } }),
     } as Response);
 
-    await expect(request('/files/')).rejects.toThrow('Database is migrating');
+    await expect(request('/files/')).rejects.toMatchObject({ status: 503, code: 'startup_failed', message: 'Database is migrating' });
   });
 
-  it('formate lisiblement les erreurs de validation FastAPI 422', async () => {
+  it('exposes per-field messages of invalid settings', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: false,
       status: 422,
       statusText: 'Unprocessable Entity',
       headers: new Headers({ 'content-type': 'application/json' }),
       json: async () => ({
-        detail: [
-          { loc: ['body', 'query'], msg: 'Field required', type: 'missing' },
-        ],
+        error: { code: 'invalid_settings', message: 'Invalid settings', details: { fields: { model_id: 'Field required' } } },
       }),
     } as Response);
 
     try {
-      await request('/search/', { method: 'POST' });
-      expect.unreachable('Devrait échouer avec 422');
+      await request('/embedding-presets/', { method: 'POST', body: '{}' });
+      expect.unreachable('should fail with 422');
     } catch (err) {
       expect(err).toBeInstanceOf(ApiError);
-      expect((err as ApiError).status).toBe(422);
-      expect((err as ApiError).message).toContain('body.query: Field required');
+      expect((err as ApiError).code).toBe('invalid_settings');
+      expect((err as ApiError).fieldErrors).toEqual({ model_id: 'Field required' });
     }
   });
 
-  it('remonte une erreur réseau claire si le serveur est inaccessible', async () => {
+  it('reports a clear network error when the server is unreachable', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     await expect(request('/')).rejects.toThrow(/Unable to connect to Lazy Bird server/);

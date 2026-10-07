@@ -1,5 +1,5 @@
 import { request } from '../client';
-import type { LLMModel, SelectedModel } from '@/core/types/api';
+import type { LLMModel } from '@/core/types/api';
 
 /**
  * Liste des modèles LLM / embedding enregistrés
@@ -49,27 +49,5 @@ export async function setModelFormat(
 export async function destroyAllModels(): Promise<{ message: string }> {
   return request<{ message: string }>('/models/destroy', {
     method: 'DELETE',
-  });
-}
-
-/**
- * Retourne le modèle actif pour l'embedding
- * GET /selected-models/
- */
-export async function getSelectedModel(): Promise<SelectedModel> {
-  return request<SelectedModel>('/selected-models/');
-}
-
-/**
- * Définit ou remplace le modèle actif pour l'embedding
- * PUT /selected-models/
- */
-export async function setSelectedModel(
-  llm_model_id: number | null,
-  batch: number = 1
-): Promise<SelectedModel> {
-  return request<SelectedModel>('/selected-models/', {
-    method: 'PUT',
-    body: JSON.stringify({ llm_model_id, batch }),
   });
 }

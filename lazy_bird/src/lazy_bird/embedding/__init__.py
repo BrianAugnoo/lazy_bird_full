@@ -1,60 +1,65 @@
-import importlib
-import pkgutil
-from pathlib import Path
+"""Embedding: turn texts into vectors with an embedding preset.
 
-from lazy_bird.crud import embedding_engine as engine_crud
-from lazy_bird.crud import selected_embedding_engine
+Engine modules live in ``embedding/engines/`` (see ``crud.engine`` for the shared
+contract). An embedding engine additionally defines::
+
+    def embed(texts: list[str], settings: EngineSettings, model: LLMModelOut | None) -> list[list[float]]
+
+returning one vector per text, in order. ``model`` is the ``LLMModel`` referenced
+by ``settings.model_id`` (``None`` when the engine declares no ``model_id``). An
+engine without ``model_id`` must define ``vector_space(settings) -> str`` naming
+the embedding space its vectors belong to (for instance the remote model name).
+"""
+
+from __future__ import annotations
+
+from lazy_bird.crud.engine import EngineFamily, ResolvedEngine
+from lazy_bird.errors import InvalidInputError
+from lazy_bird.models.embedding_engine import EmbeddingEngine, PresetEmbedding
+from lazy_bird.schemas.embedding_engine import PresetEmbeddingOut
+
+engine_family = EngineFamily(
+    kind="embedding",
+    package="lazy_bird.embedding.engines",
+    required=("embed",),
+    engine_table=EmbeddingEngine,
+    preset_table=PresetEmbedding,
+    engine_fk="embedding_engine_id",
+    preset_out=PresetEmbeddingOut,
+)
+
+
+class EmbeddingEngineError(RuntimeError):
+    """An embedding engine broke its contract while embedding."""
 
 
 def initialize_embedding_engines():
-    package = importlib.import_module("lazy_bird.embedding.engines")
-    for info in pkgutil.iter_modules(package.__path__):
-        if info.name.startswith("_"):
-            continue
-        module = importlib.import_module(f"{package.__name__}.{info.name}")
-        engine_crud.upsert(module.name, info.name, module.formats)
+    return engine_family.discover()
 
 
-def _embedding_context():
-    selected = selected_embedding_engine.get()
-    if selected is None:
-        raise RuntimeError("No embedding engine is selected")
-    module = importlib.import_module(f"lazy_bird.embedding.engines.{Path(selected.file_path).stem}")
-    settings = module.EngineSettings.model_validate(selected.kwargs)
-    from lazy_bird.crud import selected_model_embeding
-    model = selected_model_embeding.get()
-    if model.llm_model_id is None:
-        raise RuntimeError("No embedding model is selected")
-    from lazy_bird.database import db
-    from lazy_bird.models.llm_model import LLMModel
-    with db() as session:
-        llm_model = session.get(LLMModel, model.llm_model_id)
-    if llm_model is None:
-        raise RuntimeError("Selected embedding model does not exist")
-    if llm_model.selected_format not in selected.formats:
-        raise RuntimeError(f"Engine {selected.name} does not support format {llm_model.selected_format}")
-    if hasattr(settings, "model_path"):
-        settings = settings.model_copy(update={"model_path": llm_model.local_path})
-    batch_size = model.batch or 1
-    ctx_size = llm_model.max_context_length
-    return module, settings, batch_size, ctx_size, llm_model
+def vector_space(resolved: ResolvedEngine) -> str:
+    """Identify the embedding space of a resolved engine: the model its vectors come from."""
+    if resolved.model is not None:
+        return resolved.model.hf_path
+    custom = getattr(resolved.module, "vector_space", None)
+    if custom is None:
+        raise EmbeddingEngineError(f"Engine '{resolved.engine.name}' has no model_id and no vector_space()")
+    return str(custom(resolved.settings))
 
 
-def generate_embeddings(chunks):
-    module, settings, batch_size, ctx_size, _ = _embedding_context()
-    vectors = []
-    for offset in range(0, len(chunks), batch_size):
-        vectors.extend(module.embed(chunks[offset:offset + batch_size], ctx_size, batch_size, settings))
-    if len(vectors) != len(chunks):
-        raise RuntimeError("Embedding engine returned an unexpected vector count")
-    return [{**chunk, "vector": vector} for chunk, vector in zip(chunks, vectors, strict=True)]
+def embed_texts(texts: list[str], resolved: ResolvedEngine) -> list[list[float]]:
+    if not texts:
+        return []
+    vectors = resolved.module.embed(list(texts), resolved.settings, resolved.model)
+    if len(vectors) != len(texts):
+        raise EmbeddingEngineError(
+            f"Engine '{resolved.engine.name}' returned {len(vectors)} vectors for {len(texts)} texts"
+        )
+    return [list(vector) for vector in vectors]
 
 
-def generate_query_embedding(query: str) -> tuple[list[float], object]:
+def embed_query(query: str, preset_id: int | None = None) -> tuple[list[float], ResolvedEngine]:
     if not query.strip():
-        raise ValueError("query cannot be empty")
-    module, settings, batch_size, ctx_size, llm_model = _embedding_context()
-    vectors = module.embed([query], ctx_size, batch_size, settings)
-    if len(vectors) != 1:
-        raise RuntimeError("Embedding engine did not return one query vector")
-    return vectors[0], llm_model
+        raise InvalidInputError("The query cannot be empty.", code="empty_query")
+    resolved = engine_family.resolve(preset_id)
+    return embed_texts([query], resolved)[0], resolved

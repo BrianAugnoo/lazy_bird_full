@@ -1,7 +1,5 @@
 import lazy_bird.crud.llm_model as llm_model_crud
-import lazy_bird.crud.selected_model_embeding as selected_model_crud
 from lazy_bird.schemas.llm_model import LLMModelIn
-from lazy_bird.schemas.selected_model_embeding import SelectedModelEmbedingIn
 
 from tests.conftest import MODEL_INPUT, MODEL_OUTPUT
 
@@ -46,11 +44,9 @@ def test_get_all_returns_every_model(crud_database, fake_model_services):
     assert [record.hf_path for record in records] == ["owner/first", "owner/second"]
 
 
-def test_delete_all_removes_models_and_selected_model(crud_database, fake_model_services):
-    model = llm_model_crud.create(LLMModelIn(**MODEL_INPUT))
-    selected_model_crud.upsert(SelectedModelEmbedingIn(llm_model_id=model.id))
+def test_delete_all_removes_models(crud_database, fake_model_services):
+    llm_model_crud.create(LLMModelIn(**MODEL_INPUT))
 
     llm_model_crud.delete_all()
 
     assert llm_model_crud.get_all() == []
-    assert selected_model_crud.get().llm_model_id is None

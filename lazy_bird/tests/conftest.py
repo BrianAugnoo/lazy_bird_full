@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+
+# Tracing every lazy_bird call makes the suite slow and floods the logs.
+os.environ.setdefault("LAZY_BIRD_TRACE_ALL", "0")
+
 from contextlib import contextmanager
 from dataclasses import dataclass
 from io import BytesIO
@@ -14,15 +19,10 @@ from sqlmodel import Session
 from starlette.datastructures import Headers
 import pytest
 
-import lazy_bird.crud.api_key as api_key_crud
-import lazy_bird.crud.embedded as embedded_crud
-import lazy_bird.crud.embedding_engine as embedding_engine_crud
-import lazy_bird.crud.selected_embedding_engine as selected_embedding_engine_crud
-import lazy_bird.crud.vector_database as vector_database_crud
 import lazy_bird.crud.file as file_crud
 import lazy_bird.crud.llm_model as llm_model_crud
-import lazy_bird.crud.selected_model_embeding as selected_model_embeding_crud
 import lazy_bird.database as database_module
+from lazy_bird.database.vector_db import lancedb as lancedb_adapter
 from lazy_bird.database.sql_db.sqlite import initialize
 import lazy_bird.main as main_module
 import lazy_bird.storages as storage_module
@@ -80,14 +80,19 @@ def make_upload_file(
 
 @pytest.fixture
 def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[MigratedDatabase]:
+    """A temporary SQLite database migrated to head and used by ``database.db()``."""
     db_path = tmp_path / "lazy_bird_test.db"
     db_url = f"sqlite:///{db_path}"
 
     # env.py imports this value when Alembic starts.
     monkeypatch.setattr(database_module, "db_url", db_url)
     monkeypatch.setitem(database_module.config.sql_databases["sqlite"].settings, "url", db_url)
+    monkeypatch.setitem(database_module.config.vector_databases["lancedb"].settings, "path", str(tmp_path / "lance"))
+    monkeypatch.setattr(lancedb_adapter, "_connection", None)
     command.upgrade(alembic_config(db_url), "head")
     engine = initialize(url=f"sqlite:///{db_path}")
+    monkeypatch.setattr(database_module, "engine", engine)
+    monkeypatch.setattr(database_module, "status", database_module.DatabaseStatus(ready=True, revision="head"))
 
     yield MigratedDatabase(url=db_url, path=db_path, engine=engine)
 
@@ -105,16 +110,9 @@ def db_session_factory(migrated_database: MigratedDatabase):
 
 
 @pytest.fixture
-def crud_database(db_session_factory, monkeypatch: pytest.MonkeyPatch) -> MigratedDatabase:
-    monkeypatch.setattr(api_key_crud, "db", db_session_factory)
+def crud_database(db_session_factory, monkeypatch: pytest.MonkeyPatch):
+    """Migrated database used by every CRUD module; background enqueueing is disabled."""
     monkeypatch.setattr(file_crud, "enqueue_file", lambda file_id: None)
-    monkeypatch.setattr(embedded_crud, "db", db_session_factory)
-    monkeypatch.setattr(embedding_engine_crud, "db", db_session_factory)
-    monkeypatch.setattr(selected_embedding_engine_crud, "db", db_session_factory)
-    monkeypatch.setattr(vector_database_crud, "db", db_session_factory)
-    monkeypatch.setattr(file_crud, "db", db_session_factory)
-    monkeypatch.setattr(llm_model_crud, "db", db_session_factory)
-    monkeypatch.setattr(selected_model_embeding_crud, "db", db_session_factory)
     return db_session_factory
 
 

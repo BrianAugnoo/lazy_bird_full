@@ -587,3 +587,25 @@
   background-color: rgba(255, 255, 255, 0.03);
   font-weight: 600;
 }
+
+/* Engine presets */
+.preset-body { display: flex; flex-direction: column; gap: 16px; }
+.preset-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.preset-item { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--border-base); border-radius: var(--radius-md); background: var(--bg-card); }
+.preset-item.is-default { border-color: var(--accent-primary); box-shadow: 0 0 0 1px var(--accent-glow); }
+.preset-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.preset-name { font-weight: 600; }
+.preset-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.preset-delete { color: var(--color-error); }
+.preset-errors { grid-column: 1 / -1; margin: 0; padding-left: 18px; color: var(--color-error); font-size: 0.8rem; }
+.preset-editor { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border-base); border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.02); }
+.preset-editor-title { font-size: 0.95rem; font-weight: 600; margin: 0; }
+.preset-editor-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.preset-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Generated settings forms */
+.settings-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.settings-field-control { display: flex; flex-direction: column; gap: 6px; }
+.settings-required { color: var(--color-error); }
+.field-checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-secondary); }
+.field-json { font-family: monospace; font-size: 0.8rem; }

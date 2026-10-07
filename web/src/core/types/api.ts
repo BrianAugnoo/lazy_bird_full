@@ -10,7 +10,7 @@ export interface HealthResponse {
   error?: string;
 }
 
-// 2. API Keys (/api-keys/api-keys)
+// 2. API Keys (/api-keys/)
 export interface APIKeyIn {
   name: string;
   key: string;
@@ -20,7 +20,7 @@ export interface APIKeyOut {
   name: string;
 }
 
-// 3. LLM Models (/models/ et /selected-models/)
+// 3. LLM Models (/models/)
 export interface LLMModel {
   id: number;
   name: string;
@@ -41,24 +41,37 @@ export interface SelectedFormatIn {
   selected_format: string;
 }
 
-export interface SelectedModel {
-  llm_model_id: number | null;
-  batch: number;
-}
+// 4. Engines and presets (/embedding-engines/, /embedding-presets/, /inference-engines/, /inference-presets/)
+export type EngineKind = 'embedding' | 'inference';
 
-// 4. Embedding Engines (/embedding-engines/ et /selected-embedding-engine/)
-export interface EmbeddingEngine {
+export interface EngineOut {
   id: number;
   name: string;
   file_path: string;
   formats: string[];
-  kwargs: Record<string, any>;
-  kwargs_keys: Record<string, [type: string, defaultValue: any]>;
+  /** Settings form descriptors, see `core/fields/types.ts`. */
+  kwargs_key: import('@/core/fields/types').KwargsKey;
+  available: boolean;
 }
 
-export interface SelectedEmbeddingEngine {
-  configured: boolean;
-  engine: EmbeddingEngine | null;
+export interface PresetOut {
+  id: number;
+  name: string;
+  /** Present on embedding presets. */
+  embedding_engine_id?: number;
+  /** Present on inference presets. */
+  inference_engine_id?: number;
+  kwargs: Record<string, unknown>;
+  default: boolean;
+  valid: boolean;
+  errors: Record<string, string>;
+}
+
+export interface PresetChanges {
+  name?: string;
+  engine_id?: number;
+  kwargs?: Record<string, unknown>;
+  default?: boolean;
 }
 
 // 5. Files (/files/ et /ws/upload-progress)
@@ -109,6 +122,7 @@ export interface UploadProgressPayload {
 export interface SearchPayload {
   query: string;
   top_k?: number;
+  preset_id?: number;
 }
 
 export interface SearchResultChunk {

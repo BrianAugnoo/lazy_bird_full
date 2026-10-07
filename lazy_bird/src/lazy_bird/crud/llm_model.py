@@ -1,6 +1,5 @@
 from lazy_bird.database import db
 from lazy_bird.models.llm_model import LLMModel as LLMModelORM
-from lazy_bird.models.selected_model_embeding import SelectedModelEmbeding
 from lazy_bird.schemas.llm_model import LLMModelOut, LLMModelIn
 from sqlmodel import select, delete
 from lazy_bird.tools.model_extraction import extract, download_model
@@ -47,6 +46,5 @@ def get_all():
 
 def delete_all():
     with db() as session:
-        session.exec(delete(SelectedModelEmbeding))
         session.exec(delete(LLMModelORM))
         session.commit()

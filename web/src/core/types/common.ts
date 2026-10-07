@@ -30,6 +30,7 @@ export type TabType =
   | 'files' 
   | 'models' 
   | 'embeddings' 
+  | 'inference'
   | 'databases' 
   | 'api-keys' 
   | 'search'

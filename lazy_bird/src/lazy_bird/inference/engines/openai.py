@@ -1,6 +1,6 @@
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from openai import OpenAI
 from lazy_bird.schemas.inference_engine import Response
 from lazy_bird.crud.api_key import find_key
@@ -13,17 +13,18 @@ name = "openai-client"
 class EngineSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    api_key_name: str | None = None
-    base_url: str
-    model_name: str
+    api_key_name: str | None = Field(default=None, title="API key", description="Name of a stored API key; empty for servers without authentication.")
+    base_url: str = Field(title="Base URL", description="OpenAI-compatible endpoint, e.g. https://api.openai.com/v1")
+    model_name: str = Field(title="Model name")
 
 
-def validate_kwargs(kwargs):
-    try:
-        EngineSettings.model_validate(kwargs)
-        return True
-    except Exception as exc:
-        return sorted({str(error.get("loc", ["unknown"])[0]) for error in exc.errors()})
+fields = {
+    "api_key_name": {
+        "default_field": True,
+        "content": "default.basic.reference",
+        "args": {"endpoint": "/api-keys/", "value_key": "name", "label_key": "name"},
+    },
+}
 
 
 def _client(settings: EngineSettings) -> OpenAI:
@@ -86,20 +87,14 @@ def _to_openai_messages(history: list[MessageOut]) -> list[dict]:
 
 @traced
 def single_turn(query: str, settings: EngineSettings, instructions: str = None, tools: list[dict] = None):
-    invalid = validate_kwargs(settings)
-    if invalid is not True:
-        raise ValueError(f"Invalid inference engine kwargs: {invalid}")
-
-    settings = EngineSettings.model_validate(settings)
     client = _client(settings)
+    messages = [{"role": "system", "content": instructions}] if instructions else []
+    messages.append({"role": "user", "content": query})
 
     response = client.chat.completions.create(
         model=settings.model_name,
-        messages=[
-            {"role": "user", "content": query},
-            {"role": "system", "content": instructions if instructions else ""},
-        ],
-        tools=_strip_tools_for_api(tools),
+        messages=messages,
+        tools=_strip_tools_for_api(tools) or None,
     )
     return Response(
         content=response.choices[0].message.content,
@@ -108,11 +103,6 @@ def single_turn(query: str, settings: EngineSettings, instructions: str = None, 
 
 
 def chat(settings: EngineSettings, tools: list[dict] = None, history: list[MessageOut] = None):
-    invalid = validate_kwargs(settings)
-    if invalid is not True:
-        raise ValueError(f"Invalid inference engine kwargs: {invalid}")
-
-    settings = EngineSettings.model_validate(settings)
     client = _client(settings)
 
     response = client.chat.completions.create(

@@ -1,24 +1,30 @@
-from pydantic import BaseModel, ConfigDict
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class EmbeddingEngineOut(BaseModel):
+class PresetEmbeddingIn(BaseModel):
+    name: str = Field(min_length=1)
+    embedding_engine_id: int
+    kwargs: dict[str, Any] = Field(default_factory=dict)
+    default: bool = False
+
+
+class PresetEmbeddingUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    embedding_engine_id: int | None = None
+    kwargs: dict[str, Any] | None = None
+    default: bool | None = None
+
+
+class PresetEmbeddingOut(BaseModel):
+    """A stored embedding preset; ``errors`` lists why it cannot be used (empty when ``valid``)."""
+
     id: int
     name: str
-    file_path: str
-    formats: list[str]
-    kwargs: dict
-    kwargs_keys: dict[str, list]
-    model_config = ConfigDict(from_attributes=True)
-
-
-class EmbeddingEngineKwargsIn(BaseModel):
-    kwargs: dict
-
-
-class SelectedEmbeddingEngineIn(BaseModel):
     embedding_engine_id: int
-
-
-class SelectedEmbeddingEngineOut(BaseModel):
-    configured: bool
-    engine: EmbeddingEngineOut | None = None
+    kwargs: dict[str, Any]
+    default: bool
+    valid: bool = True
+    errors: dict[str, str] = Field(default_factory=dict)
+    model_config = ConfigDict(from_attributes=True)

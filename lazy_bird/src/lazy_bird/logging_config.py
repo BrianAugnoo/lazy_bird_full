@@ -130,6 +130,12 @@ class _InterceptHandler(logging.Handler):
 
 
 class _StreamToLoguru:
+    """File-like object turning ``print``/``sys.stderr`` output into log records.
+
+    ``print("a", b)`` issues several ``write`` calls; text is buffered per thread
+    until a newline so that one printed line becomes one log record.
+    """
+
     def __init__(self, level: str) -> None:
         self.level = level
         self._state = local()
@@ -137,17 +143,27 @@ class _StreamToLoguru:
     def write(self, message: str) -> int:
         if getattr(self._state, "writing", False):
             return sys.__stderr__.write(message)
-        message = message.rstrip()
-        if message:
-            self._state.writing = True
-            try:
-                logger.opt(depth=6).log(self.level, message)
-            finally:
-                self._state.writing = False
+        buffered = getattr(self._state, "buffer", "") + message
+        *lines, rest = buffered.split("\n")
+        self._state.buffer = rest
+        for line in lines:
+            self._emit(line)
         return len(message)
 
+    def _emit(self, line: str) -> None:
+        line = line.rstrip()
+        if not line:
+            return
+        self._state.writing = True
+        try:
+            logger.opt(depth=7).log(self.level, line)
+        finally:
+            self._state.writing = False
+
     def flush(self) -> None:
-        return None
+        rest = getattr(self._state, "buffer", "")
+        self._state.buffer = ""
+        self._emit(rest)
 
 
 def _console_sink(message: str) -> None:

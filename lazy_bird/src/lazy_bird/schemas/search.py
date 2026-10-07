@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class SearchIn(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=100)
+    preset_id: int | None = Field(default=None, description="Embedding preset; the default preset when omitted.")
 
 class ChunkOut(BaseModel):
     content: str

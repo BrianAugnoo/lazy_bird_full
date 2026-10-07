@@ -4,10 +4,10 @@ from lazy_bird import database
 from lazy_bird.database import db
 from lazy_bird.models.embedded import Embedded, EmbeddedVectorDatabase
 from lazy_bird.models.file import File as FileORM
-from lazy_bird.models.selected_model_embeding import SelectedModelEmbeding
 from lazy_bird.models.vector_database import VectorDatabase
 from lazy_bird.task_queue import enqueue_file, queued_file_ids
 from lazy_bird.preferences import auto_embedding_enabled
+from lazy_bird.errors import AppError
 from lazy_bird.schemas.files import FileOut
 from sqlmodel import select
 from lazy_bird.storages import (
@@ -64,6 +64,17 @@ def _with_embedding_details(session, files: list[FileORM]) -> list[FileOut]:
     ]
 
 
+def _default_embedding_model_id() -> int | None:
+    """Return the LLM model of the default embedding preset, if it is usable."""
+    from lazy_bird.embedding import engine_family
+
+    try:
+        resolved = engine_family.resolve()
+    except AppError:
+        return None
+    return resolved.model.id if resolved.model else None
+
+
 def files_requiring_embedding() -> list[int]:
     with db() as session:
         files = session.exec(
@@ -74,8 +85,8 @@ def files_requiring_embedding() -> list[int]:
         if not done_files:
             return sorted(pending_ids)
 
-        selection = session.exec(select(SelectedModelEmbeding)).first()
-        if selection is None:
+        model_id = _default_embedding_model_id()
+        if model_id is None:
             return sorted(pending_ids)
 
         vector_database = session.exec(
@@ -90,7 +101,7 @@ def files_requiring_embedding() -> list[int]:
         embedded_rows = session.exec(
             select(Embedded).where(
                 Embedded.file_id.in_(done_ids),
-                Embedded.llm_model_id == selection.llm_model_id,
+                Embedded.llm_model_id == model_id,
             )
         ).all()
         embedded_by_file = {embedded.file_id: embedded.id for embedded in embedded_rows}

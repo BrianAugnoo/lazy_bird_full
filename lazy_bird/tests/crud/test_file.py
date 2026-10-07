@@ -79,7 +79,7 @@ def test_find_returns_persisted_file(crud_database, db_session_factory):
         "path": "/tmp/report.pdf",
         "status": "pending",
         "embedded_by": [],
-        "vetor_db": [],
+        "vector_db": [],
     }
 
 
