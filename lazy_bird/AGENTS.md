@@ -9,6 +9,25 @@ dropped in a known folder, found at startup through a documented contract.
 This file is the reference for the backend and for how to work in this repository.
 The frontend has its own guide: `web/AGENTS.md`.
 
+### Start here
+
+Read §2 (how to work) and §3 (architecture) first, then jump to what you need:
+
+| I want to… | Read | Look at |
+| --- | --- | --- |
+| understand a request end to end | §3.3, §4 | `api/endpoints/<resource>.py` → `schemas/` → `crud/` → `models/` |
+| add an engine, chunker, database, tool, hook, skill, preset or task kind | §5 (table in §5.3) | the `default/` example of that extension point |
+| change how agents answer | §6.3 | `inference/__init__.py`, `agents/runtime.py` |
+| run something long in the background | §7.1 | `tasks/default/*.py` |
+| understand why a file is not searchable | §7.4 | `crud/file_processing.py`, Tasks and Files pages |
+| change a table | §9 | `models/`, `migration/versions/`, `tests/test_migrations.py` |
+| add or change an endpoint | §10, §4 | `tests/test_api_contract.py`, then the screen in `web/` |
+| write tests | §11 | `tests/conftest.py` fixtures |
+
+To see it running: `uv run uvicorn lazy_bird.main:app --reload`, then `cd ../web &&
+npm run dev` (http://localhost:5173); `/docs` lists every route and `/schemas`
+draws the data model.
+
 ## 1. Repository
 
 ```text
