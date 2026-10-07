@@ -25,20 +25,61 @@ export interface LLMModel {
   id: number;
   name: string;
   hf_path: string;
-  dimension: number;
-  formats: string[];
-  selected_format: string;
   local_path: string;
-  max_context_length: number;
+  revision: string | null;
+  source: 'huggingface' | 'local';
+  dimension: number | null;
+  max_context_length: number | null;
   selected_context: number | null;
+  formats: string[];
+  /** Weight files per format, relative to `local_path`. */
+  files: Record<string, string[]>;
+  selected_format: string | null;
+  /** The weight file used when the format has alternatives (a GGUF quantization). */
+  selected_file: string | null;
+  available: boolean;
+  size_mb: number | null;
 }
 
-export interface CreateLLMModelIn {
-  hf_path: string;
+export interface LLMModelUpdate {
+  name?: string;
+  selected_format?: string;
+  selected_file?: string;
+  selected_context?: number | null;
 }
 
-export interface SelectedFormatIn {
-  selected_format: string;
+export interface HubFile {
+  path: string;
+  size: number;
+  format: string | null;
+}
+
+// 3.1 Tasks (/tasks/, /ws/tasks)
+export type TaskStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+
+export interface Task {
+  id: number;
+  kind: string;
+  title: string;
+  params: Record<string, unknown>;
+  status: TaskStatus;
+  control: 'pause' | 'cancel' | null;
+  priority: number;
+  position: number;
+  run_at: string | null;
+  resources: Record<string, number>;
+  progress: number | null;
+  message: string | null;
+  result: unknown;
+  error: { code: string; message: string; details?: Record<string, unknown> } | null;
+  attempts: number;
+  max_attempts: number;
+  dedupe_key: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  waiting_for: string[];
 }
 
 // 4. Engines and presets (/embedding-engines/, /embedding-presets/, /inference-engines/, /inference-presets/)

@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import detect_device
 
 name = "sentence-transformers"
-formats = ["safetensors", "onnx"]
+formats = ["safetensors", "bin", "onnx"]
 
 
 class EngineSettings(BaseModel):
@@ -22,7 +22,7 @@ fields = {
     "model_id": {
         "default_field": True,
         "content": "default.basic.reference",
-        "args": {"endpoint": "/models/", "value_key": "id", "label_key": "name"},
+        "args": {"endpoint": "/models/?format=safetensors&format=bin&format=onnx", "value_key": "id", "label_key": "name"},
     },
 }
 
@@ -36,7 +36,7 @@ def resources(settings, model):
 
     if (settings.device or detect_device()) != "cuda":
         return {"cpu": 1}
-    return {"cpu": 1, "vram_mb": round(weights_size_mb(model.local_path, model.selected_format) + CUDA_OVERHEAD_MB)}
+    return {"cpu": 1, "vram_mb": round(weights_size_mb(model.local_path, model.selected_format, model.selected_file) + CUDA_OVERHEAD_MB)}
 
 
 @lru_cache(maxsize=1)

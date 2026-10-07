@@ -1,10 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  getModels,
-  createModel,
-  setModelFormat,
-  destroyAllModels,
-} from '@/api/endpoints/models';
+import { getModels, createModel, setModelFormat, deleteModel, importModel } from '@/api/endpoints/models';
 import type { LLMModel } from '@/core/types/api';
 
 const POPULAR_MODELS = [
@@ -49,7 +44,7 @@ export const ModelManager: React.FC = () => {
     setSuccessMessage(null);
     try {
       await createModel(targetPath);
-      setSuccessMessage(`Model "${targetPath}" downloaded and registered successfully!`);
+      setSuccessMessage(`Download of "${targetPath}" queued. It appears here when finished.`);
       setHfPath('');
       await loadData();
     } catch (err: any) {
@@ -70,18 +65,30 @@ export const ModelManager: React.FC = () => {
     }
   };
 
-  // Delete all models
-  const handleDeleteAll = async () => {
-    if (!window.confirm('WARNING: Are you sure you want to delete ALL registered models?')) return;
-    setLoading(true);
+  // Import a model folder or weight file from the server's disk
+  const [importPath, setImportPath] = useState<string>('');
+  const [importName, setImportName] = useState<string>('');
+  const handleImport = async () => {
+    setError(null);
     try {
-      await destroyAllModels();
-      await loadData();
-      setSuccessMessage('All models have been deleted.');
+      await importModel(importPath.trim(), importName.trim());
+      setSuccessMessage(`Import of "${importName}" queued. It appears here when finished.`);
+      setImportPath('');
+      setImportName('');
     } catch (err: any) {
-      setError(err?.message || 'Failed to delete models');
-    } finally {
-      setLoading(false);
+      setError(err?.message || 'Failed to import the model');
+    }
+  };
+
+  const handleDelete = async (model: LLMModel) => {
+    const removeFiles = window.confirm(
+      `Remove "${model.name}"?\n\nOK: also delete its files from the Hugging Face cache.\nCancel: keep the files (it comes back at the next cache sync).`,
+    );
+    try {
+      await deleteModel(model.id, removeFiles);
+      await loadData();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete the model');
     }
   };
 
@@ -99,16 +106,9 @@ export const ModelManager: React.FC = () => {
             </div>
           </div>
 
-          {models.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={handleDeleteAll}
-              style={{ color: 'var(--color-error)' }}
-            >
-              Delete All Models
-            </button>
-          )}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => loadData()}>
+            Refresh
+          </button>
         </div>
 
         <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -180,6 +180,42 @@ export const ModelManager: React.FC = () => {
             </div>
           </div>
 
+          {/* Local import */}
+          <form
+            style={{ backgroundColor: 'rgba(255, 255, 255, 0.02)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-base)' }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleImport();
+            }}
+          >
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '8px' }}>Import a Local Model</h3>
+            <p className="form-hint" style={{ marginBottom: '8px' }}>
+              A folder or a single weight file (.gguf, .safetensors, .bin, .pth, .ckpt, .onnx…) on the server&apos;s disk.
+              It is copied into the Hugging Face cache, so it stays available even if the original is moved.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                className="form-input"
+                style={{ flex: 2, minWidth: '260px' }}
+                placeholder="/path/to/model-folder or /path/to/model.gguf"
+                value={importPath}
+                onChange={(event) => setImportPath(event.target.value)}
+              />
+              <input
+                type="text"
+                className="form-input"
+                style={{ flex: 1, minWidth: '160px' }}
+                placeholder="Name"
+                value={importName}
+                onChange={(event) => setImportName(event.target.value)}
+              />
+              <button type="submit" className="btn btn-secondary" disabled={!importPath.trim() || !importName.trim()}>
+                Import
+              </button>
+            </div>
+          </form>
+
           {/* Installed Models List */}
           <div>
             <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '12px' }}>
@@ -235,7 +271,7 @@ export const ModelManager: React.FC = () => {
                           <select
                             className="form-select"
                             style={{ fontSize: '0.8rem', padding: '4px 8px' }}
-                            value={m.selected_format}
+                            value={m.selected_format ?? ''}
                             onChange={(e) => handleFormatChange(m.id, e.target.value)}
                           >
                             {m.formats.map((fmt) => (
@@ -247,6 +283,16 @@ export const ModelManager: React.FC = () => {
                         </div>
                       </div>
 
+                      <div className="card-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="form-hint">
+                          {m.source === 'local' ? 'Imported' : 'Hugging Face'}
+                          {m.size_mb != null ? ` · ${m.size_mb.toLocaleString()} MiB` : ''}
+                          {!m.available ? ' · files missing' : ''}
+                        </span>
+                        <button type="button" className="btn btn-ghost btn-sm" style={{ color: 'var(--color-error)' }} onClick={() => handleDelete(m)}>
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

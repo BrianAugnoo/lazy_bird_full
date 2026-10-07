@@ -29,28 +29,11 @@ from lazy_bird.database.sql_db.sqlite import initialize
 import lazy_bird.main as main_module
 import lazy_bird.storages as storage_module
 import lazy_bird.tools.hf_auth as hf_auth_module
-import lazy_bird.tools.hf_cache_worker as hf_cache_worker_module
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_DIR = REPO_ROOT / "src" / "lazy_bird" / "migration"
 ALEMBIC_INI = REPO_ROOT / "src" / "lazy_bird" / "alembic.ini"
-
-MODEL_INPUT = {
-    "hf_path": "sentence-transformers/all-MiniLM-L6-v2",
-}
-MODEL_OUTPUT = {
-    "id": 1,
-    "name": "nreimers/MiniLM-L6-H384-uncased",
-    "hf_path": MODEL_INPUT["hf_path"],
-    "dimension": 512,
-    "formats": ["safetensors", "ONNX"],
-    "selected_format": "safetensors",
-    "local_path": "/tmp/fake-model",
-    "max_context_length": None,
-    "selected_context": None,
-}
-
 
 @dataclass(frozen=True)
 class MigratedDatabase:
@@ -127,17 +110,27 @@ def storage_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def fake_model_services(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llm_model_crud, "download_model", lambda hf_path: MODEL_OUTPUT["local_path"])
-    monkeypatch.setattr(
-        llm_model_crud,
-        "extract",
-        lambda local_path: {
-            "name": MODEL_OUTPUT["name"],
-            "dimension": MODEL_OUTPUT["dimension"],
-            "formats": MODEL_OUTPUT["formats"],
-        },
-    )
+def model_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """An empty Hugging Face cache; ``add(repo_id, files)`` creates a snapshot in it."""
+    from lazy_bird.tools import hf_cache
+
+    root = tmp_path / "hf-cache"
+    root.mkdir()
+    monkeypatch.setattr(hf_cache, "HF_HUB_CACHE", str(root))
+
+    def add(repo_id: str, files: dict[str, bytes], revision: str = "rev1") -> Path:
+        folder = hf_cache.repo_folder(repo_id, root)
+        snapshot = folder / "snapshots" / revision
+        snapshot.mkdir(parents=True, exist_ok=True)
+        for relative, content in files.items():
+            (snapshot / relative).parent.mkdir(parents=True, exist_ok=True)
+            (snapshot / relative).write_bytes(content)
+        (folder / "refs").mkdir(exist_ok=True)
+        (folder / "refs" / "main").write_text(revision)
+        return snapshot
+
+    add.root = root
+    return add
 
 
 @pytest.fixture
@@ -159,7 +152,6 @@ def client(
     monkeypatch.setattr(main_module, "authenticate_hf", lambda: None)
     monkeypatch.setattr(hf_auth_module, "authenticate_hf", lambda: None)
     monkeypatch.setattr(main_module, "sync_cached_models", lambda: 0)
-    monkeypatch.setattr(hf_cache_worker_module, "sync_cached_models", lambda: 0)
     monkeypatch.setattr(main_module, "start_scheduler", lambda: None)
     monkeypatch.setattr(main_module, "stop_scheduler", lambda: None)
     monkeypatch.setattr(main_module, "apply_preferences", lambda: 0)

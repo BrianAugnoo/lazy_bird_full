@@ -20,7 +20,7 @@ from lazy_bird.api.error_handlers import install_error_handlers
 from lazy_bird.errors import error_payload
 from lazy_bird.crud import file as file_crud
 from lazy_bird.tools.hf_auth import authenticate_hf
-from lazy_bird.tools.hf_cache_worker import sync_cached_models
+from lazy_bird.crud.llm_model import sync_cache as sync_cached_models
 from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
