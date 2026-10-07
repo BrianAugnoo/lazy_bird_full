@@ -56,8 +56,12 @@
   transition: border-color var(--transition-fast), background-color var(--transition-fast);
 }
 
-.choice:hover:not(:disabled) { border-color: var(--accent-primary); background: var(--accent-soft); }
+.choice:hover:not(:disabled):not(.is-selected) { border-color: var(--border-strong); background: var(--bg-card-hover); }
 .choice:disabled { opacity: 0.6; cursor: not-allowed; }
+.choice.is-selected { border-color: var(--accent-primary); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-primary); }
+.choice-check { color: var(--accent-primary); margin-left: auto; }
+.choice-title { width: 100%; }
+.choice-load-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .choice-title { font-weight: 600; display: inline-flex; gap: 8px; align-items: center; }
 .choice-desc { font-size: var(--text-sm); color: var(--text-muted); }
 

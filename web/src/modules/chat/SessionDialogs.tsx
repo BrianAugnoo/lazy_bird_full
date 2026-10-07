@@ -3,19 +3,45 @@ import { agents as agentsApi, sessions } from '@/api/endpoints/agents';
 import { agentPresets, sessionPresets, tools as toolsApi } from '@/api/endpoints/extensions';
 import type { Agent, Session } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
-import { AsyncState } from '@/ui/AsyncState';
+import { ChoiceList, type Choice } from '@/ui/ChoiceList';
 import { KeyValueEditor } from '@/ui/KeyValueEditor';
 import { Drawer, Modal } from '@/ui/Modal';
 import { useToast } from '@/ui/toastContext';
 
-/** Choose a session preset, or start from an empty session. */
+const BLANK = '';
+
+/** Presets failing to load must not hide the blank option: show the problem next to it. */
+function PresetLoadState({ loading, error, onRetry }: { loading: boolean; error: Error | null; onRetry: () => void }) {
+  if (error) {
+    return (
+      <div className="alert alert-warning choice-load-error">
+        <span>Presets could not be loaded: {error.message}</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+  return loading ? (
+    <div className="state-loading small">
+      <span className="spinner" /> Loading presets…
+    </div>
+  ) : null;
+}
+
+/** Name the session and choose what it starts with: a preset team, or nothing. */
 export function NewSessionDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (session: Session) => void }) {
   const toast = useToast();
   const presets = useResource(sessionPresets.list, []);
   const [title, setTitle] = useState('');
+  const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const firstValid = presets.data?.find((preset) => preset.valid)?.id;
+  // Until the user picks, the first valid preset is suggested (else an empty session).
+  const choice = picked ?? (presets.loading && !presets.data ? null : (firstValid ?? BLANK));
 
-  const create = async (presetId: string | null) => {
+  const create = async (presetId: string | null = choice) => {
+    if (presetId === null || busy) return;
     setBusy(true);
     try {
       const session = presetId ? await sessions.fromPreset(presetId, title.trim() || undefined) : await sessions.create(title.trim() || 'New session');
@@ -27,35 +53,63 @@ export function NewSessionDialog({ onClose, onCreated }: { onClose: () => void; 
     }
   };
 
+  const choices: Choice[] = [
+    ...(presets.data ?? []).map((preset) => ({
+      value: preset.id,
+      disabled: !preset.valid,
+      title: (
+        <>
+          {preset.data?.name ?? preset.name} <span className="chip chip-outline">{preset.extension}</span>
+        </>
+      ),
+      description: preset.valid ? preset.data?.description || `${preset.data?.agents.length ?? 0} agents` : Object.values(preset.errors).join(' '),
+    })),
+    { value: BLANK, title: 'Empty session', description: 'Add agents yourself afterwards.' },
+  ];
+
   return (
-    <Modal title="New session" subtitle="A session is a team of agents sharing the same settings." onClose={onClose}>
-      <div className="form-group">
-        <label className="form-label" htmlFor="session-title">
-          Title <span className="muted">(optional)</span>
-        </label>
-        <input id="session-title" className="form-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Research on solar panels" />
-      </div>
-      <div className="form-label">Start from</div>
-      <AsyncState {...presets} onRetry={presets.reload}>
-        {(list) => (
-          <div className="choice-list">
-            {list.map((preset) => (
-              <button key={preset.id} type="button" className="choice" disabled={busy || !preset.valid} onClick={() => create(preset.id)}>
-                <span className="choice-title">
-                  {preset.data?.name ?? preset.name} <span className="chip chip-outline">{preset.extension}</span>
-                </span>
-                <span className="choice-desc">
-                  {preset.valid ? preset.data?.description || `${preset.data?.agents.length ?? 0} agents` : Object.values(preset.errors).join(' ')}
-                </span>
-              </button>
-            ))}
-            <button type="button" className="choice" disabled={busy} onClick={() => create(null)}>
-              <span className="choice-title">Empty session</span>
-              <span className="choice-desc">Add agents yourself afterwards.</span>
-            </button>
-          </div>
-        )}
-      </AsyncState>
+    <Modal
+      title="New session"
+      subtitle="A session is a team of agents sharing the same settings."
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" form="new-session-form" className="btn btn-primary" disabled={busy || choice === null}>
+            {busy ? 'Creating…' : 'Create session'}
+          </button>
+        </>
+      }
+    >
+      <form
+        id="new-session-form"
+        className="stack"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void create();
+        }}
+      >
+        <div className="form-group">
+          <label className="form-label" htmlFor="session-title">
+            Title <span className="muted">(optional)</span>
+          </label>
+          <input
+            id="session-title"
+            className="form-input"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="e.g. Research on solar panels"
+            autoFocus
+          />
+        </div>
+        <div className="form-group">
+          <div className="form-label">Start from</div>
+          <PresetLoadState loading={presets.loading && !presets.data} error={presets.error} onRetry={presets.reload} />
+          <ChoiceList label="Start from" choices={choices} value={choice} onChange={setPicked} onConfirm={(value) => void create(value)} />
+        </div>
+      </form>
     </Modal>
   );
 }
@@ -74,9 +128,17 @@ export function AddAgentDialog({
 }) {
   const toast = useToast();
   const presets = useResource(agentPresets.list, []);
+  const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const firstValid = presets.data?.find((preset) => preset.valid)?.id;
+  const choice = picked ?? (presets.loading && !presets.data ? null : (firstValid ?? BLANK));
 
-  const create = async (presetId: string) => {
+  const confirm = async (presetId: string | null = choice) => {
+    if (presetId === null || busy) return;
+    if (presetId === BLANK) {
+      onBlank();
+      return;
+    }
     setBusy(true);
     try {
       onCreated(await agentsApi.fromPreset(sessionId, presetId));
@@ -87,28 +149,46 @@ export function AddAgentDialog({
     }
   };
 
+  const choices: Choice[] = [
+    ...(presets.data ?? []).map((preset) => ({
+      value: preset.id,
+      disabled: !preset.valid,
+      title: (
+        <>
+          {preset.name} <span className="chip chip-outline">{preset.extension}</span>
+        </>
+      ),
+      description: preset.valid ? preset.data?.description || 'No description' : Object.values(preset.errors).join(' '),
+    })),
+    { value: BLANK, title: 'Blank agent', description: 'Choose its model, instructions and tools yourself.' },
+  ];
+
   return (
-    <Modal title="Add an agent" subtitle="Presets come with their instructions, tools and sub-agents." onClose={onClose}>
-      <AsyncState {...presets} onRetry={presets.reload}>
-        {(list) => (
-          <div className="choice-list">
-            {list.map((preset) => (
-              <button key={preset.id} type="button" className="choice" disabled={busy || !preset.valid} onClick={() => create(preset.id)}>
-                <span className="choice-title">
-                  {preset.name} <span className="chip chip-outline">{preset.extension}</span>
-                </span>
-                <span className="choice-desc">
-                  {preset.valid ? preset.data?.description || 'No description' : Object.values(preset.errors).join(' ')}
-                </span>
-              </button>
-            ))}
-            <button type="button" className="choice" disabled={busy} onClick={onBlank}>
-              <span className="choice-title">Blank agent</span>
-              <span className="choice-desc">Choose its model, instructions and tools yourself.</span>
-            </button>
-          </div>
-        )}
-      </AsyncState>
+    <Modal
+      title="Add an agent"
+      subtitle="Presets come with their instructions, tools and sub-agents."
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" form="add-agent-form" className="btn btn-primary" disabled={busy || choice === null}>
+            {busy ? 'Adding…' : choice === BLANK ? 'Continue' : 'Add agent'}
+          </button>
+        </>
+      }
+    >
+      <form
+        id="add-agent-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void confirm();
+        }}
+      >
+        <PresetLoadState loading={presets.loading && !presets.data} error={presets.error} onRetry={presets.reload} />
+        <ChoiceList label="Agent to add" choices={choices} value={choice} onChange={setPicked} onConfirm={(value) => void confirm(value)} />
+      </form>
     </Modal>
   );
 }

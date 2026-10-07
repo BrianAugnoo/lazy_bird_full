@@ -118,8 +118,8 @@ src/
     file-viewers/        file viewer contract (§11.3)
     types/api.ts         backend payload types
   ui/                    shared components: Icon, PageHeader, AsyncState, Modal,
-                         Drawer, MultiSelect, KeyValueEditor, Markdown, Toasts,
-                         Dialogs (styled confirm/prompt), Sidebar
+                         Drawer, MultiSelect, ChoiceList, KeyValueEditor, Markdown,
+                         Toasts, Dialogs (styled confirm/prompt), Sidebar
   modules/               one folder per feature; an index.ts registers its pages
   test/http.ts           mockApi(): fetch mock keyed by "METHOD /path"
 ```
@@ -265,7 +265,9 @@ things happening now (running tasks, streaming). Status colors are reserved for
 states. Light by default, dark through `prefers-color-scheme`. Use the tokens of
 `styles/tokens.css`, never raw colors. Hairline borders, small radii, no gradients,
 sentence case everywhere. Lists are `.list` / `.list-row`, editing happens in a
-`Drawer`, confirmations in `Dialogs`, results in toasts. Icons come from
+`Drawer`, confirmations in `Dialogs`, results in toasts. A dialog offering options
+(`ChoiceList`) never acts on a single click: the user picks, then confirms with the
+primary button or Enter. Icons come from
 `ui/Icon.tsx` (24×24 line icons; add a path there when a new one is needed).
 Layouts must work from 390 px wide (the chat rail becomes an overlay).
 
