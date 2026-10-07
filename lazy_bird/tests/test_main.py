@@ -21,7 +21,6 @@ def test_openapi_contains_all_application_surfaces(client):
     assert "/api-keys/" in paths
     assert "/embedding-presets/" in paths
     assert "/inference-presets/" in paths
-from contextlib import contextmanager
 from fastapi.testclient import TestClient
 
 import lazy_bird.main as main_module

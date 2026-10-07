@@ -36,3 +36,31 @@ def test_api_key_endpoint_rejects_invalid_json(client):
 
     assert response.status_code == 422
 
+
+
+def test_keys_can_be_replaced_and_deleted(client):
+    from lazy_bird.crud import api_key as api_key_crud
+
+    client.post("/api-keys/", json={"name": "OpenAI", "key": "first"})
+
+    assert client.put("/api-keys/OpenAI", json={"key": "second"}).json() == {"name": "OpenAI"}
+    assert api_key_crud.find_key("OpenAI") == "second"
+    assert client.delete("/api-keys/OpenAI").status_code == 204
+    assert client.get("/api-keys/OpenAI").json()["error"]["code"] == "api_key_not_found"
+    assert client.put("/api-keys/OpenAI", json={"key": "third"}).status_code == 404
+
+
+def test_the_hugging_face_login_follows_its_key(client, monkeypatch):
+    from lazy_bird.tools import hf_auth
+
+    calls = []
+    monkeypatch.setattr(hf_auth, "authenticate_hf", lambda: calls.append("login"))
+    monkeypatch.setattr(hf_auth, "logout_hf", lambda: calls.append("logout"))
+
+    client.post("/api-keys/", json={"name": "HuggingFace", "key": "hf_first"})
+    client.put("/api-keys/HuggingFace", json={"key": "hf_second"})
+    client.post("/api-keys/", json={"name": "OpenAI", "key": "other"})
+    client.delete("/api-keys/OpenAI")
+    client.delete("/api-keys/HuggingFace")
+
+    assert calls == ["login", "login", "logout"]

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-import lazy_bird.chuncker as chuncker_module
-from lazy_bird.chuncker import ChunckerError, UnsupportedFormatError, chunck
+import lazy_bird.chunker as chunker_module
+from lazy_bird.chunker import ChunkerError, UnsupportedFormatError, chunk_file
 from lazy_bird.errors import NotFoundError
 from lazy_bird.models.file import File
 
@@ -23,7 +23,7 @@ async def test_unknown_extensions_are_unsupported(crud_database, tmp_path: Path)
     path.write_text("content", encoding="utf-8")
 
     with pytest.raises(UnsupportedFormatError) as error:
-        await chunck(create_file(crud_database, path, ".xyz"))
+        await chunk_file(create_file(crud_database, path, ".xyz"))
 
     assert error.value.code == "unsupported_format"
     assert ".md" in error.value.message
@@ -34,7 +34,7 @@ async def test_markdown_files_are_chunked_without_any_embedding_model(crud_datab
     path = tmp_path / "notes.md"
     path.write_text("First paragraph.\n\nSecond paragraph.", encoding="utf-8")
 
-    records = await chunck(create_file(crud_database, path, ".md"))
+    records = await chunk_file(create_file(crud_database, path, ".md"))
 
     assert [record["content"] for record in records] == ["First paragraph.", "Second paragraph."]
 
@@ -43,9 +43,9 @@ async def test_markdown_files_are_chunked_without_any_embedding_model(crud_datab
 async def test_chunks_respect_the_chunking_preference_budget(crud_database, tmp_path: Path, monkeypatch):
     path = tmp_path / "notes.md"
     path.write_text("one two three four five six seven eight nine ten", encoding="utf-8")
-    monkeypatch.setattr(chuncker_module, "chunking_max_tokens", lambda: 4)
+    monkeypatch.setattr(chunker_module, "chunking_max_tokens", lambda: 4)
 
-    records = await chunck(create_file(crud_database, path, ".md"))
+    records = await chunk_file(create_file(crud_database, path, ".md"))
 
     assert len(records) > 1
     assert all(record["token_count"] <= 4 for record in records)
@@ -55,13 +55,13 @@ async def test_chunks_respect_the_chunking_preference_budget(crud_database, tmp_
 async def test_chunker_failures_are_reported_as_chunking_errors(crud_database, tmp_path: Path, monkeypatch):
     path = tmp_path / "notes.md"
     path.write_text("content", encoding="utf-8")
-    monkeypatch.setattr(chuncker_module, "chunking_max_tokens", lambda: 1)
+    monkeypatch.setattr(chunker_module, "chunking_max_tokens", lambda: 1)
 
-    with pytest.raises(ChunckerError):
-        await chunck(create_file(crud_database, path, ".md"))
+    with pytest.raises(ChunkerError):
+        await chunk_file(create_file(crud_database, path, ".md"))
 
 
 @pytest.mark.anyio
 async def test_missing_files_are_not_found(crud_database):
     with pytest.raises(NotFoundError):
-        await chunck(404)
+        await chunk_file(404)

@@ -1,7 +1,11 @@
 import smtplib
 import ssl
 from email.message import EmailMessage
+
 from pydantic import BaseModel, ConfigDict
+
+from lazy_bird.errors import ExternalServiceError
+
 
 class ToolSettings(BaseModel):
     smtp_server: str
@@ -31,19 +35,22 @@ class Smtp:
             subject: The subject of the email.
             body: The body content of the email.
         """
+        message = EmailMessage()
+        message.set_content(body)
+        message["Subject"] = subject
+        message["From"] = self.settings.sender_email
+        message["To"] = recipient_email
         try:
-            message = EmailMessage()
-            message.set_content(body)
-            message['Subject'] = subject
-            message['From'] = self.settings.sender_email
-            message['To'] = recipient_email
-    
             context = ssl.create_default_context()
             with smtplib.SMTP_SSL(self.settings.smtp_server, self.settings.smtp_port, context=context) as server:
                 server.login(self.settings.smtp_username, self.settings.smtp_password)
                 server.send_message(message)
-            return f"Email sent successfully to {recipient_email}."
-        except Exception as e:
-            return f"Failed to send email, error: {e}, if the error is related to SMTP internal configuration, please inform the user."
-        
+        except (OSError, smtplib.SMTPException) as error:
+            raise ExternalServiceError(
+                f"The email could not be sent ({error}). If the SMTP settings are wrong, tell the user to fix them on the Tools page.",
+                code="smtp_failed",
+            ) from error
+        return f"Email sent to {recipient_email}."
+
+
 tools = [Smtp]

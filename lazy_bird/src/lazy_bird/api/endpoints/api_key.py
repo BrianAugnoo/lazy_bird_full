@@ -39,4 +39,5 @@ def replace_api_key(name: str, payload: APIKeyUpdate):
 @router.delete("/{name}", status_code=204)
 def delete_api_key(name: str):
     APIKey.delete(name)
+    APIKey.on_change(name, removed=True)
     return Response(status_code=204)

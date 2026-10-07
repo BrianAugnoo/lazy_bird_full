@@ -3,8 +3,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from lazy_bird import database
-from lazy_bird.chuncker import chunck
+from lazy_bird import chunker, database
 from lazy_bird.crud import chunk as chunk_crud
 from lazy_bird.crud import file as file_crud
 from lazy_bird.crud import file_processing
@@ -21,7 +20,7 @@ on_status_change(file_processing.on_task_change)
 def chunk_file(ctx: TaskContext, file_id: int) -> dict:
     """Split a file into chunks and store them (replacing the previous ones)."""
     ctx.report(0.0, "Chunking")
-    chunks = asyncio.run(chunck(file_id))
+    chunks = asyncio.run(chunker.chunk_file(file_id))
     ctx.checkpoint(0.9, f"Storing {len(chunks)} chunks")
     stored = chunk_crud.replace(file_id, chunks)
     return {"file_id": file_id, "chunks": len(stored)}

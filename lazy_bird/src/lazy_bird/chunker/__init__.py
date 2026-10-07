@@ -1,7 +1,7 @@
 """Split a file into chunks with the chunker of its extension.
 
-Chunker extensions live in ``chuncker/extensions/{extension}.py`` (``md.py`` for
-``.md`` files) and define ``async def Chunck(file, max_token) -> list[dict]``. Each
+Chunker extensions live in ``chunker/extensions/{extension}.py`` (``md.py`` for
+``.md`` files) and define ``async def chunk(file, max_token) -> list[dict]``. Each
 chunk dict has ``content``, ``start_line``, ``end_line`` and optionally
 ``start_row``, ``end_row``, ``token_count`` and ``meta`` (a JSON object).
 """
@@ -15,7 +15,7 @@ from lazy_bird.errors import AppError, NotFoundError
 from lazy_bird.preferences import chunking_max_tokens
 
 
-class ChunckerError(AppError):
+class ChunkerError(AppError):
     status_code = 500
     code = "chunking_failed"
 
@@ -39,13 +39,13 @@ def _extension_module(extension: str) -> ModuleType | None:
 def supported_extensions() -> list[str]:
     import pkgutil
 
-    from lazy_bird.chuncker import extensions
+    from lazy_bird.chunker import extensions
 
     return sorted(f".{info.name}" for info in pkgutil.iter_modules(extensions.__path__) if not info.name.startswith("_"))
 
 
-async def chunck(file_id: int) -> list[dict]:
-    """Return the chunks of a file; raise ``UnsupportedFormatError`` or ``ChunckerError``."""
+async def chunk_file(file_id: int) -> list[dict]:
+    """Return the chunks of a file; raise ``UnsupportedFormatError`` or ``ChunkerError``."""
     file = file_crud.get(file_id)
     if file is None:
         raise NotFoundError("File", file_id)
@@ -56,8 +56,8 @@ async def chunck(file_id: int) -> list[dict]:
             details={"extension": file.extension},
         )
     try:
-        return await module.Chunck(file=file, max_token=chunking_max_tokens())
+        return await module.chunk(file=file, max_token=chunking_max_tokens())
     except AppError:
         raise
     except Exception as error:
-        raise ChunckerError(f"Could not chunk {file.name}{file.extension}: {error}") from error
+        raise ChunkerError(f"Could not chunk {file.name}{file.extension}: {error}") from error

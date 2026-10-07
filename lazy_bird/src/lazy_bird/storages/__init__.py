@@ -15,7 +15,8 @@ class StorageError(AppError):
 def _invalid_path(message: str) -> InvalidInputError:
     return InvalidInputError(message, code="invalid_path")
 
-storage_dir = Path(__file__).resolve().parent
+# Uploaded files live in their own git-ignored folder, apart from the package code.
+storage_dir = Path(__file__).resolve().parent / "uploads"
 
 
 def _safe_path(path: Path) -> Path:

@@ -7,7 +7,6 @@ from pathlib import Path
 from functools import lru_cache
 
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import Engine, create_engine, inspect
 
 from lazy_bird.database import alembic_config_for

@@ -37,9 +37,6 @@ def get_all():
         return [APIKeyOut.model_validate(api_key) for api_key in api_keys]
 
 
-HUGGING_FACE_KEY = "HuggingFace"
-
-
 def update(name: str, key: str) -> APIKeyOut:
     from lazy_bird.errors import NotFoundError
 
@@ -64,9 +61,13 @@ def delete(name: str) -> None:
         session.commit()
 
 
-def on_change(name: str) -> None:
-    """Log in to Hugging Face again when its key changes."""
-    if name == HUGGING_FACE_KEY:
-        from lazy_bird.tools.hf_auth import authenticate_hf
+def on_change(name: str, removed: bool = False) -> None:
+    """Keep the Hugging Face login in step with its key (log in again, or out)."""
+    from lazy_bird.tools.hf_auth import HUGGING_FACE_KEY, authenticate_hf, logout_hf
 
+    if name != HUGGING_FACE_KEY:
+        return
+    if removed:
+        logout_hf()
+    else:
         authenticate_hf()

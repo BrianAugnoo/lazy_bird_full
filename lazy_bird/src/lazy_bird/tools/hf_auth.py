@@ -24,6 +24,16 @@ def authenticate_hf() -> bool:
     return True
 
 
+def logout_hf() -> None:
+    """Forget the Hugging Face token (when its key is deleted); never raises."""
+    from huggingface_hub import logout
+
+    try:
+        logout()
+    except Exception as error:  # Not logged in, or the token file is already gone.
+        logger.info("Hugging Face logout skipped: {}", error)
+
+
 def hub_status() -> dict:
     """Who lazy_bird is logged in as on Hugging Face (``user`` is None when anonymous)."""
     from huggingface_hub import whoami

@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
-from loguru import logger
 from sqlmodel import select
 
 from lazy_bird.database import db

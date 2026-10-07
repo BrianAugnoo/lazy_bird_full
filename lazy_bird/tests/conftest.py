@@ -22,7 +22,6 @@ from starlette.datastructures import Headers
 import pytest
 
 import lazy_bird.crud.file as file_crud
-import lazy_bird.crud.llm_model as llm_model_crud
 import lazy_bird.database as database_module
 from lazy_bird.database.vector_db import lancedb as lancedb_adapter
 from lazy_bird.database.sql_db.sqlite import initialize

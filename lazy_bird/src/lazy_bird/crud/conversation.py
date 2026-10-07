@@ -17,7 +17,6 @@ from lazy_bird.database import db
 from lazy_bird.errors import NotFoundError
 from lazy_bird.models.agent import Agent as AgentORM
 from lazy_bird.models.conversation import Conversation as ConversationORM
-from lazy_bird.models.message import Message as MessageORM
 from lazy_bird.schemas.conversation import ConversationDetail, ConversationOut
 from lazy_bird.schemas.message import MessageOut
 

@@ -99,15 +99,15 @@ async def test_a_file_removed_from_disk_is_reported_missing(pipeline, upload_fil
 
 @pytest.mark.anyio
 async def test_a_cancelled_processing_stays_cancelled_until_requested_again(pipeline, upload_file_factory, monkeypatch):
-    import lazy_bird.tasks.default.files as file_tasks
+    import lazy_bird.chunker as chunker
 
-    original = file_tasks.chunck
+    original = chunker.chunk_file
 
-    async def slow_chunck(file_id):
+    async def slow_chunk_file(file_id):
         time.sleep(0.5)
         return await original(file_id)
 
-    monkeypatch.setattr(file_tasks, "chunck", slow_chunck)
+    monkeypatch.setattr(chunker, "chunk_file", slow_chunk_file)
     file_id = await upload(upload_file_factory, "notes.md", b"Text.")
     chunking = wait_until(lambda: next((row for row in file_crud.find(file_id).processing if row.state == "running"), None))
 

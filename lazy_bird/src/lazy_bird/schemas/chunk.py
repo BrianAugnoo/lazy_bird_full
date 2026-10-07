@@ -7,7 +7,7 @@ from lazy_bird.schemas.types import UtcDatetime
 
 
 class ChunkIn(BaseModel):
-    """A chunk as returned by a chunker extension (``Chunck(file, max_token)``)."""
+    """A chunk as returned by a chunker extension (``chunk(file, max_token)``)."""
 
     content: str
     start_line: int

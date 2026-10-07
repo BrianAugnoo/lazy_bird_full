@@ -1,1 +1,0 @@
-"""SQLModel table tests."""

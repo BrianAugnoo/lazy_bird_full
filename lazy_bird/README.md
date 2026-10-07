@@ -39,7 +39,7 @@ explicites:
 - Un adaptateur vectoriel fournit `name`, `initialize`, `disconnect`, `create`,
 	`delete` et `retrieve`.
 - Un moteur d'embedding fournit `name`, `formats`, `EngineSettings` et `embed`.
-- Une extension de format fournit `async Chunck(file, max_token)`.
+- Une extension de format fournit `async chunk(file, max_token)`.
 - Un module d'endpoint fournit un `router` FastAPI.
 
 Les contrats SQL et vectoriels sont formalises dans

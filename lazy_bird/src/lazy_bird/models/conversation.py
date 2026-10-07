@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from sqlalchemy import Column, JSON
 from sqlmodel import SQLModel, Field, Relationship
 
 if TYPE_CHECKING:

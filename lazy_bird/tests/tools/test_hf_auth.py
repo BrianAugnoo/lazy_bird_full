@@ -29,3 +29,21 @@ def test_login_failures_never_raise(crud_database, monkeypatch):
     monkeypatch.setattr("huggingface_hub.login", fail)
 
     assert hf_auth.authenticate_hf() is False
+
+
+def test_logging_out_never_raises(monkeypatch):
+    import huggingface_hub
+
+    from lazy_bird.tools import hf_auth
+
+    calls = []
+
+    def logout():
+        calls.append("logout")
+        raise OSError("not logged in")
+
+    monkeypatch.setattr(huggingface_hub, "logout", logout)
+
+    hf_auth.logout_hf()
+
+    assert calls == ["logout"]

@@ -8,7 +8,7 @@ import tiktoken
 from lazy_bird.models.file import File
 
 
-class MarkdownChunckError(Exception):
+class MarkdownChunkError(Exception):
     pass
 
 
@@ -111,8 +111,8 @@ def _build_chunks(file: File, max_token: int) -> list[dict[str, Any]]:
     return chunks
 
 
-async def Chunck(file: File, max_token: int) -> list[dict[str, Any]]:
+async def chunk(file: File, max_token: int) -> list[dict[str, Any]]:
     try:
         return await asyncio.to_thread(_build_chunks, file, max_token)
     except Exception as exc:
-        raise MarkdownChunckError(f"Could not chunk Markdown file {file.path}: {exc}") from exc
+        raise MarkdownChunkError(f"Could not chunk Markdown file {file.path}: {exc}") from exc

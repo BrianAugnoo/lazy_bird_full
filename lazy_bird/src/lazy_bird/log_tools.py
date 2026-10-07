@@ -10,7 +10,7 @@ from typing import Sequence
 from lazy_bird.log_parser import LogParseError
 from lazy_bird.log_render import color_enabled, entry_to_dict, json_output, render_search_results
 from lazy_bird.log_search import LogSearchError, search_logs
-from lazy_bird.log_tree import node_to_dict, render_call_tree, render_raw_tree, trace_call_trees, trace_function_calls
+from lazy_bird.log_tree import node_to_dict, render_call_tree, render_raw_tree, trace_call_trees
 
 
 def parse_date_argument(value: str, *, until: bool = False) -> datetime:

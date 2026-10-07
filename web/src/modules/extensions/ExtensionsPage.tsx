@@ -8,7 +8,7 @@ import { useToast } from '@/ui/toastContext';
 const AREAS = [
   { folder: 'embedding/engines/', what: 'Embedding engines' },
   { folder: 'inference/engines/', what: 'Inference engines' },
-  { folder: 'chuncker/extensions/', what: 'Chunkers (one file per file extension)' },
+  { folder: 'chunker/extensions/', what: 'Chunkers (one file per file extension)' },
   { folder: 'database/sql_db/ · database/vector_db/', what: 'Databases' },
   { folder: 'tasks/{extension}/', what: 'Background task kinds' },
   { folder: 'agents/tools/{extension}/', what: 'Tools' },

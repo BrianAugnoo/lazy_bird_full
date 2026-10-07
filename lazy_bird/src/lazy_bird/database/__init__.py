@@ -6,7 +6,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
-from sqlmodel import SQLModel, Session
+from sqlmodel import Session
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.config import Config
@@ -75,7 +75,6 @@ config = initialize_database_config()
 engine = SQL_ADAPTERS[config.selected_sql_database].initialize(**_settings(SQL_ADAPTERS[config.selected_sql_database], config.sql_databases[config.selected_sql_database].settings))
 db_url = str(engine.url)
 db_type = config.selected_sql_database
-test_engine = SQL_ADAPTERS["sqlite"].initialize(url=f"sqlite:///{DATABASE_DIR / 'storage' / 'lazy_bird_test.db'}")
 status = DatabaseStatus(ready=False, error="Database has not been initialized")
 
 def alembic_config_for(url: str) -> Config:
@@ -140,12 +139,6 @@ def db():
     if not status.ready:
         raise RuntimeError(status.error or "Database is unavailable")
     with Session(engine) as session:
-        yield session
-
-@contextmanager
-def test_db():
-    SQLModel.metadata.create_all(test_engine)
-    with Session(test_engine) as session:
         yield session
 
 _vector_initialized: str | None = None
