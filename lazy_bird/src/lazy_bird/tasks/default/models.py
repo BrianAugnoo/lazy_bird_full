@@ -1,4 +1,7 @@
-"""Model installation tasks: download from Hugging Face, import from disk."""
+"""Model installation tasks: download from Hugging Face, import uploaded files."""
+
+import shutil
+from pathlib import Path
 
 from lazy_bird.crud import llm_model as llm_model_crud
 from lazy_bird.tasks import TaskContext, task
@@ -23,8 +26,14 @@ def download(ctx: TaskContext, hf_path: str, files: list[str] | None = None, rev
 
 
 @task("models.import", title="Import {name}", resources={"cpu": 1})
-def import_model(ctx: TaskContext, path: str, name: str) -> dict:
-    """Copy a model folder or weight file into the cache as ``local/<name>``."""
-    repo_id, snapshot = hf_cache.import_local(path, name, progress=_reporter(ctx, "Copied"))
+def import_model(ctx: TaskContext, path: str, name: str, staged: bool = False) -> dict:
+    """Store a model folder or weight file in the cache as ``local/<name>``.
+
+    ``staged`` files (uploaded into the staging folder) are moved, and the staging
+    folder is removed once the model is registered.
+    """
+    repo_id, snapshot = hf_cache.import_local(path, name, progress=_reporter(ctx, "Stored"), move=staged)
     model = llm_model_crud.register(repo_id, snapshot, "local", name=name)
+    if staged:
+        shutil.rmtree(Path(path), ignore_errors=True)
     return {"model_id": model.id, "formats": model.formats}

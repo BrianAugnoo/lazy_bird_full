@@ -338,7 +338,7 @@ reindex.submit(folder="notes", priority=10)         # -> TaskOut
 - failures are retried up to the kind's `retries` (typed permanent failures are not).
 
 Shipped kinds: `files.chunk`, `files.embed`, `files.scan` (periodic, every
-`files.scan_every_minutes`), `models.download`, `models.import`.
+`files.scan_every_minutes`), `models.download`, `models.import` (uploaded models).
 
 ### 7.2 Scheduling
 
@@ -404,8 +404,13 @@ default preset automatically. The API summarizes rows into one file `state`:
   moved and deleted; text content can be read and edited (`not_text` for binary).
 - **Models** (`llmmodel`): the Hugging Face cache (`~/.cache/huggingface/hub`) is the
   source of truth. Downloads (`models.download`, optionally only some weight files,
-  e.g. one GGUF quantization) and local imports (`models.import`, copied into the
-  cache as `models--local--<name>/` with blobs/snapshots/refs) are tasks. A model
+  e.g. one GGUF quantization) and uploads are tasks. An upload works from any
+  browser (Docker, remote server): each file is streamed as the raw body of
+  `PUT /models/uploads/{name}/files/{path}` into a staging folder next to the cache
+  (`.lazy_bird_uploads/<name>/`), then `POST /models/uploads/{name}` queues
+  `models.import`, which moves the files into the cache as `models--local--<name>/`
+  (blobs/snapshots/refs) and removes the staging folder; `DELETE
+  /models/uploads/{name}` discards an abandoned upload. A model
   records its weight `formats` (safetensors, gguf, onnx, openvino, bin, pth, ckpt, h5, msgpack — `tools/model_extraction.FORMATS`), the files
   of each format, the `selected_format` / `selected_file` and context lengths; GGUF
   metadata is read without extra dependencies (`tools/gguf.py`). Engines declare the
@@ -469,8 +474,8 @@ checks that models match the migrated schema and that downgrade/upgrade works).
 
 ## 10. API surface
 
-Routers (`api/endpoints/`): `files`, `chunks`, `search`, `models` (+ hub status,
-login, files), `embedding-engines`/`embedding-presets`, `inference-engines`/
+Routers (`api/endpoints/`): `files`, `chunks`, `search`, `models` (+ uploads, hub
+status, login, files), `embedding-engines`/`embedding-presets`, `inference-engines`/
 `inference-presets` (+ `/inference/complete`), `tasks` (+ `/ws/tasks`), `databases`,
 `api-keys`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
 `instructions`, `agent-presets`, `session-presets`, `sessions`, `agents`,
@@ -489,6 +494,7 @@ schema with unknown ids / invalid bodies and checks the uniform error format.
   - `migrated_database` — a copy of a session-wide migrated SQLite template, with
     vectors in a temporary LanceDB folder; `crud_database` adds no auto-processing;
   - `client` — `TestClient` without scheduler start, Hugging Face login or cache sync;
+  - `isolated_hf_cache` (autouse) — every test gets an empty temporary Hugging Face cache;
   - `storage_root`, `upload_file_factory`, `model_cache` (temporary HF cache);
   - `fake_embedding`, `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
   - `running_scheduler`, `isolated_scheduler` (autouse), `wait_until`, `process_inline`.

@@ -535,3 +535,6 @@ button.tool-card-head:hover { background: var(--bg-card-hover); }
 .link-button:hover { text-decoration: underline; }
 .field-checkbox small { display: block; margin-top: 2px; font-weight: 400; }
 .chat-header > .row { flex-wrap: nowrap; flex-shrink: 0; gap: 2px; }
+.upload-files { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; padding: 8px 10px; border: 1px solid var(--border-base); border-radius: var(--radius-md); }
+.upload-total { padding-top: 6px; margin-top: 2px; border-top: 1px solid var(--border-subtle); }
+.segmented + .form-group, .segmented + section { margin-top: 12px; }

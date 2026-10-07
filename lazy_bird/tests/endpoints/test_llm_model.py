@@ -36,10 +36,46 @@ def test_download_is_queued_as_a_task(client, idle_scheduler):
     assert client.post("/models/", json={"hf_path": "not a repo"}).status_code == 422
 
 
+def test_uploaded_files_are_imported_as_a_local_model(client, model_cache, idle_scheduler):
+    from lazy_bird.tasks.default import models as model_tasks
+    from lazy_bird.tools import hf_cache
+
+    assert client.put("/models/uploads/My Model/files/model.safetensors", content=b"weights").json() == {"path": "model.safetensors", "size": 7}
+    assert client.put("/models/uploads/My Model/files/tokenizer/vocab.txt", content=b"a b").status_code == 200
+
+    queued = client.post("/models/uploads/My Model")
+
+    assert queued.status_code == 202
+    task = queued.json()
+    assert task["kind"] == "models.import" and task["params"]["staged"] is True
+    result = model_tasks.import_model.run(**task["params"])
+    model = llm_model_crud.get(result["model_id"])
+    assert (model.hf_path, model.name, model.source, model.formats) == ("local/My-Model", "My Model", "local", ["safetensors"])
+    assert (llm_model_crud.get(model.id).local_path.startswith(str(model_cache.root)))
+    assert not hf_cache.staging_folder("My Model").exists()
+    assert client.put("/models/uploads/My Model/files/other.bin", content=b"x").json()["error"]["code"] == "model_exists"
+
+
+def test_uploads_are_checked_and_can_be_discarded(client, model_cache, idle_scheduler):
+    from lazy_bird.tools import hf_cache
+
+    for bad in ("../escape.bin", ".hidden/model.bin"):
+        response = client.put(f"/models/uploads/mine/files/{bad}", content=b"x")
+        assert response.status_code in (404, 422), bad
+        if response.status_code == 422:
+            assert response.json()["error"]["code"] == "invalid_path"
+    assert client.post("/models/uploads/mine").json()["error"]["code"] == "nothing_uploaded"
+    client.put("/models/uploads/mine/files/w.gguf", content=b"x")
+
+    assert client.delete("/models/uploads/mine").status_code == 204
+    assert not hf_cache.staging_folder("mine").exists()
+    assert client.post("/models/uploads/!!!").json()["error"]["code"] == "invalid_model_name"
+
+
 def test_importing_an_installed_name_is_a_conflict(client, model_cache, idle_scheduler):
     llm_model_crud.register("local/mine", model_cache("local/mine", {"w.pth": b"p"}), "local")
 
-    response = client.post("/models/import", json={"path": "/anywhere", "name": "mine"})
+    response = client.post("/models/uploads/mine")
 
     assert response.status_code == 409 and response.json()["error"]["code"] == "model_exists"
 

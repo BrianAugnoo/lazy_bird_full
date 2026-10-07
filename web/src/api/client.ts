@@ -117,3 +117,34 @@ export async function requestBlob(path: string): Promise<Blob> {
 
   return response.blob();
 }
+
+/**
+ * Send a file as the raw body of a request, reporting upload progress (fetch cannot).
+ * `onProgress` receives the bytes sent so far; aborting `signal` cancels the upload.
+ */
+export function uploadBody<T>(
+  path: string,
+  body: Blob,
+  { method = 'PUT', onProgress, signal }: { method?: string; onProgress?: (sent: number) => void; signal?: AbortSignal } = {},
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, buildUrl(path));
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (event) => onProgress?.(event.loaded);
+    xhr.onload = () => {
+      let data: unknown = xhr.responseText;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // Not JSON: keep the text.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
+      else reject(toApiError(xhr.status, xhr.statusText, data));
+    };
+    xhr.onerror = () => reject(unreachable(getApiBaseUrl(), 'upload failed'));
+    xhr.onabort = () => reject(new ApiError('The upload was cancelled.', 0, 'upload_cancelled'));
+    signal?.addEventListener('abort', () => xhr.abort());
+    xhr.send(body);
+  });
+}

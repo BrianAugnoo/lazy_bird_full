@@ -31,11 +31,11 @@ class LLMModelIn(BaseModel):
     revision: str | None = None
 
 
-class LLMModelImport(BaseModel):
-    """Import a model folder (or a single weight file) from the server's disk."""
+class UploadedFileOut(BaseModel):
+    """A model file received by the server, waiting for the import."""
 
-    path: str = Field(min_length=1)
-    name: str = Field(min_length=1, max_length=96)
+    path: str
+    size: int
 
 
 class LLMModelUpdate(BaseModel):

@@ -95,3 +95,22 @@ def test_delete_repo_removes_the_cache_folder(source, tmp_path):
 def test_names_must_contain_letters_or_digits():
     with pytest.raises(ValueError):
         hf_cache.slug("///")
+
+
+def test_staged_files_are_moved_into_the_cache(source, tmp_path):
+    cache = tmp_path / "cache"
+
+    repo_id, snapshot = hf_cache.import_local(source, "mine", cache=cache, move=True)
+
+    assert (snapshot / "model.safetensors").read_bytes() == b"weights"
+    assert not (source / "model.safetensors").exists()
+    assert not (source / "sub" / "config.json").exists()
+
+
+def test_staged_paths_stay_inside_the_staging_folder(tmp_path):
+    folder = hf_cache.staging_folder("My Model", tmp_path)
+
+    assert hf_cache.staged_path("My Model", "sub\\config.json", tmp_path) == folder / "sub" / "config.json"
+    for bad in ("../x", "/etc/passwd", "a/../../x", ".git/HEAD", ""):
+        with pytest.raises(ValueError):
+            hf_cache.staged_path("My Model", bad, tmp_path)

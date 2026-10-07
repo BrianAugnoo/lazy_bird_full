@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Query, Response
+import shutil
+
+from fastapi import APIRouter, Query, Request, Response
 
 import lazy_bird.crud.llm_model as LLMModel
-from lazy_bird.errors import ExternalServiceError
-from lazy_bird.schemas.llm_model import HubFileOut, LLMModelImport, LLMModelIn, LLMModelOut, LLMModelUpdate
+from lazy_bird.errors import ExternalServiceError, InvalidInputError
+from lazy_bird.schemas.llm_model import HubFileOut, LLMModelIn, LLMModelOut, LLMModelUpdate, UploadedFileOut
 from lazy_bird.schemas.task import TaskOut
 from lazy_bird.tools import hf_cache
 from lazy_bird.tools.model_extraction import list_repo_files
@@ -23,13 +25,54 @@ def download_llm_model(payload: LLMModelIn):
     return download.submit(hf_path=payload.hf_path, files=payload.files, revision=payload.revision, dedupe_key=f"models.download:{payload.hf_path}")
 
 
-@router.post("/import", response_model=TaskOut, status_code=202)
-def import_llm_model(payload: LLMModelImport):
-    """Queue the copy of a model folder or weight file from the server's disk into the cache."""
+def _local_repo(name: str) -> str:
+    try:
+        return f"{hf_cache.LOCAL_NAMESPACE}/{hf_cache.slug(name)}"
+    except ValueError as error:
+        raise InvalidInputError(str(error), code="invalid_model_name", details={"fields": {"name": str(error)}}) from error
+
+
+@router.put("/uploads/{name}/files/{path:path}", response_model=UploadedFileOut)
+async def upload_model_file(name: str, path: str, request: Request):
+    """Receive one file of a model (raw request body), e.g. ``model.gguf`` or ``config.json``.
+
+    Upload every file of the model this way, then ``POST /models/uploads/{name}``.
+    """
+    LLMModel.ensure_absent(_local_repo(name))
+    try:
+        target = hf_cache.staged_path(name, path)
+    except ValueError as error:
+        raise InvalidInputError(str(error), code="invalid_path") from error
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(f".{target.name}.part")  # hidden: ignored if the upload stops midway
+    size = 0
+    with partial.open("wb") as stream:
+        async for chunk in request.stream():
+            stream.write(chunk)
+            size += len(chunk)
+    partial.replace(target)
+    return UploadedFileOut(path=target.relative_to(hf_cache.staging_folder(name)).as_posix(), size=size)
+
+
+@router.post("/uploads/{name}", response_model=TaskOut, status_code=202)
+def import_uploaded_model(name: str):
+    """Queue the import of the uploaded files as the model ``local/<name>``."""
     from lazy_bird.tasks.default.models import import_model
 
-    LLMModel.ensure_absent(f"{hf_cache.LOCAL_NAMESPACE}/{hf_cache.slug(payload.name)}")
-    return import_model.submit(path=payload.path, name=payload.name, dedupe_key=f"models.import:{hf_cache.slug(payload.name)}")
+    repo_id = _local_repo(name)
+    LLMModel.ensure_absent(repo_id)
+    folder = hf_cache.staging_folder(name)
+    if not folder.is_dir() or not any(path.is_file() and not path.name.startswith(".") for path in folder.rglob("*")):
+        raise InvalidInputError("Upload the model files first.", code="nothing_uploaded")
+    return import_model.submit(path=str(folder), name=name, staged=True, dedupe_key=f"models.import:{hf_cache.slug(name)}")
+
+
+@router.delete("/uploads/{name}", status_code=204)
+def discard_uploaded_model(name: str):
+    """Delete the files uploaded for a model that will not be imported."""
+    _local_repo(name)
+    shutil.rmtree(hf_cache.staging_folder(name), ignore_errors=True)
+    return Response(status_code=204)
 
 
 @router.post("/sync")

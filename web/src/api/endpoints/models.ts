@@ -1,4 +1,4 @@
-import { request } from '../client';
+import { request, uploadBody } from '../client';
 import type { HubFile, HubStatus, LLMModel, LLMModelUpdate, Task } from '@/core/types/api';
 
 export const models = {
@@ -11,8 +11,13 @@ export const models = {
   /** Queue a Hugging Face download; `files` limits the weights fetched. */
   download: (hf_path: string, files?: string[], revision?: string) =>
     request<Task>('/models/', { method: 'POST', body: JSON.stringify({ hf_path, files: files?.length ? files : null, revision: revision || null }) }),
-  /** Queue the copy of a folder or weight file from the server's disk. */
-  importLocal: (path: string, name: string) => request<Task>('/models/import', { method: 'POST', body: JSON.stringify({ path, name }) }),
+  /** Send one file of a model to upload (`relativePath` keeps its place in the model folder). */
+  uploadFile: (name: string, relativePath: string, file: Blob, options: { onProgress?: (sent: number) => void; signal?: AbortSignal } = {}) =>
+    uploadBody<{ path: string; size: number }>(`/models/uploads/${encodeURIComponent(name)}/files/${relativePath.split('/').map(encodeURIComponent).join('/')}`, file, options),
+  /** Import the uploaded files as the model `local/<name>` (a background task). */
+  importUpload: (name: string) => request<Task>(`/models/uploads/${encodeURIComponent(name)}`, { method: 'POST' }),
+  /** Forget the files uploaded for a model that will not be imported. */
+  discardUpload: (name: string) => request<void>(`/models/uploads/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   update: (id: number, changes: LLMModelUpdate) => request<LLMModel>(`/models/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
   /** `deleteFiles` also removes the weights from the cache. */
   remove: (id: number, deleteFiles = false) => request<void>(`/models/${id}?delete_files=${deleteFiles}`, { method: 'DELETE' }),

@@ -8,8 +8,11 @@ the same layout, under the repository ``local/<name>``::
         snapshots/<revision>/<path>    links to the blobs (copies where links are unavailable)
         refs/main                      the current revision
 
-So the cache alone is enough to rebuild the model list after a restart, even when
-the original folder of an imported model is gone.
+So the cache alone is enough to rebuild the model list after a restart.
+
+Models uploaded from the browser are first written, file by file, into a staging
+folder next to the cache (``.lazy_bird_uploads/<name>/``, same disk), then imported
+with ``move=True``: the files become blobs without being copied twice.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from huggingface_hub.constants import HF_HUB_CACHE
 
 LOCAL_NAMESPACE = "local"
 BLOCK = 4 * 1024 * 1024
+STAGING = ".lazy_bird_uploads"
 
 
 def cache_root() -> Path:
@@ -77,6 +81,19 @@ def slug(name: str) -> str:
     return value[:96]
 
 
+def staging_folder(name: str, cache: Path | None = None) -> Path:
+    """Where the files of a model being uploaded are gathered before the import."""
+    return (cache or cache_root()) / STAGING / slug(name)
+
+
+def staged_path(name: str, relative: str, cache: Path | None = None) -> Path:
+    """Destination of one uploaded file; refuses absolute paths, ``..`` and hidden parts."""
+    parts = [part for part in relative.replace("\\", "/").split("/") if part]
+    if not parts or relative.startswith("/") or any(part in (".", "..") or part.startswith(".") for part in parts):
+        raise ValueError(f"Invalid file path '{relative}'")
+    return staging_folder(name, cache).joinpath(*parts)
+
+
 def _source_files(source: Path) -> list[tuple[Path, str]]:
     if source.is_file():
         return [(source, source.name)]
@@ -113,11 +130,13 @@ def import_local(
     *,
     cache: Path | None = None,
     progress: Callable[[int, int], None] = lambda done, total: None,
+    move: bool = False,
 ) -> tuple[str, Path]:
-    """Copy a local model folder (or single weight file) into the cache.
+    """Store a local model folder (or single weight file) in the cache.
 
     Returns ``(repo_id, snapshot path)``. Importing identical content again reuses
-    the same blobs and revision.
+    the same blobs and revision. ``move`` moves the files instead of copying them
+    (staged uploads, on the same disk as the cache).
     """
     source_path = Path(source).expanduser()
     if not source_path.exists():
@@ -127,7 +146,7 @@ def import_local(
         raise ValueError(f"{source_path} contains no files")
     repo_id = f"{LOCAL_NAMESPACE}/{slug(name)}"
     folder = repo_folder(repo_id, cache)
-    total = sum(path.stat().st_size for path, _ in files) * 2  # hashing, then copying
+    total = sum(path.stat().st_size for path, _ in files) * (1 if move else 2)  # hashing, then copying
     done = 0
 
     def advance(count: int) -> None:
@@ -141,7 +160,12 @@ def import_local(
     for path, relative in files:
         digest = _hash_file(path, advance)
         blob = blobs / digest
-        if not blob.exists():
+        if move:
+            if blob.exists():
+                path.unlink()
+            else:
+                shutil.move(path, blob)
+        elif not blob.exists():
             partial = blob.with_suffix(".incomplete")
             with path.open("rb") as reader, partial.open("wb") as writer:
                 for block in iter(lambda: reader.read(BLOCK), b""):

@@ -106,7 +106,7 @@ src/
                          tables, modals, drawers, toasts…), layout.css (shell),
                          pages.css (styles specific to pages)
   api/
-    client.ts            request(), ApiError, toApiError, downloads
+    client.ts            request(), ApiError, toApiError, downloads, uploadBody() (progress)
     socket.ts            socketUrl(), LiveSocket (reconnecting JSON WebSocket)
     endpoints/           one typed module per backend area (see §13)
   core/
@@ -212,7 +212,7 @@ by side / preview, text).
 | Skills (`skills`) | `modules/skills` | `/skills/*` (incl. resource files) |
 | Instructions (`instructions`) | `modules/instructions` | `/instructions/{full|sub}/*` |
 | Agent / session presets | `modules/presets` | `/agent-presets/*`, `/session-presets/*` |
-| Models (`models`) | `modules/models` | `/models/*` (download with file choice, import, sync, hub status/login/files), model tasks |
+| Models (`models`) | `modules/models` | `/models/*` (download with file choice, upload from the computer with progress, sync, hub status/login/files), model tasks |
 | Embedding, Inference | `modules/engines` | `/{kind}-engines/`, `/{kind}-presets/*`, `POST /inference/complete` |
 | Tasks (`tasks`) | `modules/tasks` | `WS /ws/tasks` (snapshot, events, commands), `DELETE /tasks/finished` |
 | Databases (`databases`) | `modules/databases` | `/databases/*`, `/databases/vector/tables/*` |

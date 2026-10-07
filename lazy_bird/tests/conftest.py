@@ -247,6 +247,14 @@ def process_inline(file_id: int) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolated_hf_cache(tmp_path_factory, monkeypatch):
+    """No test may touch the real Hugging Face cache (``model_cache`` gives a filled one)."""
+    from lazy_bird.tools import hf_cache
+
+    monkeypatch.setattr(hf_cache, "HF_HUB_CACHE", str(tmp_path_factory.mktemp("hf-cache-isolated")))
+
+
+@pytest.fixture(autouse=True)
 def isolated_scheduler():
     """Every test starts without the process-wide scheduler and leaves none behind."""
     import lazy_bird.tasks as tasks_module
