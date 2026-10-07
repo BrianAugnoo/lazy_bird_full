@@ -1,674 +1,508 @@
-# Agent Guide - Lazy Bird
+# Agent guide — lazy_bird
 
-This document provides the minimum context required to work in this repository without exploring every file. It describes the current architecture, the responsibility of each layer, the mandatory engineering rules, and the Git workflow every agent must follow.
+lazy_bird is an open-source orchestration platform for AI agents built to be
+extended: think "WordPress for AI workflows". It stores files, turns them into
+searchable knowledge (chunks, embeddings), and runs teams of agents that use tools,
+hooks, skills and instructions. Almost everything is an **extension**: a module
+dropped in a known folder, found at startup through a documented contract.
 
-## Project purpose
+This file is the reference for the backend and for how to work in this repository.
+The frontend has its own guide: `web/AGENTS.md`.
 
-Lazy Bird is a Python application built with FastAPI. It currently provides features to:
-
-- manage API keys;
-- register LLM models downloaded from Hugging Face;
-- upload and reference files;
-- split queued Markdown files into token-bounded chunks with source metadata;
-- expose a JSON API and an HTML upload view;
-- persist data in SQLite through SQLModel;
-- evolve the database schema through Alembic.
-
-## Main technology stack
-
-- Python 3.12 or later
-- FastAPI for the HTTP API
-- Pydantic for input and output schemas
-- SQLModel and SQLAlchemy for models and sessions
-- SQLite for local persistence
-- Alembic for database migrations
-- Jinja2 for HTML views
-- pytest for testing
-- uv for dependency management and command execution
-
-## Repository structure
+## 1. Repository
 
 ```text
-lazy_bird/
-├── AGENT.md                    Architecture and mandatory agent instructions
-├── pyproject.toml              Dependencies and pytest configuration
-├── uv.lock                     Locked dependency versions
-├── src/lazy_bird/
-│   ├── main.py                 FastAPI application and main HTML routes
-│   ├── api/
-│   │   ├── __init__.py         Automatic router discovery and registration
-│   │   └── endpoints/          JSON HTTP layer, organized by resource
-│   ├── crud/                   Use cases and data-access operations
-│   ├── models/                 SQLModel database tables
-│   ├── schemas/                Pydantic input and output contracts
-│   ├── database/               SQLite engines and session contexts
-│   ├── migration/              Alembic environment and revisions
-│   ├── chuncker/               Queued-file chunking orchestration and format extensions
-│   ├── storages/               Physical file storage
-│   ├── templates/              Jinja2 templates
-│   └── tools/                  Hugging Face integrations and model extraction
-└── tests/
-    ├── conftest.py             Shared fixtures and isolated environments
-    ├── crud/                   CRUD operation tests
-    ├── endpoints/              HTTP endpoint tests
-    ├── models/                 SQLModel table tests
-    ├── schemas/                Pydantic contract tests
-    ├── database/               SQLite and session tests
-    ├── storages/               Local storage tests
-    ├── tools/                  External integration tests
-    └── views/                  HTML view tests
+lazy_bird_full/
+  lazy_bird/          backend (FastAPI, Python ≥ 3.12, uv)   ← this guide
+    src/lazy_bird/    the package
+    tests/            pytest suite
+    sandbox/          independent experiments: ignore it entirely
+  web/                frontend (React, Vite) — see web/AGENTS.md
 ```
 
-Generated `__pycache__` directories, SQLite runtime files, uploaded files, and temporary test data are not part of the logical architecture.
-
-## Layer responsibilities
-
-### `main.py`
-
-`main.py` is responsible for:
-
-- creating the FastAPI application;
-- including the main JSON router;
-- configuring Jinja2;
-- defining general routes and routes strictly related to HTML views;
-- triggering Hugging Face authentication during application startup.
-
-Do not place business logic, SQL queries, or physical storage logic in `main.py`.
-
-### `api/endpoints/`
-
-The endpoint layer translates HTTP requests into application use cases. It is responsible for:
-
-- reading and validating HTTP parameters;
-- selecting the correct HTTP status code;
-- converting domain errors into HTTP errors;
-- declaring response models.
-
-Endpoints must remain short. They must not write directly to SQLite, download models, or copy files.
-
-Modules in this directory are imported automatically by `api/__init__.py` when they expose a `router` object.
-
-Current main routes include:
-
-```text
-GET    /
-GET    /upload_file
-POST   /upload_file
-GET    /shemas
-GET    /models/
-POST   /models/
-GET    /models/{id}
-DELETE /models/destroy
-POST   /files/upload
-GET    /files/
-GET    /files/{file_id}
-POST   /files/{file_id}/process
-```
-
-The API-key routes currently contain a duplicated prefix and are exposed under `/api-keys/api-keys`. Tests document this as a known issue. Do not silently change it as part of an unrelated task.
-
-### `schemas/`
-
-Pydantic schemas define the public contracts of the application:
-
-- data accepted by the API;
-- data returned to clients;
-- validation independent from persistence.
-
-A schema must not contain persistence or filesystem logic. Input schemas must expose only values that clients are allowed to control.
-
-### `crud/`
-
-The CRUD layer orchestrates data-related use cases:
-
-- opening a database session;
-- creating, reading, updating, or deleting records;
-- calling storage services or external tools when required;
-- converting SQLModel records into output schemas.
-
-A CRUD function must represent one precise operation. If it mixes HTTP validation, persistence, storage, and complex transformation, extract those responsibilities into focused services.
-
-### `models/`
-
-Each `SQLModel` class declared with `table=True` represents a SQL table. Models describe persistence only: columns, keys, constraints, and relationships.
-
-`models/__init__.py` imports model modules automatically so every table is registered in `SQLModel.metadata`. This import is required for Alembic autogeneration.
-
-### `database/`
-
-- `database/__init__.py` discovers adapters, validates configuration, and exposes active database operations.
-- `database/sql_db/sqlite.py` builds the native SQLite engine and enables the required PRAGMAs.
-- `db()` provides a session for the main database.
-- `test_db()` is reserved for explicit test scenarios.
-
-Database adapters are discovered dynamically from `database/sql_db/` and
-`database/vector_db/`, but discovery is constrained by explicit contracts in
-`database/contracts.py`. A SQL adapter exposes `name`, `initialize(**settings)`
-returning an SQLAlchemy `Engine`, and `disconnect(engine, drop=False)`; a vector
-adapter exposes `name`, connection lifecycle methods, and `create`, `delete`,
-and `retrieve`. Their settings and the selected adapters are persisted
-in the ignored runtime file `database/config.json`; `config.example.json` is
-the versioned template and `database.initialize_database_config()` refreshes
-this catalog at startup. The relational database remains responsible for
-metadata and workflow state, while vector adapters own chunk content and
-vectors. `Embedded` and `EmbeddedVectorDatabase` record which file/model index
-is stored in which vector database. SQL adapter settings use a connection
-`url`; a local adapter such as SQLite may derive a filesystem path internally,
-but `path` is not part of the SQL adapter contract. SQL adapter switching
-refuses databases
-whose Alembic revision is not current.
-
-Server startup calls `initialize_selected_sql_database()` before any service
-uses persistence. This operation connects to the selected SQL adapter, applies
-`alembic upgrade head`, and verifies the resulting revision. Authentication,
-cache synchronization, embedding-engine registration, and vector database
-initialization only run after this succeeds. When startup fails, FastAPI stays
-available in degraded mode: `/` reports the error and every other route returns
-HTTP 503 without invoking business logic.
-
-### Explicit extension contracts
-
-Dynamic module loading is intentional for adapters and embedding engines. It is
-constrained by explicit contracts. Embedding engines provide `name`, `formats`,
-`EngineSettings`, and `embed(chunks, ctx_size, batch_size, settings)`, returning
-one vector per input. Chunk extensions provide an async
-`Chunck(file, max_token)` function returning chunk dictionaries. API endpoint
-modules provide a `router` object. Modules that do not satisfy their contract
-must fail clearly during registration.
-
-Alembic callers must use `database.alembic_config_for(url)`. This marks the URL
-as programmatic and prevents the migration environment from silently selecting
-another database.
-
-Alembic owns the persistent database schema. Do not restore `SQLModel.metadata.create_all()` in normal application startup.
-
-### `migration/`
-
-Alembic is the single source of truth for persistent schema evolution.
-
-When a SQL model changes:
-
-1. update the model;
-2. generate a revision with `--autogenerate`;
-3. manually review both `upgrade()` and `downgrade()`;
-4. test the migration on an empty database and, when relevant, a populated database;
-5. apply the migration;
-6. run the relevant tests and the complete test suite.
-
-A migration must preserve existing data. Adding a non-nullable column requires a temporary default, a backfill, or a multi-step migration strategy.
-
-### `storages/`
-
-The storage layer manages physical files:
-
-- validating and resolving paths;
-- creating directories;
-- copying bytes;
-- calculating storage metadata.
-
-It must not open SQL sessions or produce HTTP responses. Treat every client-provided path as untrusted, including POSIX and Windows path separators.
-
-### `tools/`
-
-This layer contains external or specialized integrations, especially Hugging Face operations. Network calls must be replaceable by test doubles. The standard test suite must never require real network access.
-
-`tools/db_schema.py` applies Alembic migrations to an isolated temporary SQLite database and converts the resulting schema into Mermaid syntax. The `/shemas` endpoint renders that diagram through `templates/shemas.html`; it never modifies the persistent application database.
-
-### `chuncker/`
-
-The chunker processes one persisted `File` at a time from a Huey SQLite task. Its orchestrator:
-
-- resolves the parent `File` and a format module under `chuncker/extensions/`;
-- obtains the token budget from the selected embedding model, using `max_context_length` when `selected_context` is empty;
-- leaves the file pending and queued when no embedding model is selected;
-- manages the file states `processing`, `format-error`, `chunck-error`, and `incomplete-vectors`;
-- delegates format-specific parsing to an async `Chunck(file, max_token)` function;
-- persists returned chunk dictionaries through the chunk CRUD;
-- records the processing result on the `File` status.
-
-Format modules own parsing and token-boundary logic only. The Markdown implementation reads front matter, splits paragraphs, applies overlapping token windows, and records source line and row positions in each chunk.
-
-### Queue preferences
-
-`preference.yaml` contains runtime preferences for document processing. Its
-current option is `auto-embedding.enable`, which defaults to `true`. When it
-is enabled, every uploaded file is committed first and then enqueued for
-embedding. The Huey consumer drains the SQLite queue until no pending task
-remains. When it is disabled, uploads are persisted but are not enqueued
-automatically; they can still be submitted through the manual processing
-endpoint.
-
-## Main application flows
-
-### Standard API request
-
-```text
-HTTP client
-  -> FastAPI endpoint
-  -> Pydantic schema
-  -> CRUD function or service
-  -> SQLModel session
-  -> SQLite
-  -> output schema
-  -> HTTP response
-```
-
-### File upload
-
-```text
-UploadFile
-  -> endpoint
-  -> storage service
-  -> file metadata
-  -> File CRUD operation
-  -> file table
-  -> FileOut
-```
-
-### LLM model registration
-
-```text
-LLMModelIn
-  -> endpoint
-  -> Hugging Face download
-  -> metadata extraction
-  -> LLMModel CRUD operation
-  -> llmmodel table
-  -> LLMModelOut
-```
-
-### Queued file chunking
-
-```text
-Huey SQLite task
-  -> chunker orchestrator
-  -> File extension module
-  -> selected LLMModel.selected_context
-  -> format-specific Chunck(file, max_token)
-  -> embedding service
-  -> selected vector database adapter
-  -> Embedded/EmbeddedVectorDatabase metadata
-  -> File status
-
-Chunks are no longer stored in the relational `chunk` table. The migration
-`9d3f1a7c2b44` removes that table; files must be reindexed through the await
-file workflow after upgrading.
-```
-
-## Mandatory engineering principles
-
-### SOLID
-
-Every addition and revision must follow SOLID principles:
-
-- **Single Responsibility Principle:** a class, function, method, or module must have only one reason to change.
-- **Open/Closed Principle:** prefer extending a stable contract or adding an implementation instead of modifying several existing components.
-- **Liskov Substitution Principle:** a replacement implementation must preserve the expected inputs, outputs, errors, and behavior of its contract.
-- **Interface Segregation Principle:** use small and focused contracts; do not force consumers to depend on operations they do not need.
-- **Dependency Inversion Principle:** business logic must depend on injectable contracts rather than directly depending on external services or hard-to-replace global state.
-
-SOLID does not justify premature abstraction. Introduce an interface, class, or service only when it clarifies a boundary, enables a real replacement, or removes observed coupling.
-
-### Single responsibility is non-negotiable
-
-Every instance, function, method, class, and module must have one clearly expressible responsibility.
-
-Before adding code, complete this sentence:
-
-> This component is responsible for ...
-
-If the sentence requires “and,” “then,” or multiple unrelated outcomes, split the component or move one responsibility to the correct layer.
-
-Examples:
-
-- an endpoint handles HTTP translation, not file copying;
-- a storage service writes files, not database rows;
-- a CRUD function persists records, not HTTP exceptions;
-- a schema validates data, not external credentials;
-- a migration changes schema or data in one controlled revision.
-
-### Simplicity and readability
-
-- Prefer the simplest solution that satisfies the requirement.
-- Names must clearly communicate intent.
-- Functions must remain short and keep a consistent level of abstraction.
-- Avoid hidden side effects.
-- Avoid adding dynamic imports without an architectural need.
-- Use type annotations on public interfaces.
-- Comments should explain why a non-obvious decision exists, not repeat the code.
-- Never mix HTTP, business logic, SQL, and filesystem access in one function.
-- Do not introduce generic helpers, base classes, managers, or services without a concrete need.
-- Readability takes priority over cleverness and minor reductions in line count.
-- Duplicating two clear lines can be preferable to introducing a confusing abstraction.
-
-### Modularity
-
-- A business resource should normally have one module per relevant layer: endpoint, schema, CRUD, model, and tests.
-- Isolate external dependencies behind replaceable functions or services.
-- Internal layers must not depend on FastAPI unless they require the HTTP protocol.
-- SQL models must not automatically become public input schemas.
-- SQLite-specific details must not propagate into endpoints.
-- A module's public surface must remain small and intentional.
-
-## Mandatory Git and branch policy
-
-These rules apply before any code change. An agent must inspect the repository state with read-only commands such as:
+## 2. How to work
+
+### 2.1 Workflow
+
+1. **Start from a clean state.** Inspect what changed since `HEAD`; if work is
+   uncommitted, commit it as a snapshot before starting anything else.
+2. **Work in steps.** Split large work into steps (phases), done in order. A step is
+   finished when its behavior is implemented, tested and the whole suite is green.
+3. **One commit per successful step**, with tests green (backend and, when touched,
+   frontend). Never push: the developer pushes.
+4. **Ask before committing what was not specified.** If the expected outcome of a
+   step was not defined down to the details, list the decisions you took and ask the
+   developer to validate them before the commit.
+5. **Revert rather than pile up fixes.** If a step goes badly wrong, go back to the
+   previous commit and redo it, instead of stacking fixes on a broken base.
+6. **Fix what you find.** Inconsistencies, bad practices and bugs met on the way are
+   fixed without asking (with a test), and mentioned in the handoff.
+7. **Every schema change has a migration** (Alembic revision preserving data), or a
+   documented reset procedure when data cannot be converted (see §9).
+8. **Keep the docs true.** This file and `web/AGENTS.md` describe the current code;
+   update them in the same commit as the change that makes them stale.
+
+### 2.2 Commands
 
 ```bash
-git status --short
-git branch --show-current
-git log -1 --oneline
-git rev-parse --abbrev-ref --symbolic-full-name @{upstream}
-git status --branch --short
-git remote -v
+uv sync                                          # install (never use pip / uv pip)
+uv run uvicorn lazy_bird.main:app --reload       # dev server on :8000 (docs at /docs)
+uv run pytest -q                                 # full suite (~35 s)
+uv run pytest tests/crud -q                      # one area
+
+# Alembic (from src/lazy_bird/)
+cd src/lazy_bird && uv run alembic revision --autogenerate -m "describe the change"
+cd src/lazy_bird && uv run alembic upgrade head
 ```
 
-Do not assume that the current branch is clean, committed, or synchronized. Do not run `git pull`, reset, discard, stash, rebase, merge, or overwrite developer work without explicit authorization.
-
-### Exercise engineering judgment
-
-Agents must apply these Git rules with judgment instead of following them mechanically. The purpose of the branch policy is to protect developer work, maintain a clear history, and reduce risk—not to create unnecessary branches or process overhead.
-
-Before creating or switching branches, determine:
-
-- whether the current branch is `main` or already a secondary branch;
-- whether the current secondary branch is appropriate for the requested scope;
-- whether its commits and uncommitted changes belong to the same task;
-- whether it is based on a sufficiently current base branch;
-- whether reusing it is safer and clearer than creating another branch.
-
-If the working environment is already on an appropriate secondary branch, do not create another secondary branch. Continue on the existing branch after verifying its state and scope. Do not create nested, duplicate, or disposable branches merely to satisfy a checklist.
-
-If the current secondary branch belongs to a different task, contains unrelated changes, or has an unclear purpose, stop and ask the developer which branch should be used. Never move, copy, or merge unrelated work merely to make the branch layout appear compliant.
-
-### Bug-fix exception
-
-A bug fix may proceed when the branch is not fully updated only when the requested work is strictly limited to resolving that bug.
-
-For this exception:
-
-- inspect and document the exact bug before changing code;
-- do not include unrelated developer changes;
-- add or update a regression test that reproduces the bug;
-- make the smallest safe correction;
-- commit the bug fix separately;
-- explain in the commit description the problem being resolved in the current `HEAD`;
-- record the cause, the applied fix, the tests executed, and any remaining uncertainty.
-
-Recommended bug-fix commit format:
-
-```text
-fix(scope): concise bug description
-
-Agent: <agent name>
-Problem in HEAD: <observable problem and affected behavior>
-Cause: <verified root cause>
-Fix: <small correction applied>
-Tests: <commands and results>
-Remaining risks: <none or explicit limitations>
-```
-
-The bug-fix commit must contain only files required for the bug and its regression tests. Never commit unrelated modifications already present in the working tree.
-
-### Minor changes
-
-A minor change is narrow, low-risk, reversible, and confined to one responsibility. Examples include:
-
-- documentation corrections;
-- a small test addition;
-- a localized naming or typing correction;
-- a small refactor with unchanged behavior;
-- a narrowly scoped configuration adjustment.
-
-An agent may remain on the main branch for a minor change when the branch policy above is satisfied and the developer's work is protected.
-
-The agent must create a focused commit containing:
-
-- the agent's name;
-- a concise title;
-- a detailed description of every applied change;
-- the tests or verification performed;
-- any known limitation.
-
-Recommended minor-change commit format:
-
-```text
-chore(scope): concise change description
-
-Agent: <agent name>
-Changes:
-- <first applied change>
-- <second applied change>
-
-Verification:
-- <command and result>
-
-Known limitations: <none or explicit limitations>
-```
-
-### Major changes
-
-A major change includes any work that:
-
-- affects several layers or resources;
-- changes a public API contract;
-- introduces a new feature or subsystem;
-- changes persistence or requires significant migrations;
-- has broad operational, security, or data-integrity risk;
-- requires several independently testable steps.
-
-Major work must be performed on an appropriate secondary branch. Create a new branch only when the current environment is on `main` or the existing secondary branch is not appropriate for the requested work. Use a descriptive branch name such as:
-
-```text
-feature/file-collections
-refactor/storage-service
-fix/file-migration-backfill
-```
-
-Keep major work incremental:
-
-1. reuse the appropriate current secondary branch, or create one when necessary;
-2. divide the work into small responsibilities;
-3. add or update tests for each step;
-4. create focused commits after stable steps;
-5. run targeted tests after each step;
-6. run the full suite before considering a merge.
-
-### Push-before-merge policy
-
-Every branch must be pushed to the repository's GitHub remote before it is merged. This repository already has a configured GitHub remote, currently named `origin`.
-
-Before any merge, the agent must:
-
-1. verify the intended remote with `git remote -v`;
-2. verify the current branch and exact commit with `git branch --show-current` and `git rev-parse HEAD`;
-3. push the complete working branch to GitHub;
-4. configure its upstream when needed;
-5. verify that the remote branch contains the exact commit intended for merge;
-6. report the pushed branch name and commit in the handoff or merge summary.
-
-Typical command for a new secondary branch:
-
-```bash
-git push -u origin <branch-name>
-```
-
-For an existing tracked branch, use a normal non-force push. Never force-push unless the developer explicitly requests it and the consequences have been reviewed.
-
-If the push fails because of authentication, connectivity, permissions, remote rejection, or any other reason, the agent must not merge. Keep the commits on the current branch and ask the developer to complete or authorize the required GitHub operation.
-
-The existence of a local branch or successful local tests is not sufficient evidence for merging. The corresponding GitHub branch must exist and contain the reviewed `HEAD`.
-
-### Merge policy
-
-An agent may merge a secondary branch into `main` only when all of the following are true:
-
-- the implemented behavior matches the requested scope;
-- the changes are stable and well understood;
-- relevant automated tests pass;
-- the complete test suite passes, except for explicitly documented pre-existing expected failures;
-- migrations have been tested against the required database states;
-- no unresolved uncertainty affects correctness, security, compatibility, or data integrity;
-- the merge will not overwrite or include unrelated developer work.
-- the complete working branch has been pushed to GitHub;
-- the remote branch contains the exact reviewed `HEAD` intended for merge.
-
-If any meaningful uncertainty remains, the agent must not merge. Keep the work on the secondary branch and ask the developer to perform the checks the agent cannot complete.
-
-The handoff must state:
-
-- the branch name;
-- the GitHub remote branch and pushed commit;
-- the commits created;
-- what changed;
-- which tests passed;
-- which tests or manual checks remain;
-- the exact uncertainty preventing a safe merge;
-- how the developer can verify it.
-
-Never describe a change as stable or safe without evidence.
-
-### Commit safety
-
-- Review `git status` and the exact staged diff before every commit.
-- Stage explicit files; do not use broad staging when unrelated changes exist.
-- Never commit secrets, `.env` values, generated databases, upload contents, caches, or unrelated developer changes.
-- Do not rewrite, amend, squash, or force-push developer commits without explicit authorization.
-- Do not delete branches or tags unless explicitly requested.
-- A commit must represent one coherent responsibility.
-- If a clean commit cannot be created without touching unrelated work, stop and ask the developer.
-
-## Incremental change policy
-
-Every change must be small, progressive, and verifiable:
-
-1. understand the behavior and tests of the affected resource;
-2. define one limited change;
-3. add or adjust the closest test;
-4. apply the smallest implementation change;
-5. run the targeted tests;
-6. run the full suite when a shared contract or cross-cutting layer changes;
-7. leave unrelated refactoring for a separate change and commit.
-
-Do not combine the following in one change or commit:
-
-- a new feature and a general refactor;
-- a migration and unrelated business changes;
-- several independent resources;
-- functional corrections and mass formatting;
-- dependency upgrades and unrelated feature work.
-
-A change must be independently reviewable, testable, and reversible whenever possible.
-
-## Mandatory living documentation
-
-`AGENT.md` is a living source of truth for the repository. Every agent must keep it synchronized with the actual project, including when the developer made a change but forgot to document it.
-
-During every task, the agent must check whether the affected area introduces or reveals a material change to:
-
-- the repository structure;
-- layer responsibilities or architectural boundaries;
-- application flows or public routes;
-- dependencies, tools, or supported runtime versions;
-- database ownership, models, or migration procedures;
-- testing structure, fixtures, commands, or expected failures;
-- Git, branch, commit, review, or release procedures;
-- security, storage, external-service, or operational constraints;
-- known defects, limitations, or required verification steps.
-
-If any such information is missing, outdated, or incorrect, the agent must update `AGENT.md` as part of the same task, even when the developer did not explicitly request the documentation update.
-
-This requirement also applies when the agent discovers an undocumented change that was previously made by the developer or another agent. The agent must document the verified current state instead of leaving `AGENT.md` stale.
-
-Documentation updates must follow these rules:
-
-- verify the information against the current code, configuration, migrations, tests, or Git state;
-- describe stable architecture and working agreements, not temporary implementation details;
-- keep the update limited to facts relevant to the discovered change;
-- do not invent requirements, developer intent, guarantees, or future plans;
-- do not remove an existing rule merely because the current code violates it;
-- document known inconsistencies explicitly when they cannot be fixed within the current scope;
-- include the `AGENT.md` update in the same focused commit as the change that made it necessary;
-- mention the documentation update in the commit description and final handoff.
-
-Before completing any task, the agent must explicitly ask:
-
-> Does `AGENT.md` still accurately describe the repository after this work and after any relevant undocumented developer changes I observed?
-
-If the answer is no, the task is not complete until the document is updated or a concrete blocker is reported.
-
-## Testing rules
-
-The test structure mirrors the application structure. One test file covers one resource or one module:
-
-```text
-tests/crud/api_key.py
-tests/endpoints/file.py
-tests/models/llm_model.py
-tests/views/upload_file.py
-```
-
-Mandatory testing rules:
-
-- each test verifies one precise behavior;
-- tests must be deterministic;
-- use a migrated temporary database, never the main database;
-- use a temporary directory, never the main storage directory;
-- replace downloads, authentication, and other external calls;
-- test success, absence, validation, and important error paths;
-- add a regression test before or with every bug fix;
-- do not modify business code only to satisfy an incorrect assertion;
-- use dependency injection when it materially improves isolation and modularity;
-- do not silently remove, weaken, or mark a failing test as expected merely to obtain a green suite;
-- document pre-existing expected failures and their causes.
-
-Useful commands:
-
-```bash
-# Complete test suite
-uv run pytest -q
-
-# One layer
-uv run pytest tests/crud -q
-
-# One resource
-uv run pytest tests/endpoints/file.py -q
-
-# Alembic state and migrations
-uv run alembic -c src/lazy_bird/alembic.ini current
-uv run alembic -c src/lazy_bird/alembic.ini check
-uv run alembic -c src/lazy_bird/alembic.ini upgrade head
-
-# Local development server
-uv run uvicorn lazy_bird.main:app --reload
-```
-
-## Completion checklist
-
-Before declaring work complete, verify all applicable items:
-
-- The branch was clean, committed, and confirmed current before feature work began.
-- The change has one clearly expressible intention.
-- Every function, method, class, and module retains a single responsibility.
-- Endpoint, schema, business, persistence, and storage boundaries are respected.
-- The code is simpler, or at least no more complex, than before.
-- No unrelated behavior was changed.
-- Errors are handled in the appropriate layer.
-- Migrations preserve existing data.
-- Targeted tests pass.
-- The complete suite was executed when justified by the scope.
-- Tests did not use real external services or production data.
-- Known unrelated defects were not hidden or silently changed.
-- The exact staged diff was reviewed before committing.
-- The commit contains only the intended responsibility.
-- Major work remains on a secondary branch unless every merge condition is satisfied.
-- An appropriate existing secondary branch was reused instead of creating an unnecessary branch.
-- Every branch intended for merge was pushed to GitHub and its remote `HEAD` was verified.
-- Any uncertainty that could not be verified has been clearly handed back to the developer.
-- `AGENT.md` accurately reflects every material repository change discovered during the task.
-
-## Omniroute for test with LLM
-A local OpenAI-compatible proxy (Omniroute) is available for manual and end-to-end LLM tests.
-Its base URL, model name and API key live in the git-ignored file `lazy_bird/.env`
+The server migrates the selected SQL database to the latest revision at startup.
+`LAZY_BIRD_TRACE_ALL=0` disables call tracing at startup (it can also be switched
+at runtime from the Logs page / `PUT /logs/tracing`).
+
+### 2.3 Engineering principles
+
+- **One responsibility per unit.** Before adding a function, class or module, finish
+  the sentence "this is responsible for …" without "and". Endpoints translate HTTP,
+  schemas validate, CRUD persists, storages touch the disk, extensions do their one job.
+- **Contracts over branching.** Variable behavior comes from an extension point with
+  a documented contract (§5), not from `if kind == …` scattered in the code.
+- **Simple and readable.** The simplest solution that fits; clear names; short
+  functions; no generic helpers, base classes or managers without a concrete need;
+  comments explain *why*. Two clear duplicated lines beat a confusing abstraction.
+- **Typed errors only.** Raise `AppError` subclasses (§4); never let a traceback or
+  a bare `HTTPException` reach a client.
+- **Small, reviewable changes.** Do not mix a feature with a general refactor, a
+  migration with unrelated changes, or functional changes with mass formatting.
+
+### 2.4 LLM proxy for manual tests
+
+An OpenAI-compatible proxy (Omniroute) is available for manual and end-to-end tests.
+Its base URL, model name and API key live in the git-ignored `lazy_bird/.env`
 (`LAZY_BIRD_TEST_LLM_BASE_URL`, `LAZY_BIRD_TEST_LLM_MODEL`, `LAZY_BIRD_TEST_LLM_API_KEY`).
-Never commit the key itself.
+**Never commit the key itself.** From WSL, `localhost` does not reach the Windows
+host: use the host IP given by `LAZY_BIRD_TEST_LLM_BASE_URL_WSL`. The automated
+suite never calls it (it uses the `fake_inference` fixture).
+
+## 3. Architecture
+
+### 3.1 Package layout (`src/lazy_bird/`)
+
+| Folder / module | Responsibility |
+| --- | --- |
+| `main.py` | FastAPI app, startup (lifespan), `/health`, `/schemas`, middleware refusing requests while startup failed |
+| `api/` | `endpoints/*.py` (one router per resource), `error_handlers.py` (uniform errors), `engine_routes.py` (router factory shared by engine families) |
+| `schemas/` | pydantic input/output models of the API (`types.py`: `UtcDatetime`) |
+| `crud/` | persistence and business rules per resource (no HTTP) |
+| `models/` | SQLModel tables |
+| `migration/` | Alembic environment and revisions |
+| `errors.py` | typed errors (§4) |
+| `extension/` | discovery conventions (`discovery.py`) and the settings contract (`settings.py`) |
+| `database/` | SQL and vector adapters, selection, connection, vector operations (`contracts.py`) |
+| `storages/` | files on disk: uploads in `storages/uploads/` (git-ignored), safe paths, hashes |
+| `chunker/` | splits files into chunks, one extension per file type |
+| `embedding/` | embedding engine family, `embed_texts`, `embed_query`, vector spaces |
+| `inference/` | inference engine family, agentic loop, streaming types |
+| `agents/` | tools, hooks, skills, instructions, agent and session presets, agent runtime |
+| `tasks/` | background task system: registry, scheduler, resources, events, task kinds |
+| `tools/` | utilities: Hugging Face cache and auth, model inspection, GGUF reader, schema diagram |
+| `preferences.py` + `preference.yaml` | runtime preferences (§8) |
+| `logging_config.py`, `log_*.py` | loguru setup, call tracing, log search and call trees |
+| `templates/schemas.html` | the data model diagram (pan by dragging, zoom with the wheel) |
+
+### 3.2 Startup
+
+`lifespan` in `main.py`:
+
+1. connect the selected SQL database and migrate it to `head` (failure → the server
+   answers `/health` with the error and every other route with `503 startup_failed`);
+2. log in to Hugging Face with the `HuggingFace` API key (anonymous without it);
+3. register every model found in the Hugging Face cache (`sync_cache`);
+4. `initialize_extensions()`: engines, instruction/skill/preset folders, tools, hooks,
+   skills, task kinds (also run by `POST /extensions/reload`);
+5. connect the selected vector database;
+6. `apply_preferences()`: queue missing processing of files, schedule the periodic
+   file scan, apply resource capacity overrides;
+7. start the task scheduler (stopped on shutdown; running tasks are re-queued).
+
+### 3.3 Request path
+
+`endpoint (HTTP) → schema (validation) → crud / domain module → models / adapters`.
+Endpoints stay thin; anything reusable lives below them. Long or heavy work never
+runs in a request: it is submitted as a task (§7).
+
+## 4. Errors
+
+Every error response has the same shape, whatever the route:
+
+```json
+{"error": {"code": "file_not_found", "message": "File 9 was not found.", "details": {}}}
+```
+
+`errors.py` defines `AppError(message, *, code, details)` and its subclasses with
+their status: `NotFoundError(resource, identifier)` 404 (code
+`{resource}_not_found`), `InvalidInputError` 422, `InvalidSettingsError(fields)` 422
+(`details.fields` = one message per attribute), `ForbiddenError` 403, `ConflictError`
+409, `UnavailableError` 503, `ExternalServiceError` 502. Request validation errors are
+reported per field the same way (`details.fields`), unknown routes too, and any
+unexpected exception becomes `500 internal_error` with no traceback (it is logged).
+WebSockets send `{"type": "error", "error": {...}}` with the same body.
+
+## 5. Extensions
+
+### 5.1 Discovery conventions (`extension/discovery.py`)
+
+Two layouts:
+
+- **flat packages** — `embedding/engines/`, `inference/engines/`, `chunker/extensions/`,
+  `database/sql_db/`, `database/vector_db/`: every module whose name does not start
+  with `_` is an extension;
+- **extension folders** — `agents/tools/`, `agents/hook/`, `agents/skill/`,
+  `agents/instruction/{full,sub}/`, `agents/agent_preset/`, `agents/session_preset/`,
+  `tasks/`: one directory per extension, `{extension_name}/`. **`default/` ships with
+  lazy_bird** (read-only through the API); **`custom/` belongs to the user** (its
+  content is git-ignored); other folder names are other extensions.
+
+A module that breaks its contract never stops the application: discovery records a
+`LoadFailure` (shown by `GET /extensions/failures` and the Extensions page) and
+skips it. Ids of file-based items are `"{extension}/{name}"`; ids of tools and hooks
+are `{extension}-{module}-{function}` (or `-{Class}-{method}`).
+
+### 5.2 Settings contract (`extension/settings.py`)
+
+Configurable extensions declare a pydantic model under a fixed name
+(`EngineSettings`, `ToolSettings`, `HookSettings`, database `Settings`, preference
+sections) and optionally `fields` to choose the form widget of some attributes:
+
+```python
+class EngineSettings(BaseModel):
+    model_id: int
+    device: str | None = None
+
+fields = {
+    "model_id": {"default_field": True, "content": "default.basic.reference", "args": {"endpoint": "/models/"}},
+}
+```
+
+From these, `SettingsContract` derives without hand-written code:
+
+- `kwargs_key`: one descriptor per attribute — the widget (`default_field`,
+  `content`, `args`) plus `type`, `required`, `nullable`, `default`, `title`,
+  `description`. Attributes without `fields` get a default widget
+  `default.basic.<text|textarea|integer|number|checkbox|select|password|list|json|reference|email|url>`
+  implemented in `web/src/modules/fields/default/basic.ts`. `default_field: true`
+  names a frontend function `"{extension}.{file}.{function}"`
+  (`web/src/modules/fields/{extension}/{file}.ts`); `false` means `content` is HTML;
+- validation: `validate(kwargs)` returns the model or raises `InvalidSettingsError`
+  with one message per attribute (unknown keys are rejected).
+
+The frontend builds every settings form from `kwargs_key` (see `web/AGENTS.md` §11.2).
+
+### 5.3 Extension points
+
+| Extension point | Where | Contract |
+| --- | --- | --- |
+| SQL database | `database/sql_db/<name>.py` | `name`, `messages = {"initialize", "disconnect"}`, optional `Settings`; `initialize(**settings) -> Engine`, `disconnect(engine, drop=False)` (`database/contracts.py`) |
+| Vector database | `database/vector_db/<name>.py` | same metadata; `initialize`, `disconnect(drop)`, `tables()`, `create(model_name, rows)`, `delete(model_name, chunk_ids)`, `count(model_name, chunk_ids=None)`, `retrieve(model_name, top_k, vector, chunk_ids=None)`, `drop(model_name)`. One table per model with `chunk_id` + `vector` only; chunk content lives in SQL |
+| Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; optional `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}` |
+| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`resources`; `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
+| Chunker | `chunker/extensions/<ext>.py` (`md.py` for `.md`) | `async def chunk(file, max_token) -> list[dict]`; each dict has `content`, `start_line`, `end_line` and optionally `start_row`, `end_row`, `token_count`, `meta` |
+| Task kind | `tasks/{extension}/*.py` | functions decorated with `@task(...)` (§7) |
+| Tool | `agents/tools/{extension}/<module>.py` | `tools = [...]` functions and/or classes; optional `ToolSettings` + `fields` (§6.1) |
+| Hook | `agents/hook/{extension}/<module>.py` | `hooks = [...]`; each hook takes exactly `conversation_id`; optional `HookSettings` |
+| Instruction | `agents/instruction/{full|sub}/{extension}/<name>.md` | markdown text; `full` = base system prompts, `sub` = fragments added after them |
+| Skill | `agents/skill/{extension}/<name>/SKILL.md` (+ resource files) | front matter `name` (= folder name) and `description`, body = instructions |
+| Agent preset | `agents/agent_preset/{extension}/<name>.json` | keys `name` (= file name), `description`, `tools`, `hooks`, `skills`, `sub_agents` (agent preset ids), `instruction_fulls`, `instruction_subs`; unknown keys rejected |
+| Session preset | `agents/session_preset/{extension}/<name>.json` | `name` (= file name), `description`, `agents` (agent preset ids), `meta`, `master` (one of `agents`) |
+| File processor | `file_processing.register_processor(...)` | a processing type with a task taking `file_id` (§7.4) |
+| Frontend pages, fields, viewers | `web/src/modules/` | see `web/AGENTS.md` §11 |
+
+Engines are grouped in **engine families** (`crud/engine.py`): one table row per
+discovered engine and any number of **presets** (named settings) per engine. When
+presets exist, **exactly one is the default** (a partial unique index forbids two;
+the first preset becomes default; deleting the default promotes the oldest one;
+unsetting the default without choosing another is a conflict). Settings with
+`model_id` reference an `LLMModel`: the family checks it exists and that the engine
+supports its selected format, then hands the resolved model to the engine.
+
+Python tool and hook code is only added on disk (never uploaded over HTTP). Through
+the API, `default/` items are read-only and `custom/` items can be created, edited
+and deleted (instructions, skills, presets) or configured (tool/hook settings).
+
+## 6. Agents and inference
+
+### 6.1 Tools and hooks (`agents/callables.py`, `agents/tools/`, `agents/hook/`)
+
+An entry is a function, or a public method of a class listed in `tools` / `hooks`.
+Its docstring (with an `Args:` section) and type hints become the JSON schema shown
+to the LLM (`self` is never shown). A class is instantiated once per agent run with:
+
+- `settings`: the module settings saved in `toolsettings` / `hooksettings`
+  (edited through `/tools/settings/{file_path}`), if `__init__` takes `settings`;
+- the session `meta` values matching its other `__init__` parameters (all of them if
+  it accepts `**kwargs`). Missing required values raise `MissingMetaError`.
+
+A tool returns text, a JSON-serializable value, or
+`inference.ToolOutput(content, meta)` to attach `meta` to the stored tool-response
+message (for the interface only). Raising `AppError` gives the LLM its message and
+marks the call as failed.
+
+Names shown to the LLM: a tool keeps its plain name; when two tools of one agent
+share a name, the one from `default/` (else the first) keeps it and the others are
+shown under their id. Built-in tools: `load_skill` / `read_skill_file` for agents
+with skills, `delegate_to_agent` for agents with sub-agents.
+
+Hooks run, in order, before every call to the LLM, with the conversation id; they
+change the conversation through the CRUD (inject context, compress history…). A
+failing hook ends the turn with an error message.
+
+### 6.2 Sessions, agents, presets
+
+- A **session** groups agents sharing a `meta` dict (values read by tools); exactly
+  one agent is the **master** (it receives the user's messages, `POST
+  /sessions/{id}/chat`).
+- An **agent** has instructions (`instruction_fulls`, `instruction_subs`, free
+  `instructions`), `tools`, `hooks`, `skills`, sub-agents (`agenthierarchy`, same
+  session, no cycle) and `meta`. Its inference configuration lives in `meta`: either
+  `preset_inference_engine_id`, or `inference_engine_id` + `inference_settings`
+  (validated against the engine; an agent without it gets the default preset; with
+  no inference preset at all, creation fails with `no_inference_preset`).
+- Agents and sessions can be created from presets; an agent preset creates (or
+  reuses, within the session) the sub-agents it lists. Agents referencing missing
+  items are listed with `valid: false` and one message per key.
+- System prompt = full instructions + sub instructions + own text (blank lines
+  between) + the list of skills.
+
+### 6.3 The agentic loop (`inference/__init__.py`)
+
+A conversation is **runnable** when its last message is from the user, an error
+(retry) or an unfinished tool turn. `agentic_loop(conversation_id, emit, retry=3,
+max_iter=20)` (one run per conversation at a time, `conversation_busy` otherwise):
+
+1. build the agent runtime (system prompt, tools, hooks) and resolve its engine;
+2. for each step: run pending tool calls if any; else run the hooks, read the
+   conversation, call the engine (`status: generating`), retrying retryable
+   `EngineError`s with exponential backoff (`status: retrying`, delay ≤ 8 s), holding
+   the engine's resources from the shared pool (`status: waiting_resources`);
+3. tool calls → store a `tool-calling` message, run each tool, store
+   `tool-response` messages (`meta.status` ok/error), continue;
+4. an answer → store an `assistant` message and finish (`done: completed`);
+5. any failure (engine, hook, too many steps, missing configuration) → store an
+   `error` message (`meta.code`) and finish (`done: error`). Error messages are
+   never sent to the LLM.
+
+Message roles: `system`, `user`, `assistant`, `tool-calling`, `tool-response`,
+`error`. Engines receive `ChatMessage` objects (OpenAI-like roles) and an `Emitter`
+(`token`, `reasoning`, `event`, `stopped`); they return
+`ChatResult(content, reasoning, tool_calls, usage, model, stopped)` and raise
+`EngineError(message, code, retryable, details)`. When `emit.stopped` becomes true
+they stop and return what they have (`stopped=True`).
+
+**Delegation**: `delegate_to_agent(agent, task)` runs the sub-agent in a new
+conversation ("Task from {parent}"), relays its activity as `delegation` events and
+returns its final answer; the tool response's `meta.delegation` holds `agent_id`,
+`agent` and `conversation_id`.
+
+**Streaming** — `WS /ws/conversations/{id}`: the server sends `conversation` on
+connection, then `message`, `token`, `reasoning`, `tool_start`, `status`,
+`delegation`, `done` and `error` events; clients send `{"type": "message",
+"content"}`, `{"type": "run"}` or `{"type": "stop"}`. The same run is available
+without streaming (`POST /conversations/{id}/run`, `/stop`). `rewind` deletes the
+messages after one (edit and regenerate).
+
+## 7. Background tasks (`tasks/`)
+
+### 7.1 Declaring a task
+
+```python
+from lazy_bird.tasks import TaskContext, task
+
+@task("files.reindex", title="Reindex {folder}", resources={"cpu": 1})
+def reindex(ctx: TaskContext, folder: str) -> dict:
+    done = ctx.state.get("done", 0)                 # resume where the last checkpoint stopped
+    items = list_items(folder)
+    for index in range(done, len(items)):
+        handle(items[index])
+        ctx.checkpoint(progress=(index + 1) / len(items), state={"done": index + 1})
+    return {"count": len(items)}                    # JSON-serializable result
+
+reindex.submit(folder="notes", priority=10)         # -> TaskOut
+```
+
+- parameters are keyword arguments, JSON-serializable;
+- `resources` (dict, or function of the parameters): `cpu` slots, `vram_mb`, `ram_mb`;
+- `ctx.checkpoint(progress, message, state)` is the **only** place where pause,
+  cancel and shutdown stop a task; resuming runs the function again with
+  `ctx.state` = last saved state. `ctx.report(progress, message)` only reports;
+- `submit(..., dedupe_key=…)` returns the active task with the same key instead of
+  queueing a duplicate; `run_at` schedules it; `priority` orders it;
+- failures are retried up to the kind's `retries` (typed permanent failures are not).
+
+Shipped kinds: `files.chunk`, `files.embed`, `files.scan` (periodic, every
+`files.scan_every_minutes`), `models.download`, `models.import`.
+
+### 7.2 Scheduling
+
+Statuses: `queued`, `running`, `paused`, `completed`, `failed`, `cancelled`. Queued
+tasks whose `run_at` has come run in order: running first, then priority (high
+first), then position (manual order), then age. A task starts when a worker is free
+(`tasks.workers`) and its resources fit the pool. A task that does not fit **blocks
+every later task needing one of the missing resources** (a big GPU job is not
+starved by small ones) while tasks needing other resources still start. Capacities
+are detected at startup and overridden by `tasks.resources`. Local inference holds
+resources from the same pool. Pausing or cancelling a running task sets `control`,
+applied at its next checkpoint; queued/paused tasks change immediately. Moving a
+task places it before/after another and gives it that task's priority. At shutdown,
+running tasks go back to the queue. Only the most recent finished tasks are kept.
+
+### 7.3 Live control
+
+`WS /ws/tasks` sends `{"type": "snapshot", "tasks", "resources", "kinds"}`, then
+`task`, `task_deleted`, `resources`, `waiting` (why queued tasks wait), `reordered`
+and `file` (`file_id` whose processing changed) events. Commands:
+`{"action": "pause"|"resume"|"cancel"|"retry"|"delete", "task_id", "request_id"}`,
+`{"action": "move", "task_id", "before_id"|"after_id"}`,
+`{"action": "update", "task_id", "priority"?, "run_at"?}`, answered by `ack` or
+`error` with the same `request_id`. REST mirrors every command under `/tasks/`.
+
+### 7.4 File processing states (`crud/file_processing.py`)
+
+Each file has one row per `(processor, target)`: `chunking` (target `""`) and
+`embedding` (target = model / vector space name). States and allowed transitions:
+
+| state | meaning | → |
+| --- | --- | --- |
+| `pending` | wanted; queued once its dependency is up to date (`error` tells why not yet) | queued, running, paused, unsupported |
+| `queued` / `running` / `paused` | mirror the task computing it (`task_id`) | done, failed, cancelled, outdated, unsupported… |
+| `done` | computed from the current content (`content_hash` = file hash) | outdated, pending |
+| `failed` | last run failed (`error`) | queued, outdated, pending |
+| `cancelled` | cancelled by the user; rerun on request or content change | queued, outdated, pending |
+| `outdated` | computed from older content, or its inputs were replaced | pending |
+| `unsupported` | cannot be computed (no chunker for the type) | pending |
+
+Any other move is a bug (`InvalidProcessingTransitionError`). Tasks never write
+states: `on_task_change` maps task status changes onto rows. Triggers:
+
+- upload, edit, or a change detected by the scan (content hash differs) → results
+  from the old content become `outdated`, then `ensure()` queues what is wanted;
+- new chunks → embeddings of the old chunks are deleted and become `outdated`;
+- a new default embedding preset → every file gets that model's embedding (vectors
+  of other models are kept);
+- switching the vector database → every embedding is `outdated` and redone;
+- dropping a model's vector table → its rows are forgotten (and redone when it is
+  the default preset's model and automatic processing is on);
+- `POST /files/{id}/process` queues what is missing; `POST /files/{id}/processing`
+  recomputes one processing.
+
+With `auto-embedding.enable` (default), every file is chunked and embedded with the
+default preset automatically. The API summarizes rows into one file `state`:
+`missing`, `processing`, `error`, `outdated`, `pending`, `unsupported`, `ready`, `new`.
+
+## 8. Files, models, search, preferences
+
+- **Files**: uploads go to `storages/uploads/{dir}/`; a name already taken in the
+  folder gets a numbered suffix (`notes (1).md`). Folders can be created, renamed,
+  moved and deleted; text content can be read and edited (`not_text` for binary).
+- **Models** (`llmmodel`): the Hugging Face cache (`~/.cache/huggingface/hub`) is the
+  source of truth. Downloads (`models.download`, optionally only some weight files,
+  e.g. one GGUF quantization) and local imports (`models.import`, copied into the
+  cache as `models--local--<name>/` with blobs/snapshots/refs) are tasks. A model
+  records its weight `formats` (safetensors, gguf, onnx, openvino, bin, pth, ckpt, h5, msgpack — `tools/model_extraction.FORMATS`), the files
+  of each format, the `selected_format` / `selected_file` and context lengths; GGUF
+  metadata is read without extra dependencies (`tools/gguf.py`). Engines declare the
+  formats they load.
+- **Search**: `POST /search/` embeds the query with a preset (default one when
+  omitted) and returns the nearest chunks of that model's table, optionally limited
+  to some files.
+- **Preferences** (`preference.yaml`, `GET/PATCH /preferences/`, form at
+  `/preferences/form`): `auto-embedding.enable`, `chunking.max_tokens` (chunk budget,
+  independent of models), `files.scan_every_minutes` (0 = startup only),
+  `tasks.workers` (restart required) and `tasks.resources` (capacity overrides).
+- **API keys** (`apikey`): secrets for extensions, never returned by the API. The
+  `HuggingFace` key logs in to the Hub (again when replaced, out when deleted).
+- **Logs**: loguru to the console and `logs.txt` (in the server's working directory); `/logs/` searches entries (BM25 or
+  regex, levels, time range), `/logs/trace` rebuilds call trees of traced functions.
+
+## 9. Data model and schema changes
+
+Tables (see the live diagram at `/schemas`):
+
+| table | content | relations |
+| --- | --- | --- |
+| `file` | path, name, extension, size, `content_hash`, `modified_at`, `missing` | → `chunk`, `fileprocessing` |
+| `chunk` | content, line/row ranges, `token_count`, `meta`, position | `file_id` |
+| `fileprocessing` | processor, target, state, `content_hash`, error | `file_id`, `task_id` |
+| `task` | kind, title, params, status, control, priority, position, `run_at`, resources, progress, state, result, error, attempts, `dedupe_key` | |
+| `llmmodel` | name, `hf_path`, `local_path`, source, formats, files, selections, dimensions, context | |
+| `embeddingengine`, `inferenceengine` | discovered engines: name, file, formats, `kwargs_key` | → presets |
+| `presetembedding`, `presetinference` | name, kwargs, `default` (one per table) | engine id |
+| `toolsettings`, `hooksettings` | saved settings per module file | |
+| `session` | title, meta | → `agent` |
+| `agent` | name, description, instructions, lists of tools/hooks/skills/instructions, master, preset, meta | `session_id`, `agenthierarchy` (parent/child) |
+| `conversation` | title, timestamps | `agent_id` → `message` |
+| `message` | role, content (text), meta | `conversation_id` |
+| `apikey` | name, key | |
+
+Vectors are not in SQL: each vector table (one per model) stores `chunk_id` +
+`vector`. Timestamps are stored in UTC; the API sends them with their offset.
+
+**Changing the schema**: edit the model, generate a revision from `src/lazy_bird/`
+(`alembic revision --autogenerate`), review `upgrade()`/`downgrade()` so existing
+data is kept (use a single `sa.table()` per table in data migrations; SQLite needs
+`render_as_batch`), and test it on a populated database (`tests/test_migrations.py`
+checks that models match the migrated schema and that downgrade/upgrade works).
+
+**Reset procedures** (when data cannot be converted):
+
+- *Vectors* (changing the vector layout or recovering a broken vector store):
+  delete the model tables from the Databases page (or `DELETE
+  /databases/vector/tables/{model}`), or disconnect the vector database with
+  "delete its data"; files are embedded again from their chunks (automatic
+  processing on, or "Process" on the Files page).
+- *Chunks* (changing what chunkers produce): `POST /files/{id}/processing` with
+  `chunking`, or re-upload; embeddings follow automatically.
+- *Uploads*: files live in `src/lazy_bird/storages/uploads/`. Installs created before
+  this folder existed stored them directly in `src/lazy_bird/storages/`: move those
+  folders into `uploads/` and update `file.path`, or delete and upload them again.
+- *Everything*: stop the server, delete `src/lazy_bird/database/storage/` (SQLite
+  database and LanceDB vectors) and `storages/uploads/`, then start the server (it
+  creates and migrates a new database).
+
+## 10. API surface
+
+Routers (`api/endpoints/`): `files`, `chunks`, `search`, `models` (+ hub status,
+login, files), `embedding-engines`/`embedding-presets`, `inference-engines`/
+`inference-presets` (+ `/inference/complete`), `tasks` (+ `/ws/tasks`), `databases`,
+`api-keys`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
+`instructions`, `agent-presets`, `session-presets`, `sessions`, `agents`,
+`conversations` (+ `/ws/conversations/{id}`), `messages`. Every feature is reachable
+from the web interface; when you add an endpoint, add its screen and update
+`web/AGENTS.md` §13. `tests/test_api_contract.py` calls every route of the OpenAPI
+schema with unknown ids / invalid bodies and checks the uniform error format.
+
+## 11. Tests
+
+- Test **behavior** (what an API call, a function or a task does), never structure
+  (table shapes, imports, attribute lists). Every new implementation and every bug
+  fix comes with tests.
+- The suite never touches the developer's database, storage, model cache or network.
+  Fixtures (`tests/conftest.py`):
+  - `migrated_database` — a copy of a session-wide migrated SQLite template, with
+    vectors in a temporary LanceDB folder; `crud_database` adds no auto-processing;
+  - `client` — `TestClient` without scheduler start, Hugging Face login or cache sync;
+  - `storage_root`, `upload_file_factory`, `model_cache` (temporary HF cache);
+  - `fake_embedding`, `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
+  - `running_scheduler`, `isolated_scheduler` (autouse), `wait_until`, `process_inline`.
+- Tests must be deterministic; never weaken or skip a failing test to get green.
+- Frontend tests: `cd web && npm test` (see `web/AGENTS.md` §17).
+
+## 12. Completion checklist
+
+- [ ] The work started from a committed state; the step has one clear intention.
+- [ ] Behavior is covered by tests; backend (`uv run pytest -q`) and, when touched,
+      frontend (`npm test`, `npm run build`, `npm run lint`) are green.
+- [ ] No route can return a traceback; errors use the typed format.
+- [ ] Schema changes have a migration or a documented reset procedure.
+- [ ] New features are reachable from the interface.
+- [ ] This file and `web/AGENTS.md` describe the code as it is now.
+- [ ] Decisions that were not specified were validated by the developer before the commit.
+- [ ] Nothing was pushed; no secret was committed.

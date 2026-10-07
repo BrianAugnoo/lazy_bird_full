@@ -137,13 +137,25 @@ async def test_a_new_default_preset_embeds_every_file_with_its_model(pipeline, u
 
 
 @pytest.mark.anyio
-async def test_dropping_a_vector_table_forgets_its_embeddings(client, pipeline, upload_file_factory):
+async def test_dropping_a_vector_table_forgets_its_embeddings(client, pipeline, upload_file_factory, monkeypatch):
+    file_id = await upload(upload_file_factory, "notes.md", b"Text.")
+    wait_for_state(file_id, "ready")
+    monkeypatch.setattr("lazy_bird.preferences.auto_embedding_enabled", lambda: False)
+
+    assert client.delete("/databases/vector/tables/fake/space-4").status_code == 204
+
+    assert ("embedding", "fake/space-4") not in states(file_id)
+
+
+@pytest.mark.anyio
+async def test_dropping_the_default_model_vectors_embeds_files_again(client, pipeline, upload_file_factory):
     file_id = await upload(upload_file_factory, "notes.md", b"Text.")
     wait_for_state(file_id, "ready")
 
     assert client.delete("/databases/vector/tables/fake/space-4").status_code == 204
 
-    assert ("embedding", "fake/space-4") not in states(file_id)
+    wait_until(lambda: states(file_id).get(("embedding", "fake/space-4")) == "done", message="not embedded again")
+    assert database.vector_count("fake/space-4") > 0
 
 
 @pytest.mark.anyio

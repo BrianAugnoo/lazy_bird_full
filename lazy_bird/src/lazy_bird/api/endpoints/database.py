@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Response
-from lazy_bird import database
+from lazy_bird import database, preferences
 from lazy_bird.crud import file_processing
-from lazy_bird.preferences import auto_embedding_enabled
 from lazy_bird.schemas.database import DatabaseDisconnectIn, DatabaseSelectionIn, SelectedDatabaseOut, VectorTableOut
 
 router = APIRouter(prefix="/databases", tags=["databases"])
@@ -28,7 +27,7 @@ def select_database(payload: DatabaseSelectionIn):
     selected = database.switch_database(payload.kind, payload.name, payload.settings)
     if payload.kind == "vector":
         file_processing.outdate_processor("embedding", f"The vector database changed to {payload.name}.")
-        file_processing.ensure_all(automatic=auto_embedding_enabled())
+        file_processing.ensure_all(automatic=preferences.auto_embedding_enabled())
     return selected
 
 @router.put("/disconnect")
@@ -44,7 +43,13 @@ def list_vector_tables():
 
 @router.delete("/vector/tables/{model_name:path}", status_code=204)
 def drop_vector_table(model_name: str):
-    """Delete every vector of a model; files lose their embedding with it."""
+    """Delete every vector of a model; files lose their embedding with it.
+
+    With automatic processing on, files are embedded again when the model is the
+    one of the default embedding preset.
+    """
     database.vector_drop(model_name)
     file_processing.forget_target("embedding", model_name)
+    if preferences.auto_embedding_enabled():
+        file_processing.ensure_all()
     return Response(status_code=204)
