@@ -1,5 +1,5 @@
 import { request, requestBlob, downloadFileBlob } from '../client';
-import type { FileItem, FileProcessResponse, DirectoryResponse, FilePatchIn } from '@/core/types/api';
+import type { FileItem, DirectoryResponse, FilePatchIn } from '@/core/types/api';
 
 /**
  * Upload one or multiple files
@@ -116,12 +116,21 @@ export async function deleteDirectory(path: string): Promise<DirectoryResponse> 
 }
 
 /**
- * Trigger RAG processing (chunking & embedding) for an existing file
+ * Queue what a file still needs (chunks, default embedding); returns the file with its states.
  * POST /files/{file_id}/process
  */
-export async function processFile(fileId: number): Promise<FileProcessResponse> {
-  return request<FileProcessResponse>(`/files/${fileId}/process`, {
+export async function processFile(fileId: number): Promise<FileItem> {
+  return request<FileItem>(`/files/${fileId}/process`, { method: 'POST' });
+}
+
+/**
+ * Compute one processing of a file again, even if it is up to date.
+ * POST /files/{file_id}/processing
+ */
+export async function reprocessFile(fileId: number, processor: string, target = ''): Promise<FileItem> {
+  return request<FileItem>(`/files/${fileId}/processing`, {
     method: 'POST',
+    body: JSON.stringify({ processor, target }),
   });
 }
 

@@ -91,6 +91,7 @@ def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     monkeypatch.setitem(database_module.config.sql_databases["sqlite"].settings, "url", db_url)
     monkeypatch.setitem(database_module.config.vector_databases["lancedb"].settings, "path", str(tmp_path / "lance"))
     monkeypatch.setattr(lancedb_adapter, "_connection", None)
+    monkeypatch.setattr(database_module, "_vector_initialized", None)
     command.upgrade(alembic_config(db_url), "head")
     engine = initialize(url=f"sqlite:///{db_path}")
     monkeypatch.setattr(database_module, "engine", engine)
@@ -161,6 +162,7 @@ def client(
     monkeypatch.setattr(hf_cache_worker_module, "sync_cached_models", lambda: 0)
     monkeypatch.setattr(main_module, "start_scheduler", lambda: None)
     monkeypatch.setattr(main_module, "stop_scheduler", lambda: None)
+    monkeypatch.setattr(main_module, "apply_preferences", lambda: 0)
 
     with TestClient(main_module.app, raise_server_exceptions=False) as test_client:
         yield test_client
@@ -195,3 +197,53 @@ def fake_embedding(crud_database, monkeypatch):
     monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
     engine = engine_family.register(module)
     return engine_family.create_preset("fake", engine.id, {}, default=True)
+
+
+@pytest.fixture
+def running_scheduler(migrated_database, monkeypatch):
+    """A started scheduler with generous resources, stopped after the test."""
+    import lazy_bird.tasks as tasks_module
+    from lazy_bird.tasks.resources import ResourcePool
+    from lazy_bird.tasks.scheduler import Scheduler
+
+    tasks_module.discover_tasks()
+    scheduler = Scheduler(ResourcePool({"cpu": 8, "vram_mb": 1e6, "ram_mb": 1e6}), workers=2, poll_interval=0.02)
+    monkeypatch.setattr(tasks_module, "_scheduler", scheduler)
+    scheduler.start()
+    yield scheduler
+    scheduler.stop(timeout=5)
+
+
+def wait_until(predicate, timeout: float = 10.0, message: str = "condition not reached"):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.02)
+    raise AssertionError(message)
+
+
+def process_inline(file_id: int) -> None:
+    """Chunk and embed a file with the default preset, synchronously."""
+    from lazy_bird.crud.file_processing import embedding_preset_for
+    from lazy_bird.embedding import engine_family, vector_space
+    from lazy_bird.tasks.default.files import chunk_file, embed_file
+
+    chunk_file.run(file_id=file_id)
+    target = vector_space(engine_family.resolve())
+    embed_file.run(file_id=file_id, target=target, preset_id=embedding_preset_for(target))
+
+
+@pytest.fixture(autouse=True)
+def isolated_scheduler():
+    """Every test starts without the process-wide scheduler and leaves none behind."""
+    import lazy_bird.tasks as tasks_module
+
+    tasks_module._scheduler = None
+    yield
+    if tasks_module._scheduler is not None and tasks_module._scheduler.started:
+        tasks_module._scheduler.stop(timeout=2)
+    tasks_module._scheduler = None

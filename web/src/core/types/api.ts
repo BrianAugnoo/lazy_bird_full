@@ -75,14 +75,42 @@ export interface PresetChanges {
 }
 
 // 5. Files (/files/ et /ws/upload-progress)
+export type ProcessingState =
+  | 'pending'
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'outdated'
+  | 'unsupported';
+
+/** One processing of a file: chunking, or embedding with one model (`target`). */
+export interface FileProcessing {
+  processor: string;
+  target: string;
+  state: ProcessingState;
+  content_hash: string | null;
+  task_id: number | null;
+  error: { code: string; message: string } | null;
+  updated_at: string;
+}
+
+/** Summary derived from `processing` for display. */
+export type FileState = 'missing' | 'processing' | 'error' | 'outdated' | 'pending' | 'unsupported' | 'ready' | 'new';
+
 export interface FileItem {
   id?: number;
   name: string;
   size: number;
   extension: string;
   path: string;
-  status: string; // 'pending' | 'processing' | 'done' | 'format-error' | 'chunck-error' | 'embedding-error'
+  content_hash?: string | null;
+  missing?: boolean;
   chunk_count?: number;
+  state?: FileState;
+  processing?: FileProcessing[];
 }
 
 export interface DirectoryResponse {
@@ -101,16 +129,10 @@ export interface PreferencesPayload {
   };
 }
 
-export interface FileProcessResponse {
-  file_id: number;
-  task_id: string;
-}
-
 export interface FileProgressItem {
   id: number;
   name: string;
-  status: 'queued' | 'processing' | 'finished' | 'failed';
-  detail: string;
+  state: FileState;
 }
 
 export interface UploadProgressPayload {

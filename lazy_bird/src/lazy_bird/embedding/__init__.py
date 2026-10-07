@@ -26,7 +26,17 @@ engine_family = EngineFamily(
     preset_table=PresetEmbedding,
     engine_fk="embedding_engine_id",
     preset_out=PresetEmbeddingOut,
+    on_default_change=lambda: _queue_default_embeddings(),
 )
+
+
+def _queue_default_embeddings() -> None:
+    """A new default preset may embed with another model: queue it for every file."""
+    from lazy_bird.crud import file_processing
+    from lazy_bird.preferences import auto_embedding_enabled
+
+    if auto_embedding_enabled():
+        file_processing.ensure_all()
 
 
 class EmbeddingEngineError(RuntimeError):

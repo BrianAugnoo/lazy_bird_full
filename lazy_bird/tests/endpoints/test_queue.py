@@ -13,29 +13,30 @@ def idle_scheduler(monkeypatch):
     return scheduler
 
 
-def test_upload_enqueues_each_file(client, monkeypatch):
+def test_upload_queues_processing_when_auto_embedding_is_on(client, idle_scheduler, monkeypatch):
     import lazy_bird.crud.file as file_crud
 
-    queued = []
     monkeypatch.setattr(file_crud, "auto_embedding_enabled", lambda: True)
-    monkeypatch.setattr(file_crud, "enqueue_file", queued.append)
 
-    response = client.post("/files/upload?dir=documents", files={"files": ("notes.txt", b"content", "text/plain")})
+    response = client.post("/files/upload?dir=documents", files={"files": ("notes.md", b"content", "text/markdown")})
 
     assert response.status_code == 200
-    assert queued == [1]
+    assert response.json()[0]["state"] == "processing"
+    assert [task.kind for task in idle_scheduler.tasks()] == ["files.chunk"]
 
 
-def test_file_process_endpoint_queues_one_task_per_file(client, idle_scheduler):
+def test_file_process_endpoint_queues_chunking_once(client, idle_scheduler):
     client.post("/files/upload?dir=documents", files={"files": ("notes.md", b"content", "text/markdown")})
 
     first = client.post("/files/1/process")
     second = client.post("/files/1/process")
 
     assert first.status_code == 202
-    assert first.json()["kind"] == "files.process" and first.json()["params"] == {"file_id": 1}
-    assert first.json()["title"] == "Process notes.md"
-    assert second.json()["id"] == first.json()["id"]
+    [chunking] = first.json()["processing"]
+    assert (chunking["processor"], chunking["state"]) == ("chunking", "queued")
+    assert second.json()["processing"][0]["task_id"] == chunking["task_id"]
+    [task] = idle_scheduler.tasks()
+    assert (task.kind, task.title, task.params) == ("files.chunk", "Chunk notes.md", {"file_id": 1})
 
 
 def test_file_process_endpoint_returns_not_found(client):
@@ -48,7 +49,7 @@ def test_file_process_endpoint_returns_not_found(client):
 def test_upload_progress_websocket_returns_file_states(client, monkeypatch):
     import lazy_bird.main as main_module
 
-    states = [{"id": 1, "name": "queued.txt", "status": "queued", "detail": "pending"}]
+    states = [{"id": 1, "name": "queued.txt", "state": "processing"}]
     monkeypatch.setattr(main_module.file_crud, "get_processing_status", lambda: states)
 
     with client.websocket_connect("/ws/upload-progress") as websocket:

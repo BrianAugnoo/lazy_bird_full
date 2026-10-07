@@ -1,11 +1,11 @@
 import pytest
 
-from lazy_bird.tasks.default.files import process_file
+from tests.conftest import process_inline
 
 
 def upload_and_process(client, name: str, content: bytes) -> int:
     file_id = client.post("/files/upload?dir=docs", files={"files": (name, content, "text/markdown")}).json()[0]["id"]
-    process_file.run(file_id=file_id)
+    process_inline(file_id)
     return file_id
 
 

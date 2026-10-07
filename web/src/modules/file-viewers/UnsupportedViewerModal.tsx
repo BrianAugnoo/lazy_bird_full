@@ -47,7 +47,7 @@ export const UnsupportedViewerModal: React.FC<UnsupportedViewerModalProps> = ({
             }}
           >
             <div>Size: {(file.size / 1024).toFixed(1)} KB</div>
-            <div>Status: {file.status}</div>
+            <div>State: {file.state ?? 'new'}</div>
             <div>Path: {file.path}</div>
           </div>
         </div>

@@ -12,7 +12,24 @@ import {
 } from '@/api/endpoints/files';
 import { progressWs } from '@/api/ws';
 import { resolveViewer } from '@/core/file-viewers/registry';
-import type { FileItem, FileProgressItem } from '@/core/types/api';
+import type { FileItem, FileProgressItem, FileState } from '@/core/types/api';
+
+const FILE_STATE_BADGES: Record<FileState, string> = {
+  ready: 'badge-success',
+  processing: 'badge-info',
+  pending: 'badge-warning',
+  outdated: 'badge-warning',
+  new: 'badge-muted',
+  unsupported: 'badge-muted',
+  error: 'badge-error',
+  missing: 'badge-error',
+};
+
+/** One line per processing, e.g. "chunking: done", "embedding (model): running". */
+const processingSummary = (file: FileItem): string =>
+  (file.processing ?? [])
+    .map((row) => `${row.processor}${row.target ? ` (${row.target})` : ''}: ${row.state}${row.error ? ` — ${row.error.message}` : ''}`)
+    .join('\n');
 import { UnsupportedViewerModal } from '@/modules/file-viewers/UnsupportedViewerModal';
 
 interface ClipboardItem {
@@ -119,11 +136,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onOpenFile }) => {
             ? updateMap.get(file.id)
             : progressUpdates.find((candidate) => candidate.name === file.name);
           if (update) {
-            return {
-              ...file,
-              id: file.id ?? update.id,
-              status: update.status === 'finished' ? 'done' : update.status,
-            };
+            return { ...file, id: file.id ?? update.id, state: update.state };
           }
           return file;
         });
@@ -361,10 +374,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onOpenFile }) => {
   // Process single file
   const handleProcess = async (fileId: number) => {
     try {
-      await processFile(fileId);
-      setFiles((prev) =>
-        prev.map((f) => (f.id === fileId ? { ...f, status: 'queued' } : f))
-      );
+      const updated = await processFile(fileId);
+      setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, ...updated } : f)));
       setSuccessMessage(`File #${fileId} queued for RAG processing.`);
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
@@ -718,21 +729,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onOpenFile }) => {
                           </div>
                         </td>
                         <td>
-                          <span
-                            className={`badge ${
-                              file.status === 'done'
-                                ? 'badge-success'
-                                : file.status === 'processing'
-                                ? 'badge-info'
-                                : file.status === 'queued' || file.status === 'pending'
-                                ? 'badge-warning'
-                                : 'badge-error'
-                            }`}
-                          >
-                            {file.status === 'processing' && (
+                          <span className={`badge ${FILE_STATE_BADGES[file.state ?? 'new']}`} title={processingSummary(file)}>
+                            {file.state === 'processing' && (
                               <span className="spinner" style={{ width: 10, height: 10 }} />
                             )}
-                            {file.status}
+                            {file.state ?? 'new'}
                           </span>
                         </td>
                         <td style={{ color: 'var(--text-secondary)' }}>

@@ -10,7 +10,7 @@ describe('MarkdownViewer Component', () => {
     extension: '.md',
     size: 2048,
     path: 'documents/readme.md',
-    status: 'done',
+    state: 'ready',
     chunk_count: 1,
   };
 

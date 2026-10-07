@@ -1,4 +1,6 @@
+from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import shutil
 from fastapi import UploadFile
 
@@ -115,3 +117,21 @@ def rename_or_move_file(path: str, name: str | None = None, dir: str | None = No
     target_dir.mkdir(parents=True, exist_ok=True)
     current_path.rename(target_path)
     return str(target_path)
+
+
+def fingerprint(path: str) -> tuple[int, datetime] | None:
+    """``(size, modification time)`` of a stored file, or None when it is missing."""
+    try:
+        stat = _safe_path(Path(path)).stat()
+    except (FileNotFoundError, ValueError):
+        return None
+    return stat.st_size, datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+
+
+def content_hash(path: str) -> str:
+    """SHA-256 of a stored file, read in blocks."""
+    digest = hashlib.sha256()
+    with _safe_path(Path(path)).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()

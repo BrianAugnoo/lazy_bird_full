@@ -1,80 +1,65 @@
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+import mimetypes
 
-from lazy_bird import database
+from fastapi import UploadFile
+from sqlmodel import select
+
 from lazy_bird.crud import chunk as chunk_crud
+from lazy_bird.crud import file_processing
 from lazy_bird.database import db
 from lazy_bird.models.file import File as FileORM
 from lazy_bird.preferences import auto_embedding_enabled
-from lazy_bird.errors import AppError
 from lazy_bird.schemas.files import FileOut
-from sqlmodel import select
 from lazy_bird.storages import (
+    content_hash,
     create_directory,
     delete_directory,
+    fingerprint,
     move_directory as move_storage_directory,
+    read_file,
+    rename_or_move_file,
     store_file,
+    write_file,
 )
-from lazy_bird.storages import read_file, rename_or_move_file, write_file
-from fastapi import UploadFile
-import mimetypes
 
 
 def _outputs(files: list[FileORM]) -> list[FileOut]:
-    chunk_counts = chunk_crud.counts([file.id for file in files])
+    file_ids = [file.id for file in files]
+    chunk_counts = chunk_crud.counts(file_ids)
+    rows = file_processing.rows_for(file_ids)
     return [
-        FileOut.model_validate(file).model_copy(update={"chunk_count": chunk_counts.get(file.id, 0)})
+        FileOut.model_validate(file).model_copy(
+            update={
+                "chunk_count": chunk_counts.get(file.id, 0),
+                "state": file_processing.summarize(file, rows.get(file.id, [])),
+                "processing": [file_processing.to_out(row, file) for row in rows.get(file.id, [])],
+            }
+        )
         for file in files
     ]
 
 
-def _default_vector_space() -> str | None:
-    """Vector table of the default embedding preset, if it is usable."""
-    from lazy_bird.embedding import engine_family, vector_space
-
-    try:
-        return vector_space(engine_family.resolve())
-    except AppError:
-        return None
-
-
-def _missing_vectors(model_name: str, file_id: int) -> bool:
-    chunk_ids = chunk_crud.ids_for_file(file_id)
-    return bool(chunk_ids) and database.vector_count(model_name, chunk_ids) < len(chunk_ids)
-
-
-def files_requiring_embedding() -> list[int]:
-    """Pending files, plus processed files lacking vectors in the default model table."""
-    with db() as session:
-        files = session.exec(select(FileORM).where(FileORM.status.in_(["pending", "done"]))).all()
-    pending_ids = {file.id for file in files if file.status == "pending"}
-    done_ids = [file.id for file in files if file.status == "done"]
-    model_name = _default_vector_space() if done_ids else None
-    if model_name is None:
-        return sorted(pending_ids)
-    return sorted(pending_ids | {file_id for file_id in done_ids if _missing_vectors(model_name, file_id)})
-
-
-def enqueue_file(file_id: int):
-    """Queue the processing task of a file (an already active one is reused)."""
-    from lazy_bird.tasks.default.files import process_file
-
-    file = get(file_id)
-    title = f"Process {file.name}{file.extension}" if file else None
-    return process_file.submit(file_id=file_id, title=title, dedupe_key=f"files.process:{file_id}")
-
-
-def enqueue_files_requiring_embedding(file_ids: list[int] | None = None) -> list[int]:
-    candidates = files_requiring_embedding() if file_ids is None else file_ids
-    for file_id in candidates:
-        enqueue_file(file_id)
-    return list(candidates)
+def _refresh_identity(file: FileORM) -> bool:
+    """Recompute size, modification time and hash from disk; return whether the content changed."""
+    found = fingerprint(file.path)
+    if found is None:
+        file.missing = True
+        return False
+    previous = file.content_hash
+    file.size, file.modified_at = found
+    file.content_hash = content_hash(file.path)
+    file.missing = False
+    return previous is not None and previous != file.content_hash
 
 
 def create_empty_directory(path: str) -> str:
     return create_directory(path)
 
 
-def delete_empty_directory(path: str) -> str:
+def remove_directory(path: str) -> str:
+    """Delete a directory with every file it contains (and their chunks and vectors)."""
     directory_path = Path(delete_directory(path))
     with db() as session:
         files = session.exec(select(FileORM)).all()
@@ -103,62 +88,104 @@ def move_directory(source: str, destination: str) -> str:
         session.commit()
     return str(destination_root)
 
-async def creates(dir: str, files: list[UploadFile]):
-    downloaded_files = []
-    file_ids = []
 
+async def creates(dir: str, files: list[UploadFile]):
+    created = []
     with db() as session:
         for file in files:
             try:
                 file_info = store_file(dir, file)
             finally:
                 await file.close()
-            file_record = FileORM(**file_info)
-            session.add(file_record)
+            record = FileORM(**file_info)
+            _refresh_identity(record)
+            session.add(record)
             session.flush()
-            session.refresh(file_record)
-            downloaded_files.append(file_record)
-            file_ids.append(file_record.id)
+            created.append(record)
         session.commit()
-
-        downloaded_files = _outputs(downloaded_files)
+        for record in created:
+            session.refresh(record)
+        file_ids = [record.id for record in created]
 
     if auto_embedding_enabled():
-        enqueue_files_requiring_embedding(file_ids)
+        for file_id in file_ids:
+            file_processing.ensure(file_id)
+    return [find(file_id) for file_id in file_ids]
 
-    return downloaded_files
+
+def process(file_id: int) -> FileOut:
+    """Queue whatever the file still needs (chunks, default embedding)."""
+    file_processing.ensure(file_id)
+    return find(file_id)
+
+
+def reprocess(file_id: int, processor: str, target: str = "") -> FileOut:
+    """Compute one processing of the file again, even if it is up to date."""
+    file_processing.request(file_id, processor, target)
+    return find(file_id)
+
+
+def detect_changes(progress: Callable[[float], None] = lambda value: None) -> dict:
+    """Compare every file with the disk; rehash changed ones and outdate their results."""
+    with db() as session:
+        file_ids = list(session.exec(select(FileORM.id)).all())
+    changed, missing = [], []
+    for index, file_id in enumerate(file_ids, start=1):
+        outcome = _check_on_disk(file_id)
+        if outcome == "changed":
+            changed.append(file_id)
+            file_processing.on_content_changed(file_id)
+        elif outcome == "reappeared":
+            file_processing.ensure(file_id, automatic=auto_embedding_enabled())
+        elif outcome == "missing":
+            missing.append(file_id)
+        progress(index / len(file_ids))
+    return {"checked": len(file_ids), "changed": changed, "missing": missing}
+
+
+def _check_on_disk(file_id: int) -> str | None:
+    """Return "changed", "reappeared", "missing" or None (nothing to do)."""
+    with db() as session:
+        file = session.get(FileORM, file_id)
+        if file is None:
+            return None
+        found = fingerprint(file.path)
+        if found is None:
+            file.missing = True
+            session.add(file)
+            session.commit()
+            return "missing"
+        was_missing = file.missing
+        stored = (file.size, _as_utc(file.modified_at))
+        if not was_missing and file.content_hash is not None and stored == found:
+            return None
+        content_changed = _refresh_identity(file)
+        session.add(file)
+        session.commit()
+    return "changed" if content_changed else "reappeared" if was_missing else None
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
+
 
 def get_all():
     with db() as session:
-        statement = select(FileORM)
-        files = session.exec(statement).all()
-        return _outputs(files)
+        files = session.exec(select(FileORM).order_by(FileORM.id)).all()
+    return _outputs(list(files))
 
 
 def get_processing_status() -> list[dict]:
-    with db() as session:
-        statement = select(FileORM).order_by(FileORM.id)
-        files = session.exec(statement).all()
-        return [
-            {
-                "id": file.id,
-                "name": f"{file.name}{file.extension}",
-                "status": {
-                    "pending": "queued",
-                    "processing": "processing",
-                    "done": "finished",
-                }.get(file.status, "failed"),
-                "detail": file.status,
-            }
-            for file in files
-        ]
+    return [
+        {"id": file.id, "name": f"{file.name}{file.extension}", "state": file.state}
+        for file in get_all()
+    ]
+
 
 def find(id: int):
     with db() as session:
         file = session.get(FileORM, id)
-        if file is None:
-            return None
-        return _outputs([file])[0]
+    return _outputs([file])[0] if file is not None else None
 
 
 def get(id: int):
@@ -199,12 +226,13 @@ def update_content(id: int, value: str):
         file = session.get(FileORM, id)
         if file is None:
             return None
-        file.size = write_file(file.path, value)
-        file.status = "pending"
+        write_file(file.path, value)
+        content_changed = _refresh_identity(file)
         session.add(file)
         session.commit()
-        session.refresh(file)
-        return _outputs([file])[0]
+    if content_changed:
+        file_processing.on_content_changed(id)
+    return find(id)
 
 
 def update_file(id: int, name: str | None = None, dir: str | None = None):
@@ -216,21 +244,12 @@ def update_file(id: int, name: str | None = None, dir: str | None = None):
             file.path = rename_or_move_file(file.path, name=name, dir=dir)
             if name is not None:
                 file.name = Path(file.path).stem
+            found = fingerprint(file.path)
+            if found is not None:
+                file.size, file.modified_at = found
             session.add(file)
             session.commit()
-            session.refresh(file)
-        return _outputs([file])[0]
-
-
-def update_status(id: int, status: str) -> bool:
-    with db() as session:
-        file = session.get(FileORM, id)
-        if file is None:
-            return False
-        file.status = status
-        session.add(file)
-        session.commit()
-        return True
+    return find(id)
 
 
 def deletes(ids: list[int]):
@@ -244,6 +263,7 @@ def deletes(ids: list[int]):
                 if path.exists():
                     path.unlink()
         session.commit()
+
 
 def delete_all():
     with db() as session:

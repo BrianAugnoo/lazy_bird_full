@@ -24,23 +24,21 @@ async def test_creates_stores_and_persists_each_file(
     assert first.file.closed
     assert second.file.closed
     assert len(file_crud.get_all()) == 2
+    assert records[0].content_hash == "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e"
 
 
 @pytest.mark.anyio
-async def test_creates_does_not_enqueue_when_auto_embedding_is_disabled(
+async def test_creates_does_not_process_when_auto_embedding_is_disabled(
     crud_database,
     storage_root: Path,
     upload_file_factory,
     monkeypatch,
 ):
-    queued = []
     monkeypatch.setattr(file_crud, "auto_embedding_enabled", lambda: False)
-    monkeypatch.setattr(file_crud, "enqueue_file", queued.append)
 
-    await file_crud.creates("documents", [upload_file_factory("manual.txt", b"content")])
+    [created] = await file_crud.creates("documents", [upload_file_factory("manual.txt", b"content")])
 
-    assert queued == []
-    assert len(file_crud.get_all()) == 1
+    assert created.state == "new" and created.processing == []
 
 
 @pytest.mark.anyio
@@ -71,15 +69,8 @@ def test_find_returns_persisted_file(crud_database, db_session_factory):
 
     found = file_crud.find(record_id)
 
-    assert found.model_dump() == {
-        "id": record_id,
-        "name": "report",
-        "size": 42,
-        "extension": ".pdf",
-        "path": "/tmp/report.pdf",
-        "status": "pending",
-        "chunk_count": 0,
-    }
+    assert (found.id, found.name, found.extension, found.size) == (record_id, "report", ".pdf", 42)
+    assert found.state == "new" and found.processing == [] and found.chunk_count == 0
 
 
 def test_find_returns_none_for_unknown_id(crud_database):

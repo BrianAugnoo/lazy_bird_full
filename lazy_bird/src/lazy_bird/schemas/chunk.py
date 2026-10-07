@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import to_jsonable_python
 
 
 class ChunkIn(BaseModel):
@@ -14,6 +15,12 @@ class ChunkIn(BaseModel):
     end_row: int | None = None
     token_count: int | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("meta")
+    @classmethod
+    def _json_safe(cls, value: dict[str, Any]) -> dict[str, Any]:
+        # Front matter may hold dates or other values JSON cannot store as is.
+        return to_jsonable_python(value, fallback=str)
 
 
 class ChunkOut(ChunkIn):

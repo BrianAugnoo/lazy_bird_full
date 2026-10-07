@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from lazy_bird.errors import NotFoundError
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 import lazy_bird.crud.file as FileCrud
-from lazy_bird.schemas.files import FileContentIn, FileOut, FileUpdate
+from lazy_bird.schemas.files import FileContentIn, FileOut, FileUpdate, ProcessRequest
 from lazy_bird.schemas.task import TaskOut
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -38,7 +38,7 @@ def move_directory(source: str, destination: str):
 @router.delete("/directory")
 def delete_directory(path: str):
     try:
-        deleted_path = FileCrud.delete_empty_directory(path)
+        deleted_path = FileCrud.remove_directory(path)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
@@ -105,12 +105,26 @@ async def update_file(file_id: int, payload: FileUpdate):
         raise HTTPException(status_code=404, detail="File not found")
     return result
 
-@router.post("/{file_id}/process", status_code=202, response_model=TaskOut)
-async def process_file(file_id: int):
-    """Queue (or return the already active) processing task of a file."""
+@router.post("/{file_id}/process", status_code=202, response_model=FileOut)
+def process_file(file_id: int):
+    """Queue what the file still needs: its chunks and the default embedding."""
     if FileCrud.get(file_id) is None:
         raise NotFoundError("File", file_id)
-    return FileCrud.enqueue_file(file_id)
+    return FileCrud.process(file_id)
+
+
+@router.post("/{file_id}/processing", status_code=202, response_model=FileOut)
+def reprocess_file(file_id: int, payload: ProcessRequest):
+    """Compute one processing again (e.g. embedding with a given model), even if up to date."""
+    return FileCrud.reprocess(file_id, payload.processor, payload.target)
+
+
+@router.post("/scan", status_code=202, response_model=TaskOut)
+def scan_files():
+    """Look for files changed or removed on disk now."""
+    from lazy_bird.tasks.default.files import schedule_scan
+
+    return schedule_scan(0)
 
 @router.delete("/")
 async def delete_files(ids: list[int]):

@@ -129,3 +129,17 @@ def definition(kind: str) -> TaskDefinition | None:
 
 def definitions() -> list[TaskDefinition]:
     return sorted(_registry.values(), key=lambda item: item.kind)
+
+
+_listeners: list[Callable[[Any], None]] = []
+
+
+def on_status_change(listener: Callable[[Any], None]) -> Callable[[Any], None]:
+    """Call ``listener(task_out)`` whenever a task changes status (not on progress)."""
+    if listener not in _listeners:
+        _listeners.append(listener)
+    return listener
+
+
+def listeners() -> list[Callable[[Any], None]]:
+    return list(_listeners)

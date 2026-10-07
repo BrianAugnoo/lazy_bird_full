@@ -148,15 +148,25 @@ def test_db():
     with Session(test_engine) as session:
         yield session
 
+_vector_initialized: str | None = None
+
+
 def vector_adapter():
-    return VECTOR_ADAPTERS[config.selected_vector_database]
+    """The selected vector adapter, connected with its configured settings on first use."""
+    module = VECTOR_ADAPTERS[config.selected_vector_database]
+    if _vector_initialized != module.name:
+        initialize_selected_vector_database()
+    return module
 
 def initialize_selected_vector_database():
-    module = vector_adapter()
-    return module.initialize(**_settings(module, config.vector_databases[module.name].settings))
+    global _vector_initialized
+    module = VECTOR_ADAPTERS[config.selected_vector_database]
+    connection = module.initialize(**_settings(module, config.vector_databases[module.name].settings))
+    _vector_initialized = module.name
+    return connection
 
 def switch_database(kind: str, name: str, settings: dict[str, Any]):
-    global config, engine, db_url, db_type
+    global config, engine, db_url, db_type, _vector_initialized
     adapters = SQL_ADAPTERS if kind == "sql" else VECTOR_ADAPTERS
     if name not in adapters:
         raise ValueError(f"Unknown {kind} database: {name}")
@@ -177,6 +187,7 @@ def switch_database(kind: str, name: str, settings: dict[str, Any]):
         adapters[name].initialize(**validated)
         config.selected_vector_database = name
         config.vector_databases[name] = DatabaseEntry(settings=validated)
+        _vector_initialized = name
     CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
     return {"selected": name, "messages": adapters[name].messages}
 

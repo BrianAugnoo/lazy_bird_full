@@ -2,6 +2,8 @@ auto-embedding:
   enable: true
 chunking:
   max_tokens: 512
+files:
+  scan_every_minutes: 10
 tasks:
   workers: 4
   resources: {}

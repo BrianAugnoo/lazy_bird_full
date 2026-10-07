@@ -73,17 +73,31 @@ def task_preferences() -> dict[str, Any]:
     return {"workers": workers, "resources": {name: float(value) for name, value in resources.items()}}
 
 
-def auto_embedding() -> list[int]:
-    if not auto_embedding_enabled():
-        return []
-
-    from lazy_bird.crud.file import enqueue_files_requiring_embedding
-
-    return enqueue_files_requiring_embedding()
+DEFAULT_SCAN_MINUTES = 10
 
 
-def apply_preferences() -> list[int]:
-    if auto_embedding_enabled():
-        return auto_embedding()
-    return []
+def scan_every_minutes() -> int:
+    """``files.scan_every_minutes``: how often files are checked for changes on disk (0 = never)."""
+    files = _read_preferences().get("files", {}) or {}
+    if not isinstance(files, dict):
+        raise ValueError("preference.yaml: files must contain a mapping")
+    value = files.get("scan_every_minutes", DEFAULT_SCAN_MINUTES)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("preference.yaml: files.scan_every_minutes must be a non-negative integer")
+    return value
 
+
+def apply_preferences() -> int:
+    """Queue what the preferences ask for; return how many processing tasks were queued.
+
+    - auto-embedding: every file gets its chunks and the vectors of the default
+      embedding preset;
+    - files.scan_every_minutes: a periodic scan detects files changed on disk.
+    """
+    from lazy_bird.crud import file_processing
+    from lazy_bird.tasks.default.files import schedule_scan
+
+    queued = file_processing.ensure_all() if auto_embedding_enabled() else 0
+    minutes = scan_every_minutes()
+    schedule_scan(minutes)
+    return queued

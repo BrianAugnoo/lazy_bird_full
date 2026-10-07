@@ -29,9 +29,9 @@ def _resolve_url() -> str:
         return url
     return default_db_url
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
+# Configure logging from alembic.ini only for the Alembic CLI: inside the application,
+# fileConfig would replace the loguru bridge installed by lazy_bird.logging_config.
+if config.config_file_name is not None and not config.attributes.get("url_from_code"):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here

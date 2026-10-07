@@ -27,7 +27,9 @@ def initialize(**kwargs):
 
 
 def _db():
-    return _connection if _connection is not None else initialize()
+    if _connection is None:
+        raise RuntimeError("LanceDB is not initialized: call initialize() first")
+    return _connection
 
 
 def table_name(model_name: str) -> str:

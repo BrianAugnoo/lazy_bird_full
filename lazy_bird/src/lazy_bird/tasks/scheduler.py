@@ -25,7 +25,7 @@ from lazy_bird.errors import AppError
 from lazy_bird.schemas.task import TaskOut
 from lazy_bird.tasks.context import TaskContext
 from lazy_bird.tasks.events import EventHub
-from lazy_bird.tasks.registry import TaskCancelled, TaskDefinition, TaskInterrupted, TaskPaused, definition
+from lazy_bird.tasks.registry import TaskCancelled, TaskDefinition, TaskInterrupted, TaskPaused, definition, listeners
 from lazy_bird.tasks.resources import InsufficientResourcesError, ResourcePool
 
 RETRY_DELAY = timedelta(seconds=30)
@@ -66,6 +66,9 @@ class Scheduler:
         self.now = now
         self.events = EventHub()
         self._lock = threading.RLock()
+        # Held while submitting and while claiming: a task's "queued" event always reaches
+        # listeners before the task can start, so status events are seen in order.
+        self._dispatch = threading.RLock()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -122,6 +125,10 @@ class Scheduler:
     # ----------------------------------------------------------------- scheduling
     def schedule_once(self) -> list[int]:
         """Start every task that can start now; return their ids."""
+        with self._dispatch:
+            return self._schedule()
+
+    def _schedule(self) -> list[int]:
         started, waiting, blocked = [], {}, set()
         for row in task_crud.ready(self.now()):
             needs = {name: amount for name, amount in (row.resources or {}).items() if amount > 0}
@@ -208,7 +215,7 @@ class Scheduler:
 
     # -------------------------------------------------------------- task context
     def record_progress(self, task_id: int, progress: float | None, message: str | None, state: dict | None) -> None:
-        self._publish(task_crud.record_progress(task_id, progress, message, state))
+        self._publish(task_crud.record_progress(task_id, progress, message, state), status_changed=False)
 
     def control_of(self, task_id: int) -> str | None:
         with self._lock:
@@ -224,9 +231,15 @@ class Scheduler:
                 reasons.append("schedule")
         return task.model_copy(update={"waiting_for": reasons})
 
-    def _publish(self, task: TaskOut) -> TaskOut:
+    def _publish(self, task: TaskOut, status_changed: bool = True) -> TaskOut:
         described = self.describe(task)
         self.events.publish({"type": "task", "task": described.model_dump(mode="json")})
+        if status_changed:
+            for listener in listeners():
+                try:
+                    listener(described)
+                except Exception:
+                    logger.exception("Task listener {} failed for task {}", getattr(listener, "__name__", listener), task.id)
         return described
 
     def _publish_resources(self) -> None:
@@ -237,6 +250,10 @@ class Scheduler:
         task_definition.check_params(params)
         needs = resources if resources is not None else task_definition.resources_for(params)
         self.pool.check({name: amount for name, amount in needs.items() if amount > 0})
+        with self._dispatch:
+            return self._create(task_definition, params, title, priority, run_at, dedupe_key, needs)
+
+    def _create(self, task_definition, params, title, priority, run_at, dedupe_key, needs) -> TaskOut:
         task, created = task_crud.create(
             task_definition.kind,
             title or task_definition.title_for(params),
@@ -278,10 +295,13 @@ class Scheduler:
         return self._command(lambda: task_crud.retry(task_id))
 
     def update(self, task_id: int, changes: dict[str, Any]) -> TaskOut:
-        return self._command(lambda: task_crud.update_task(task_id, changes))
+        task = self._publish(task_crud.update_task(task_id, changes), status_changed=False)
+        self.wake()
+        return task
 
     def move(self, task_id: int, before_id: int | None = None, after_id: int | None = None) -> TaskOut:
-        moved = self._command(lambda: task_crud.move(task_id, before_id, after_id))
+        moved = self._publish(task_crud.move(task_id, before_id, after_id), status_changed=False)
+        self.wake()
         self.events.publish({"type": "reordered"})
         return moved
 

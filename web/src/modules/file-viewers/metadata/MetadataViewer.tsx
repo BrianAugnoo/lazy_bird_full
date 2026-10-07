@@ -39,15 +39,15 @@ export const MetadataViewer: React.FC<FileViewerProps> = ({
           </div>
         </div>
         <div className="card" style={{ padding: '12px' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Processing Status</div>
-          <div style={{ marginTop: '4px' }}>
-            <span className={`badge ${
-              file.status === 'done' ? 'badge-success' :
-              file.status === 'processing' ? 'badge-info' :
-              file.status === 'pending' ? 'badge-warning' : 'badge-error'
-            }`}>
-              {file.status}
-            </span>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Processing</div>
+          <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span className="badge badge-muted">{file.state ?? 'new'}</span>
+            {(file.processing ?? []).map((row) => (
+              <span key={`${row.processor}:${row.target}`} style={{ fontSize: '0.75rem' }} title={row.error?.message}>
+                {row.processor}
+                {row.target ? ` · ${row.target}` : ''}: <strong>{row.state}</strong>
+              </span>
+            ))}
           </div>
         </div>
       </div>

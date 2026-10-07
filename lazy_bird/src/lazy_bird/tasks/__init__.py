@@ -31,11 +31,11 @@ from __future__ import annotations
 from lazy_bird.extension.discovery import LoadFailure, import_module, iter_extension_modules, record_failures
 from lazy_bird.preferences import task_preferences
 from lazy_bird.tasks.context import TaskContext
-from lazy_bird.tasks.registry import TaskDefinition, definition, definitions, task
+from lazy_bird.tasks.registry import TaskDefinition, definition, definitions, on_status_change, task
 from lazy_bird.tasks.resources import ResourcePool, detect_capacity
 from lazy_bird.tasks.scheduler import Scheduler
 
-__all__ = ["TaskContext", "TaskDefinition", "definition", "definitions", "discover_tasks", "scheduler", "task"]
+__all__ = ["TaskContext", "TaskDefinition", "definition", "definitions", "discover_tasks", "on_status_change", "publish", "scheduler", "task"]
 
 _scheduler: Scheduler | None = None
 
@@ -60,6 +60,12 @@ def scheduler() -> Scheduler:
         capacity = {**detect_capacity(), **settings["resources"]}
         _scheduler = Scheduler(ResourcePool(capacity), workers=settings["workers"])
     return _scheduler
+
+
+def publish(event: dict) -> None:
+    """Send an event to the task WebSocket clients (no-op before the scheduler exists)."""
+    if _scheduler is not None:
+        _scheduler.events.publish(event)
 
 
 def start_scheduler() -> Scheduler:

@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -80,6 +80,7 @@ class EngineFamily:
         preset_table: type[SQLModel],
         engine_fk: str,
         preset_out: type[BaseModel],
+        on_default_change: Callable[[], None] | None = None,
     ) -> None:
         self.kind = kind
         self.package = package
@@ -88,6 +89,7 @@ class EngineFamily:
         self.preset_table = preset_table
         self.engine_fk = engine_fk
         self.preset_out = preset_out
+        self.on_default_change = on_default_change
         self._loaded: dict[str, LoadedEngine] = {}
 
     # ----------------------------------------------------------------- discovery
@@ -265,7 +267,13 @@ class EngineFamily:
             session.add(row)
             self._commit(session, name)
             session.refresh(row)
+        if row.default:
+            self._default_changed()
         return self._preset_out(row)
+
+    def _default_changed(self) -> None:
+        if self.on_default_change is not None:
+            self.on_default_change()
 
     def update_preset(self, preset_id: int, changes: dict[str, Any]) -> BaseModel:
         with db() as session:
@@ -288,6 +296,8 @@ class EngineFamily:
             session.add(row)
             self._commit(session, row.name)
             session.refresh(row)
+        if row.default and (changes.get("default") is True or "kwargs" in changes or self.engine_fk in changes):
+            self._default_changed()
         return self._preset_out(row)
 
     def delete_preset(self, preset_id: int) -> None:
@@ -303,6 +313,8 @@ class EngineFamily:
                     successor.default = True
                     session.add(successor)
             session.commit()
+        if was_default:
+            self._default_changed()
 
     def resolve(self, preset_id: int | None = None) -> ResolvedEngine:
         """Return the callable engine of a preset (the default preset when ``preset_id`` is None)."""
