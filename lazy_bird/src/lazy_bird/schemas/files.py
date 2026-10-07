@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from lazy_bird.schemas.types import UtcDatetime
 
 ProcessingState = Literal["pending", "queued", "running", "paused", "done", "failed", "cancelled", "outdated", "unsupported"]
 FileState = Literal["missing", "processing", "error", "outdated", "pending", "unsupported", "ready", "new"]
@@ -16,7 +17,7 @@ class ProcessingOut(BaseModel):
     content_hash: str | None = None
     task_id: int | None = None
     error: dict[str, Any] | None = None
-    updated_at: datetime
+    updated_at: UtcDatetime
     model_config = ConfigDict(from_attributes=True)
 
 

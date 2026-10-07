@@ -1,54 +1,59 @@
-import type { FileViewerModule } from './types';
-
 /**
- * Registry extensible pour les modules de visualisation / édition de fichiers
- * Respecte le principe Open/Closed : tout nouveau format est un module qui s'enregistre
- * sans altérer le code existant.
+ * File viewers: how a stored file is shown and edited on the Files page.
+ *
+ * A viewer module registers itself with `registerViewer` (see
+ * `modules/viewers/index.ts`); the viewer with the highest priority whose
+ * `canHandle` accepts the extension is used. Text files without a dedicated
+ * viewer fall back to the `text` viewer.
  */
+import type { ComponentType } from 'react';
+import type { FileItem } from '@/core/types/api';
+
+export interface FileViewerProps {
+  file: FileItem;
+  content: string;
+  /** Report edits; absent when the file cannot be edited. */
+  onChange?: (content: string) => void;
+}
+
+export interface FileViewerModule {
+  id: string;
+  name: string;
+  /** `extension` is lower case, without the dot. */
+  canHandle: (extension: string) => boolean;
+  Component: ComponentType<FileViewerProps>;
+  /** Higher wins when several viewers accept an extension. */
+  priority?: number;
+}
+
 const registry: FileViewerModule[] = [];
 
-/**
- * Enregistre un nouveau module de visualisation.
- * Retourne une fonction de désenregistrement utile pour les tests et le cycle de vie React.
- */
-export const registerViewer = (viewer: FileViewerModule): (() => void) => {
-  const existingIndex = registry.findIndex((v) => v.id === viewer.id);
-  if (existingIndex >= 0) {
-    registry[existingIndex] = viewer;
-  } else {
-    registry.push(viewer);
-  }
-
-  // Tri par priorité décroissante (la priorité la plus haute est testée en premier)
+/** Add (or replace, by id) a viewer; returns a function removing it. */
+export function registerViewer(viewer: FileViewerModule): () => void {
+  const index = registry.findIndex((item) => item.id === viewer.id);
+  if (index >= 0) registry[index] = viewer;
+  else registry.push(viewer);
   registry.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-
   return () => {
-    const idx = registry.findIndex((v) => v.id === viewer.id);
-    if (idx >= 0) {
-      registry.splice(idx, 1);
-    }
+    const position = registry.findIndex((item) => item.id === viewer.id);
+    if (position >= 0) registry.splice(position, 1);
   };
-};
+}
 
-/**
- * Résout le visualiseur le plus approprié pour une extension ou un type MIME donné.
- * Normalise l'extension (avec ou sans point initial, insensible à la casse).
- */
-export const resolveViewer = (extension: string, mimeType?: string): FileViewerModule | undefined => {
-  const cleanExt = extension.trim().toLowerCase().replace(/^\./, '');
-  return registry.find((viewer) => viewer.canHandle(cleanExt, mimeType));
-};
+export const normalizeExtension = (extension: string) => extension.trim().toLowerCase().replace(/^\./, '');
 
-/**
- * Récupère l'ensemble des visualiseurs enregistrés.
- */
-export const getAllViewers = (): readonly FileViewerModule[] => {
-  return [...registry];
-};
+export function resolveViewer(extension: string): FileViewerModule | undefined {
+  const clean = normalizeExtension(extension);
+  return registry.find((viewer) => viewer.canHandle(clean));
+}
 
-/**
- * Réinitialise le registre (essentiellement utilisé dans les tests unitaires).
- */
-export const clearViewers = (): void => {
+export function getViewer(id: string): FileViewerModule | undefined {
+  return registry.find((viewer) => viewer.id === id);
+}
+
+export const getAllViewers = (): readonly FileViewerModule[] => [...registry];
+
+/** Empty the registry (tests). */
+export function clearViewers(): void {
   registry.length = 0;
-};
+}

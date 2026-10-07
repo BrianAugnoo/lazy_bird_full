@@ -33,7 +33,7 @@ from pydantic import BaseModel, ValidationError, model_validator
 from lazy_bird.crud.engine import EngineFamily, ResolvedEngine
 from lazy_bird.errors import AppError, ConflictError, InvalidInputError, InvalidSettingsError, NotFoundError
 from lazy_bird.extension.settings import validation_messages
-from lazy_bird.inference.types import CallbackEmitter, ChatMessage, ChatResult, Emitter, EngineError, ToolCall
+from lazy_bird.inference.types import CallbackEmitter, ChatMessage, ChatResult, Emitter, EngineError, ToolCall, ToolOutput
 from lazy_bird.models.inference_engine import InferenceEngine, PresetInference
 from lazy_bird.schemas.inference_engine import PresetInferenceOut
 from lazy_bird.schemas.message import MessageOut
@@ -293,18 +293,22 @@ def _run_tools(turn: _Turn, runtime, calls: list[dict[str, Any]]) -> None:
             return
         name, arguments = call.get("name", ""), call.get("arguments") or {}
         turn.run.event({"type": "tool_start", "call": call})
-        status = "ok"
+        status, meta = "ok", {}
         if "__invalid_json__" in arguments:
             content, status = "Error: the tool arguments were not valid JSON.", "error"
         else:
             try:
-                content = _text(runtime.call_tool(name, arguments))
+                result = runtime.call_tool(name, arguments)
+                if isinstance(result, ToolOutput):
+                    result, meta = result.content, dict(result.meta)
+                content = _text(result)
             except AppError as error:
                 content, status = f"Error: {error.message}", "error"
+                meta = {"error": {"code": error.code, "details": error.details}}
             except Exception as error:
                 logger.opt(exception=error).warning("Tool '{}' failed", name)
                 content, status = f"Error while running {name}: {error}", "error"
-        turn.store("tool-response", content, {"tool_call_id": call.get("id"), "name": name, "status": status})
+        turn.store("tool-response", content, {**meta, "tool_call_id": call.get("id"), "name": name, "status": status})
 
 
 def agentic_loop(conversation_id: int, *, emit: Emitter | None = None, retry: int = 3, max_iter: int = 20) -> RunOutcome:
@@ -376,8 +380,11 @@ class _Relay(Emitter):
         return self.parent.stopped
 
 
-def delegate(parent, child, task: str, emitter: Emitter | None = None) -> str:
-    """Run ``child`` on ``task`` in a new conversation and return its final answer."""
+def delegate(parent, child, task: str, emitter: Emitter | None = None) -> ToolOutput:
+    """Run ``child`` on ``task`` in a new conversation and return its final answer.
+
+    The answer's ``meta["delegation"]`` names the sub-agent and its conversation.
+    """
     from lazy_bird.crud import conversation as conversation_crud
 
     if not task.strip():
@@ -388,10 +395,11 @@ def delegate(parent, child, task: str, emitter: Emitter | None = None) -> str:
     parent_emit.event({"type": "status", "state": "delegating", "agent": child.name, "conversation_id": conversation.id})
     outcome = agentic_loop(conversation.id, emit=_Relay(parent_emit, child.id, conversation.id))
     answer = outcome.answer
+    scope = {"agent_id": child.id, "agent": child.name, "conversation_id": conversation.id}
     if outcome.reason == "completed" and answer is not None:
-        return answer.content or ""
+        return ToolOutput(answer.content or "", {"delegation": scope})
     reason = answer.content if answer is not None else outcome.reason
-    raise AppError(f"{child.name} could not finish the task: {reason}", code="delegation_failed", details={"conversation_id": conversation.id})
+    raise AppError(f"{child.name} could not finish the task: {reason}", code="delegation_failed", details={"delegation": scope})
 
 
 def complete(prompt: str, instructions: str | None = None, preset_id: int | None = None) -> ChatResult:
@@ -408,6 +416,7 @@ __all__ = [
     "Emitter",
     "EngineError",
     "RunOutcome",
+    "ToolOutput",
     "agent_meta",
     "agentic_loop",
     "complete",

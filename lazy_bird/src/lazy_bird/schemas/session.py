@@ -1,15 +1,16 @@
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from lazy_bird.schemas.types import UtcDatetime
 
 
 class SessionOut(BaseModel):
     id: int
     title: str
     meta: dict[str, Any] | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
     model_config = ConfigDict(from_attributes=True)
 

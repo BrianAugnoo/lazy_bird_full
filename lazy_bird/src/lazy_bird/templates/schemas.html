@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Data model · lazy_bird</title>
+    <style>
+        :root {
+            --bg: #f3f5f5; --dot: #cfd8da; --panel: #ffffff; --line: #d3dadc;
+            --ink: #172227; --muted: #6d7b82; --accent: #0e7d86;
+            color-scheme: light;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root { --bg: #111618; --dot: #26343a; --panel: #182023; --line: #2c383d; --ink: #e5ecee; --muted: #85949b; --accent: #3eb2bb; color-scheme: dark; }
+        }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+        #viewport {
+            position: fixed; inset: 0; cursor: grab; touch-action: none; user-select: none;
+            background-image: radial-gradient(var(--dot) 1.2px, transparent 1.2px);
+        }
+        #viewport.is-panning { cursor: grabbing; }
+        #stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+        #stage .mermaid { padding: 24px; }
+        #stage svg { max-width: none !important; display: block; }
+        .panel {
+            position: fixed; display: flex; align-items: center; gap: 4px; padding: 4px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+        }
+        #title { top: 12px; left: 12px; padding: 8px 12px; gap: 8px; }
+        #title strong { font-size: 15px; }
+        #title span { color: var(--muted); font-size: 12px; }
+        #controls { bottom: 12px; right: 12px; }
+        button {
+            min-width: 30px; height: 30px; padding: 0 8px; border: 0; border-radius: 6px;
+            background: transparent; color: var(--ink); font: inherit; cursor: pointer;
+        }
+        button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+        #zoom { min-width: 54px; text-align: center; font-variant-numeric: tabular-nums; color: var(--muted); }
+        #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="viewport" aria-label="Data model diagram: drag to move, scroll to zoom">
+        <div id="stage"><pre class="mermaid">{{ diagram }}</pre></div>
+    </div>
+    <div id="status">Drawing the diagram…</div>
+    <div id="title" class="panel"><strong>Data model</strong><span>Drag to move · scroll to zoom · 0 to fit</span></div>
+    <div id="controls" class="panel">
+        <button type="button" id="zoom-out" title="Zoom out (-)" aria-label="Zoom out">−</button>
+        <span id="zoom">100%</span>
+        <button type="button" id="zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+        <button type="button" id="fit" title="Fit to screen (0)">Fit</button>
+        <button type="button" id="actual" title="Actual size (1)">1:1</button>
+    </div>
+    <script type="module">
+        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+        const viewport = document.getElementById("viewport");
+        const stage = document.getElementById("stage");
+        const zoomLabel = document.getElementById("zoom");
+        const view = { x: 0, y: 0, scale: 1 };
+        const MIN = 0.1, MAX = 4;
+
+        function render() {
+            stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+            const grid = 22 * view.scale;
+            viewport.style.backgroundSize = `${grid}px ${grid}px`;
+            viewport.style.backgroundPosition = `${view.x}px ${view.y}px`;
+            zoomLabel.textContent = `${Math.round(view.scale * 100)}%`;
+        }
+
+        // Zoom around a point of the screen, which stays under the cursor.
+        function zoomAt(factor, cx, cy) {
+            const next = Math.min(MAX, Math.max(MIN, view.scale * factor));
+            const ratio = next / view.scale;
+            view.x = cx - (cx - view.x) * ratio;
+            view.y = cy - (cy - view.y) * ratio;
+            view.scale = next;
+            render();
+        }
+
+        function fit() {
+            const width = stage.offsetWidth, height = stage.offsetHeight;
+            if (!width || !height) return;
+            view.scale = Math.min(MAX, Math.max(MIN, Math.min(innerWidth / width, innerHeight / height) * 0.92));
+            view.x = (innerWidth - width * view.scale) / 2;
+            view.y = (innerHeight - height * view.scale) / 2;
+            render();
+        }
+
+        function actualSize() {
+            zoomAt(1 / view.scale, innerWidth / 2, innerHeight / 2);
+        }
+
+        const pointers = new Map();
+        let pinch = null;
+        viewport.addEventListener("pointerdown", (event) => {
+            viewport.setPointerCapture(event.pointerId);
+            pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            viewport.classList.add("is-panning");
+        });
+        viewport.addEventListener("pointermove", (event) => {
+            const previous = pointers.get(event.pointerId);
+            if (!previous) return;
+            pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (pointers.size === 2) {
+                const [a, b] = [...pointers.values()];
+                const distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (pinch) zoomAt(distance / pinch, (a.x + b.x) / 2, (a.y + b.y) / 2);
+                pinch = distance;
+                return;
+            }
+            view.x += event.clientX - previous.x;
+            view.y += event.clientY - previous.y;
+            render();
+        });
+        const release = (event) => {
+            pointers.delete(event.pointerId);
+            if (pointers.size < 2) pinch = null;
+            if (pointers.size === 0) viewport.classList.remove("is-panning");
+        };
+        viewport.addEventListener("pointerup", release);
+        viewport.addEventListener("pointercancel", release);
+        viewport.addEventListener("wheel", (event) => {
+            event.preventDefault();
+            const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+            zoomAt(Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.0015)), event.clientX, event.clientY);
+        }, { passive: false });
+        viewport.addEventListener("dblclick", (event) => zoomAt(1.6, event.clientX, event.clientY));
+
+        document.getElementById("zoom-in").onclick = () => zoomAt(1.25, innerWidth / 2, innerHeight / 2);
+        document.getElementById("zoom-out").onclick = () => zoomAt(0.8, innerWidth / 2, innerHeight / 2);
+        document.getElementById("fit").onclick = fit;
+        document.getElementById("actual").onclick = actualSize;
+        addEventListener("keydown", (event) => {
+            if (event.key === "+" || event.key === "=") zoomAt(1.25, innerWidth / 2, innerHeight / 2);
+            else if (event.key === "-") zoomAt(0.8, innerWidth / 2, innerHeight / 2);
+            else if (event.key === "0") fit();
+            else if (event.key === "1") actualSize();
+        });
+
+        const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+        mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict", er: { useMaxWidth: false } });
+        try {
+            await mermaid.run({ nodes: [stage.querySelector(".mermaid")] });
+            document.getElementById("status").remove();
+            fit();
+        } catch (error) {
+            document.getElementById("status").textContent = `The diagram could not be drawn: ${error.message ?? error}`;
+        }
+    </script>
+</body>
+</html>

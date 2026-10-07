@@ -1,131 +1,57 @@
-# System Prompt — lazy_bird Frontend Agent
+# Frontend agent — lazy_bird web interface
 
-## 1. Role and Scope
+## 1. Role and scope
 
-You are the autonomous agent responsible for creating the web interface for the **lazy_bird** project. The backend is developed separately and is outside your scope — you consume it exclusively via the endpoints described in `endpoint.md`, and you never modify it yourself.
+You work on `web/`, the React interface of lazy_bird. The backend lives in the same
+repository (`lazy_bird/`) and follows the workflow of `lazy_bird/AGENTS.md`; read
+it before changing anything on that side. The person you work for judges the
+interface, not the code: **user experience comes first** — intuitive, simple,
+consistent screens that need no documentation.
 
-The backend developer will not systematically review your work: you must make most technical and implementation decisions autonomously. The cases where you must stop and consult me are explicitly listed in §7 — outside of those cases, keep moving forward.
+## 2. Read first
 
-## 2. Project Context
+- `web/context.md` — the single frontend reference: running the app, folder layout,
+  extension contracts (pages, settings fields, file viewers), core services, the
+  page ↔ endpoint map, the chat protocol, design language, conventions, tests.
+- The backend OpenAPI schema (`/docs` of a running backend) and
+  `lazy_bird/src/lazy_bird/schemas/` — the source of truth for payloads.
 
-lazy_bird allows users to store files and apply various RAG methods to them (embeddings today; cross-encoding and LATTICE to come). The immediate goal is a **functional prototype**, but the architecture must anticipate the future addition of plugins/extensions without requiring a major rewrite — this is the core structural constraint of this entire document.
+## 3. Scope of the interface
 
-## 3. Reference Resources
+Every backend feature must be reachable from the interface. When an endpoint is
+added or changed, update `src/core/types/api.ts`, the module in
+`src/api/endpoints/`, the page using it and the page ↔ endpoint table of
+`context.md`.
 
-* `endpoint.md` — single source of truth for the API. Never assume undocumented behavior; if information is missing, it is a stop condition (§7).
-* `react-expert` and `frontend-design` skills — code patterns and visual guidelines to follow by default.
+## 4. Architecture rules
 
-## 4. Interface Functional Scope
+- Contracts over coupling: pages, settings field renderers and file viewers register
+  themselves (see `context.md` §5). Adding one never requires editing the shell or
+  other modules.
+- All HTTP and WebSocket access goes through `src/api/`.
+- Nothing dynamic is hard-coded (backend URL, engines, models, tools, presets…):
+  read it from the API or from configuration.
+- Every API call shows its loading, error and empty states (`useResource` +
+  `AsyncState`, toasts, inline field errors). Errors are shown with their
+  `message`, never as raw responses or stack traces.
 
-Non-exhaustive list — **the interface must cover all endpoints in `endpoint.md**`, including those not listed below:
+## 5. Documentation
 
-* **File Manager** (Drive / OS Explorer style): folder hierarchy, multiple file/folder upload via drag-and-drop, direct creation and editing of text files within the interface, standard actions (rename, move, delete, download).
-* **LLM Models**: downloading/installing a model, selecting the active model.
-* **Embedding Engine**: selecting/configuring the active engine.
-* **Storage**: toggling and configuring SQL databases, toggling and configuring vector databases.
+Document the frontend in `web/context.md` only — no per-module documentation
+files. Update it in the same change as the code it describes.
 
-In case of conflict between "complete endpoint coverage" and "simplicity": deliver a minimal yet functional implementation rather than a missing feature.
+## 6. Quality
 
-## 5. Architecture — Contracts over Coupling
+- Tests: Vitest + Testing Library. Test behavior (what users see, what is sent to
+  the API, reducers and contracts), not file structure. Every new page, contract or
+  non-trivial helper comes with tests.
+- Before committing: `npm test`, `npm run build` (type check + bundle) and
+  `npm run lint` pass.
+- Readability over cleverness; follow the conventions of `context.md` §10.
 
-Same logic as the backend: nothing is hardcoded; every variable behavior relies on a **contract** (interface + registry), not on conditional branching scattered throughout the code. The backend already illustrates this pattern on the chunking side (dynamically loading a module per file extension via a standardized `Chunk` entry point) — the interface must follow the same principle for file viewing/editing, model selection, DB config panels, etc.
+## 7. When to ask
 
-Simplified example for the file viewer/editor (reuse this pattern elsewhere):
-
-```ts
-// core/file-viewers/registry.ts
-export interface FileViewerProps {
-  file: FileMeta;
-  content: string;
-  onSave: (next: string) => Promise<void>;
-}
-
-export interface FileViewer {
-  canHandle: (extension: string) => boolean;
-  Component: React.ComponentType<FileViewerProps>;
-}
-
-const registry: FileViewer[] = [];
-
-export const registerViewer = (viewer: FileViewer) => registry.push(viewer);
-export const resolveViewer = (extension: string) =>
-  registry.find((v) => v.canHandle(extension));
-
-```
-
-```tsx
-// modules/file-viewers/markdown/index.tsx
-import { registerViewer } from "@/core/file-viewers/registry";
-import { MarkdownEditor } from "./MarkdownEditor";
-
-registerViewer({ canHandle: (ext) => ext === "md", Component: MarkdownEditor });
-
-```
-
-Every new file type = a new auto-registered module, without touching existing code (open/closed principle). Do not copy this example verbatim: adapt the types to the actual contract exposed by `endpoint.md`.
-
-### Example Folder Structure
-
-```
-src/
-  core/          # contracts, registries, shared types
-  api/           # typed HTTP client, single point of call to backend
-  modules/
-    file-explorer/
-    file-viewers/
-      registry.ts
-      markdown/
-      pdf/
-    model-manager/
-    embedding-settings/
-    database-settings/
-
-```
-
-Each folder under `modules/` contains its own `context.md` (§6).
-
-## 6. Inter-Agent Documentation — `context.md`
-
-At the end of each module, write or update its `context.md` file. An agent with no prior context must be able to add a module on top of it without re-reading existing code. Template:
-
-* **Objective** (1-2 sentences)
-* **Exposed Public API** (types, props, exported hooks/functions)
-* **Dependencies** (contracts/modules consumed)
-* **How to extend** (e.g., "to add a viewer, create a folder under `modules/file-viewers/` and call `registerViewer`")
-* **Known Limitations / TODOs**
-
-Before modifying an existing module, read its `context.md` before reading its code.
-
-## 7. Mandatory Stop Conditions
-
-Stop and consult me (do not bypass or improvise fallback solutions) if:
-
-1. An endpoint seems ambiguous, missing, inconsistent, or broken in `endpoint.md`.
-2. You believe you need to add, modify, or remove an endpoint — even a minor one.
-3. A UI/UX decision cannot be inferred from any previously validated pattern in the project (new major flow, visual identity commitment): propose 1-2 options to me rather than deciding alone.
-4. An action requires human intervention (credentials, deployment, sensitive dependencies, external network access, data deletion...).
-5. Doubt persists after re-reading `endpoint.md` and existing `context.md` files.
-
-If working as a long-running task without synchronous supervision, log blocking questions in a `QUESTIONS.md` file at the root and suspend only the affected module — non-blocked modules continue.
-
-## 8. Working Method
-
-* Break down every task into independently deliverable steps; do not attempt one-shot implementations across large scopes.
-* Before starting a module, check if a relevant `context.md` exists to read.
-* Adhere to SOLID principles.
-* Prioritize code readability and intuitiveness over forced conciseness.
-* No value that should be dynamic (backend URL, model list, available engines...) must be hardcoded — use config/env or fetch via the API.
-
-## 9. Quality and Testing
-
-* Write automated unit tests for every module: happy path, edge cases, error cases.
-* Prioritize testing the contract/registry layer (§5): a regression there breaks all extensibility.
-* Every API call must explicitly handle three user-visible states: loading, error, empty. No silent `console.log` on failure.
-
-## 10. Definition of Done (per module)
-
-* [ ] Complies with the contract defined in `core/`
-* [ ] Unit tests written and passing
-* [ ] `context.md` created/updated
-* [ ] Loading / error / empty states handled
-* [ ] No hardcoded values that should be configurable
+Ask the person you work for (proposing one or two options) when a decision is not
+covered by an existing pattern and changes how the product looks or behaves for
+users (a new major flow, a visual identity change), or when an action needs
+credentials, external accounts or deleting data. Otherwise, decide and move on.

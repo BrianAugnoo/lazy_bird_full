@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-import asyncio
 from pathlib import Path
 from time import perf_counter
 
@@ -11,20 +10,19 @@ from lazy_bird.logging_config import configure_logging
 TRACE_ALL_LAZY_BIRD = os.getenv("LAZY_BIRD_TRACE_ALL", "1") not in {"0", "false", "False"}
 configure_logging(trace_all=TRACE_ALL_LAZY_BIRD)
 
-from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from lazy_bird.api import router as api_router
 from lazy_bird.api.error_handlers import install_error_handlers
 from lazy_bird.errors import error_payload
-from lazy_bird.crud import file as file_crud
 from lazy_bird.tools.hf_auth import authenticate_hf
 from lazy_bird.crud.llm_model import sync_cache as sync_cached_models
 from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
-from lazy_bird.preferences import apply_preferences, auto_embedding_enabled
+from lazy_bird.preferences import apply_preferences
 from lazy_bird.tasks import start_scheduler, stop_scheduler
 from lazy_bird.tools.db_schema import get_schema_diagram
 from lazy_bird.agents.tools import initialize_tools
@@ -125,54 +123,15 @@ async def health():
     }
 
 
-@app.get("/shemas", include_in_schema=False)
+@app.get("/schemas", include_in_schema=False)
 async def schema_view(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="shemas.html",
-        context={"diagram": get_schema_diagram()},
-    )
+    """The data model as a diagram (pan by dragging, zoom with the wheel)."""
+    return templates.TemplateResponse(request=request, name="schemas.html", context={"diagram": get_schema_diagram()})
 
 
-@app.get("/upload_file", include_in_schema=False)
-async def upload_file_view(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="upload_file.html",
-        context={"uploaded_files": None, "error": None},
-    )
+@app.get("/shemas", include_in_schema=False)
+async def old_schema_view():
+    return RedirectResponse("/schemas", status_code=308)
 
-
-@app.post("/upload_file", include_in_schema=False)
-async def upload_file_from_view(
-    request: Request,
-    directory: str = Form(...),
-    files: list[UploadFile] = File(...),
-):
-    try:
-        uploaded_files = await file_crud.creates(directory, files)
-        return templates.TemplateResponse(
-            request=request,
-            name="upload_file.html",
-            context={"uploaded_files": uploaded_files, "error": None},
-        )
-    except Exception as exc:
-        return templates.TemplateResponse(
-            request=request,
-            name="upload_file.html",
-            context={"uploaded_files": None, "error": str(exc)},
-            status_code=400,
-        )
-
-
-@app.websocket("/ws/upload-progress")
-async def upload_progress(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        while True:
-            await websocket.send_json({"files": file_crud.get_processing_status()})
-            await asyncio.sleep(0.5)
-    except WebSocketDisconnect:
-        return
 
 

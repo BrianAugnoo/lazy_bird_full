@@ -9,6 +9,10 @@ Contract of a tools module (``agents/tools/{extension_name}/{module}.py``):
   configuration, with optional ``fields`` widgets. Saved values live in the
   ``toolsettings`` table and are edited through ``/tools/settings``.
 
+A tool returns text, a JSON-serializable value, or ``inference.ToolOutput(content,
+meta)`` to also attach ``meta`` to the stored tool-response message (shown by the
+interface, never by the LLM). Raising ``AppError`` gives the LLM its message.
+
 Tool ids are ``{extension}-{module}-{function}`` (``...-{Class}-{method}`` for
 methods). An agent lists tool ids; the LLM sees plain names, except that when two
 of an agent's tools share a name, the one from ``default/`` (else the first one)

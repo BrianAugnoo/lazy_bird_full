@@ -24,6 +24,19 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class ToolOutput:
+    """What a tool may return instead of a plain value.
+
+    ``content`` is what the LLM sees (text, or a value serialized to JSON) and
+    ``meta`` is stored on the tool-response message for the interface, e.g. the
+    conversation a delegated task ran in.
+    """
+
+    content: Any
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ChatMessage:
     """A provider-neutral message, close to the OpenAI chat format."""
 

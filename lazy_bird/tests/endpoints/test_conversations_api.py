@@ -92,3 +92,16 @@ def test_presets_can_be_tested_with_a_single_completion(client, fake_inference):
     response = client.post("/inference/complete", json={"prompt": "ping"})
 
     assert response.json()["content"] == "pong"
+
+
+def test_timestamps_are_sent_in_utc_with_their_offset(client, fake_inference):
+    from datetime import datetime, timedelta, timezone
+
+    agent = make_agent(client)
+    conversation = client.post("/conversations/", json={"agent_id": agent["id"]}).json()
+    session = client.get(f"/sessions/{agent['session_id']}").json()
+
+    for value in (conversation["created_at"], session["updated_at"]):
+        parsed = datetime.fromisoformat(value)
+        assert parsed.utcoffset() == timedelta(0)
+        assert abs(datetime.now(timezone.utc) - parsed) < timedelta(minutes=1)

@@ -1,5 +1,5 @@
 import { request } from '../client';
-import type { EngineKind, EngineOut, PresetChanges, PresetOut } from '@/core/types/api';
+import type { CompletionOut, EngineKind, EngineOut, PresetChanges, PresetOut } from '@/core/types/api';
 
 /** Typed access to one engine family: `/{kind}-engines/` and `/{kind}-presets/`. */
 export function engineApi(kind: EngineKind) {
@@ -23,3 +23,10 @@ export function engineApi(kind: EngineKind) {
     deletePreset: (id: number) => request<void>(`${presets}/${id}`, { method: 'DELETE' }),
   };
 }
+
+/** One question, one answer with an inference preset (the default one when omitted). */
+export const complete = (prompt: string, presetId?: number, instructions?: string) =>
+  request<CompletionOut>('/inference/complete', {
+    method: 'POST',
+    body: JSON.stringify({ prompt, preset_id: presetId ?? null, instructions: instructions || null }),
+  });

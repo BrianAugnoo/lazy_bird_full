@@ -183,13 +183,6 @@ def get_all():
     return _outputs(list(files))
 
 
-def get_processing_status() -> list[dict]:
-    return [
-        {"id": file.id, "name": f"{file.name}{file.extension}", "state": file.state}
-        for file in get_all()
-    ]
-
-
 def find(id: int):
     with db() as session:
         file = session.get(FileORM, id)

@@ -4,10 +4,12 @@ def test_health_reports_a_ready_server(client):
         assert body["ready"] is True and body["error"] is None and body["database_revision"]
 
 
-def test_development_template_routes_are_not_exposed(client):
+def test_only_the_data_model_page_is_served_as_html(client, monkeypatch):
+    monkeypatch.setattr("lazy_bird.main.get_schema_diagram", lambda: "erDiagram")
+
     assert client.get("/codebase").status_code == 404
-    assert client.get("/upload_file").status_code == 200
-    assert client.get("/shemas").status_code == 200
+    assert client.get("/upload_file").status_code == 404
+    assert client.get("/schemas").status_code == 200
 
 
 def test_openapi_contains_all_application_surfaces(client):

@@ -50,3 +50,14 @@ def test_websocket_sends_a_snapshot_then_answers_commands_and_streams_changes(cl
 
         socket.send_text("not json")
         assert socket.receive_json()["error"]["code"] == "invalid_command"
+
+
+def test_file_processing_changes_are_announced_on_the_task_socket(client, api_scheduler):
+    uploaded = client.post("/files/upload", files=[("files", ("notes.md", b"# Notes", "text/markdown"))]).json()[0]
+
+    with client.websocket_connect("/ws/tasks") as socket:
+        assert socket.receive_json()["type"] == "snapshot"
+        assert client.post(f"/files/{uploaded['id']}/processing", json={"processor": "chunking"}).status_code == 202
+        events = [socket.receive_json() for _ in range(2)]
+
+    assert {"type": "file", "file_id": uploaded["id"]} in events

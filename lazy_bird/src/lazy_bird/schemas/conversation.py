@@ -1,9 +1,9 @@
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from lazy_bird.schemas.message import MessageOut
+from lazy_bird.schemas.types import UtcDatetime
 
 
 class ConversationOut(BaseModel):
@@ -13,8 +13,8 @@ class ConversationOut(BaseModel):
     id: int
     agent_id: int
     title: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
     runnable: bool = False
     running: bool = False
 

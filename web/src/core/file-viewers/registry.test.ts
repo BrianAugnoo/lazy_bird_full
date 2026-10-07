@@ -1,89 +1,38 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  registerViewer,
-  resolveViewer,
-  getAllViewers,
-  clearViewers,
-} from './registry';
-import type { FileViewerModule, FileViewerProps } from './types';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { clearViewers, getAllViewers, registerViewer, resolveViewer, type FileViewerModule } from './registry';
 
-const DummyComponent = (_props: FileViewerProps) => null;
+const Dummy = () => null;
+const viewer = (id: string, extensions: string[], priority = 0): FileViewerModule => ({
+  id,
+  name: id,
+  canHandle: (extension) => extensions.includes(extension),
+  Component: Dummy,
+  priority,
+});
 
-describe('FileViewer Registry (Contrat Open/Closed)', () => {
-  beforeEach(() => {
-    clearViewers();
+describe('file viewer registry', () => {
+  beforeEach(clearViewers);
+
+  it('resolves a viewer whatever the case or dot of the extension', () => {
+    registerViewer(viewer('markdown', ['md']));
+    expect(resolveViewer('.MD')?.id).toBe('markdown');
+    expect(resolveViewer('md')?.id).toBe('markdown');
+    expect(resolveViewer('pdf')).toBeUndefined();
   });
 
-  it('enregistre et résout un visualiseur pour une extension donnée', () => {
-    const mdViewer: FileViewerModule = {
-      id: 'markdown-viewer',
-      name: 'Markdown Viewer',
-      canHandle: (ext) => ext === 'md' || ext === 'markdown',
-      Component: DummyComponent,
-    };
+  it('prefers the highest priority', () => {
+    registerViewer(viewer('text', ['md', 'txt'], 1));
+    registerViewer(viewer('markdown', ['md'], 10));
+    expect(resolveViewer('md')?.id).toBe('markdown');
+    expect(resolveViewer('txt')?.id).toBe('text');
+  });
 
-    registerViewer(mdViewer);
+  it('replaces a viewer with the same id and can unregister it', () => {
+    registerViewer(viewer('text', ['txt']));
+    const remove = registerViewer(viewer('text', ['log']));
     expect(getAllViewers()).toHaveLength(1);
-
-    // Cas nominal : extension sans point
-    const found1 = resolveViewer('md');
-    expect(found1?.id).toBe('markdown-viewer');
-
-    // Cas avec point initial
-    const found2 = resolveViewer('.md');
-    expect(found2?.id).toBe('markdown-viewer');
-
-    // Cas majuscule
-    const found3 = resolveViewer('.MD');
-    expect(found3?.id).toBe('markdown-viewer');
-  });
-
-  it('respecte la priorité d’enregistrement', () => {
-    const defaultTextViewer: FileViewerModule = {
-      id: 'default-text',
-      name: 'Default Text',
-      priority: 0,
-      canHandle: (ext) => ['txt', 'md'].includes(ext),
-      Component: DummyComponent,
-    };
-
-    const specializedMdViewer: FileViewerModule = {
-      id: 'specialized-md',
-      name: 'Specialized Markdown',
-      priority: 10,
-      canHandle: (ext) => ext === 'md',
-      Component: DummyComponent,
-    };
-
-    registerViewer(defaultTextViewer);
-    registerViewer(specializedMdViewer);
-
-    // Pour .md, le visualiseur spécialisé doit l'emporter grâce à priority: 10
-    const resolvedMd = resolveViewer('md');
-    expect(resolvedMd?.id).toBe('specialized-md');
-
-    // Pour .txt, seul le défaut répond
-    const resolvedTxt = resolveViewer('txt');
-    expect(resolvedTxt?.id).toBe('default-text');
-  });
-
-  it('permet le désenregistrement propre', () => {
-    const jsonViewer: FileViewerModule = {
-      id: 'json-viewer',
-      name: 'JSON Viewer',
-      canHandle: (ext) => ext === 'json',
-      Component: DummyComponent,
-    };
-
-    const unregister = registerViewer(jsonViewer);
-    expect(resolveViewer('json')).toBeDefined();
-
-    unregister();
-    expect(resolveViewer('json')).toBeUndefined();
+    expect(resolveViewer('log')?.id).toBe('text');
+    remove();
     expect(getAllViewers()).toHaveLength(0);
-  });
-
-  it('retourne undefined si aucun visualiseur ne correspond', () => {
-    expect(resolveViewer('unknown-ext')).toBeUndefined();
   });
 });

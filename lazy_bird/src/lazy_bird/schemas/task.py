@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from lazy_bird.schemas.types import UtcDatetime
 
 TaskStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled"]
 
@@ -22,7 +23,7 @@ class TaskOut(BaseModel):
     control: str | None = None
     priority: int
     position: int
-    run_at: datetime | None = None
+    run_at: UtcDatetime | None = None
     resources: dict[str, float]
     progress: float | None = None
     message: str | None = None
@@ -31,17 +32,17 @@ class TaskOut(BaseModel):
     attempts: int
     max_attempts: int
     dedupe_key: str | None = None
-    created_at: datetime
-    updated_at: datetime
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+    started_at: UtcDatetime | None = None
+    finished_at: UtcDatetime | None = None
     waiting_for: list[str] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
 
 
 class TaskUpdate(BaseModel):
     priority: int | None = None
-    run_at: datetime | None = None
+    run_at: UtcDatetime | None = None
 
 
 class TaskMove(BaseModel):

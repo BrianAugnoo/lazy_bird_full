@@ -1,159 +1,41 @@
-import { request, requestBlob, downloadFileBlob } from '../client';
-import type { FileItem, DirectoryResponse, FilePatchIn } from '@/core/types/api';
+import { downloadFileBlob, request, requestBlob } from '../client';
+import type { Chunk, FileItem, FilePatchIn, SearchPayload, SearchResult, Task } from '@/core/types/api';
 
-/**
- * Upload one or multiple files
- * POST /files/upload?dir=...
- */
-export async function uploadFiles(dir: string, files: File[]): Promise<FileItem[]> {
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append('files', file);
-  }
+const enc = encodeURIComponent;
 
-  const queryDir = encodeURIComponent(dir);
-  return request<FileItem[]>(`/files/upload?dir=${queryDir}`, {
-    method: 'POST',
-    body: formData,
-  });
-}
+export const files = {
+  list: () => request<FileItem[]>('/files/'),
+  get: (id: number) => request<FileItem>(`/files/${id}`),
+  /** Every folder of the storage, empty ones included. */
+  directories: () => request<string[]>('/files/directories'),
+  /** Upload into `dir`; a name already taken gets a numbered suffix. */
+  upload: (dir: string, list: File[]) => {
+    const form = new FormData();
+    for (const file of list) form.append('files', file);
+    return request<FileItem[]>(`/files/upload?dir=${enc(dir)}`, { method: 'POST', body: form });
+  },
+  /** Text content; fails with `not_text` for binary files. */
+  content: (id: number) => request<string>(`/files/${id}/content`),
+  full: async (id: number) => (await requestBlob(`/files/${id}/full`)).text(),
+  saveContent: (id: number, content: string) =>
+    request<FileItem>(`/files/${id}/content`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  download: (id: number, filename: string) => downloadFileBlob(`/files/${id}/download`, filename),
+  /** Rename and/or move to another folder. */
+  patch: (id: number, changes: FilePatchIn) => request<FileItem>(`/files/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+  remove: (ids: number[]) => request<{ deleted: number }>('/files/', { method: 'DELETE', body: JSON.stringify(ids) }),
+  removeAll: () => request<{ deleted: number }>('/files/all', { method: 'DELETE' }),
+  createDirectory: (path: string) => request<{ path: string }>(`/files/directory?path=${enc(path)}`, { method: 'POST' }),
+  moveDirectory: (source: string, destination: string) =>
+    request<{ path: string }>(`/files/directory?source=${enc(source)}&destination=${enc(destination)}`, { method: 'PATCH' }),
+  removeDirectory: (path: string) => request<{ path: string }>(`/files/directory?path=${enc(path)}`, { method: 'DELETE' }),
+  /** Queue what the file still needs (chunks, default embedding). */
+  process: (id: number) => request<FileItem>(`/files/${id}/process`, { method: 'POST' }),
+  /** Compute one processing again, even when up to date. */
+  reprocess: (id: number, processor: string, target = '') =>
+    request<FileItem>(`/files/${id}/processing`, { method: 'POST', body: JSON.stringify({ processor, target }) }),
+  /** Check every file for changes on disk now. */
+  scan: () => request<Task>('/files/scan', { method: 'POST' }),
+  chunks: (id: number) => request<Chunk[]>(`/files/${id}/chunks`),
+};
 
-/**
- * List all stored files
- * GET /files/
- */
-export async function getFiles(): Promise<FileItem[]> {
-  return request<FileItem[]>('/files/');
-}
-
-/**
- * Get file metadata by ID
- * GET /files/{file_id}
- */
-export async function getFile(fileId: number): Promise<FileItem | null> {
-  return request<FileItem | null>(`/files/${fileId}`);
-}
-
-/**
- * Get UTF-8 text content of a file
- * GET /files/{file_id}/content
- */
-export async function getFileContent(fileId: number): Promise<string> {
-  return request<string>(`/files/${fileId}/content`);
-}
-
-/**
- * Get the complete stored file as binary data and decode it as UTF-8 text
- * GET /files/{file_id}/full
- */
-export async function getFullFileContent(fileId: number): Promise<string> {
-  const blob = await requestBlob(`/files/${fileId}/full`);
-  return blob.text();
-}
-
-/**
- * Update UTF-8 text content of a file
- * PUT /files/{file_id}/content
- */
-export async function updateFileContent(fileId: number, content: string): Promise<FileItem> {
-  return request<FileItem>(`/files/${fileId}/content`, {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  });
-}
-
-/**
- * Download a stored file as binary
- * GET /files/{file_id}/download
- */
-export async function downloadFile(fileId: number, filename: string = 'file'): Promise<void> {
-  return downloadFileBlob(`/files/${fileId}/download`, filename);
-}
-
-/**
- * Rename and/or move a file
- * PATCH /files/{file_id}
- */
-export async function patchFile(fileId: number, data: FilePatchIn): Promise<FileItem> {
-  return request<FileItem>(`/files/${fileId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(data),
-  });
-}
-
-/**
- * Create an empty directory
- * POST /files/directory?path=...
- */
-export async function createDirectory(path: string): Promise<DirectoryResponse> {
-  const queryPath = encodeURIComponent(path);
-  return request<DirectoryResponse>(`/files/directory?path=${queryPath}`, {
-    method: 'POST',
-  });
-}
-
-/**
- * Move / rename a directory
- * PATCH /files/directory?source=...&destination=...
- */
-export async function moveDirectory(source: string, destination: string): Promise<DirectoryResponse> {
-  const querySource = encodeURIComponent(source);
-  const queryDest = encodeURIComponent(destination);
-  return request<DirectoryResponse>(`/files/directory?source=${querySource}&destination=${queryDest}`, {
-    method: 'PATCH',
-  });
-}
-
-/**
- * Delete a directory recursively
- * DELETE /files/directory?path=...
- */
-export async function deleteDirectory(path: string): Promise<DirectoryResponse> {
-  const queryPath = encodeURIComponent(path);
-  return request<DirectoryResponse>(`/files/directory?path=${queryPath}`, {
-    method: 'DELETE',
-  });
-}
-
-/**
- * Queue what a file still needs (chunks, default embedding); returns the file with its states.
- * POST /files/{file_id}/process
- */
-export async function processFile(fileId: number): Promise<FileItem> {
-  return request<FileItem>(`/files/${fileId}/process`, { method: 'POST' });
-}
-
-/**
- * Compute one processing of a file again, even if it is up to date.
- * POST /files/{file_id}/processing
- */
-export async function reprocessFile(fileId: number, processor: string, target = ''): Promise<FileItem> {
-  return request<FileItem>(`/files/${fileId}/processing`, {
-    method: 'POST',
-    body: JSON.stringify({ processor, target }),
-  });
-}
-
-/**
- * Delete selected files by ID
- * DELETE /files/ with a JSON array body: [1, 2]
- */
-export async function deleteFiles(ids: number[]): Promise<{ message: string }> {
-  if (ids.length === 0) {
-    return { message: 'No files to delete.' };
-  }
-  return request<{ message: string }>('/files/', {
-    method: 'DELETE',
-    body: JSON.stringify(ids),
-  });
-}
-
-/**
- * Delete all files
- * DELETE /files/delete_all
- */
-export async function deleteAllFiles(): Promise<{ message: string }> {
-  return request<{ message: string }>('/files/delete_all', {
-    method: 'DELETE',
-  });
-}
+export const search = (payload: SearchPayload) => request<SearchResult[]>('/search/', { method: 'POST', body: JSON.stringify(payload) });

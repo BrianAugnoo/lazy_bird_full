@@ -10,7 +10,8 @@ html, body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
   background-color: var(--bg-app);
   color: var(--text-primary);
   line-height: 1.5;
@@ -20,13 +21,12 @@ body {
 }
 
 code, pre, kbd {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 
 ::selection {
-  background-color: var(--accent-primary);
-  color: var(--text-primary);
+  background-color: var(--accent-glow);
 }
 
 /* Custom Scrollbar */
@@ -49,7 +49,7 @@ code, pre, kbd {
 }
 
 a {
-  color: var(--accent-secondary);
+  color: var(--accent-primary);
   text-decoration: none;
 }
 
@@ -75,3 +75,5 @@ textarea:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 1px;
 }
+
+ul, ol { list-style-position: outside; }

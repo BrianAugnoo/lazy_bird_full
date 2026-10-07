@@ -44,13 +44,3 @@ def test_file_process_endpoint_returns_not_found(client):
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "file_not_found"
-
-
-def test_upload_progress_websocket_returns_file_states(client, monkeypatch):
-    import lazy_bird.main as main_module
-
-    states = [{"id": 1, "name": "queued.txt", "state": "processing"}]
-    monkeypatch.setattr(main_module.file_crud, "get_processing_status", lambda: states)
-
-    with client.websocket_connect("/ws/upload-progress") as websocket:
-        assert websocket.receive_json() == {"files": states}

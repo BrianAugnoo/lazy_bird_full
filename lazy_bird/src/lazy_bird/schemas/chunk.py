@@ -1,8 +1,9 @@
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import to_jsonable_python
+
+from lazy_bird.schemas.types import UtcDatetime
 
 
 class ChunkIn(BaseModel):
@@ -27,5 +28,5 @@ class ChunkOut(ChunkIn):
     id: int
     file_id: int
     position: int
-    created_at: datetime
+    created_at: UtcDatetime
     model_config = ConfigDict(from_attributes=True)

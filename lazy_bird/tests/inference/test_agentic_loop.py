@@ -237,6 +237,8 @@ def test_parents_delegate_tasks_to_their_sub_agents(fake_inference):
     assert parent_messages[-2].content == "Paris" and parent_messages[-1].content == "The researcher says Paris."
     [child_conversation] = conversation_crud.get_all(child_id)
     assert child_conversation.title == "Task from lead"
+    response = next(message for message in parent_messages if message.role == "tool-response")
+    assert response.meta["delegation"] == {"agent_id": child_id, "agent": "researcher", "conversation_id": child_conversation.id}
     assert any(event["type"] == "delegation" for event in events)
     tool_names = [tool["function"]["name"] for tool in fake_inference.calls[0]["tools"]]
     assert tool_names == ["delegate_to_agent"]
@@ -286,3 +288,20 @@ def test_an_interrupted_tool_turn_resumes_with_its_tools(fake_inference, echo_to
 
     assert roles(conversation_id)[-3:] == ["tool-calling", "tool-response", "assistant"]
     assert message_crud.for_conversation(conversation_id)[-2].content == "AGAIN"
+
+
+def test_tools_can_attach_meta_to_their_response(fake_inference, echo_tool, monkeypatch):
+    from lazy_bird.agents.runtime import AgentRuntime
+
+    monkeypatch.setattr(AgentRuntime, "call_tool", lambda self, name, arguments: inference.ToolOutput({"found": 2}, {"files": [1, 2]}))
+    fake_inference.script = [
+        ChatResult(tool_calls=[ToolCall("c1", echo_tool.name, {"text": "x"})]),
+        ChatResult(content="Done"),
+    ]
+    conversation_id = conversation_with(make_agent(tools=[echo_tool.id]), "Find")
+
+    inference.agentic_loop(conversation_id)
+
+    response = next(message for message in message_crud.for_conversation(conversation_id) if message.role == "tool-response")
+    assert response.content == '{"found": 2}'
+    assert response.meta == {"files": [1, 2], "tool_call_id": "c1", "name": echo_tool.name, "status": "ok"}
