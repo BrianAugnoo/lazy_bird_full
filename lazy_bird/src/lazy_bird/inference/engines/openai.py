@@ -1,11 +1,12 @@
+"""Inference through any OpenAI-compatible chat completions API (OpenAI, vLLM, Ollama, proxies...)."""
+
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
 from openai import OpenAI
-from lazy_bird.schemas.inference_engine import Response
+from pydantic import BaseModel, ConfigDict, Field
+
 from lazy_bird.crud.api_key import find_key
-from lazy_bird.schemas.message import MessageOut
-from lazy_bird.logging_config import traced
+from lazy_bird.inference.types import ChatMessage, ChatResult, Emitter, EngineError, ToolCall
 
 name = "openai-client"
 
@@ -16,6 +17,9 @@ class EngineSettings(BaseModel):
     api_key_name: str | None = Field(default=None, title="API key", description="Name of a stored API key; empty for servers without authentication.")
     base_url: str = Field(title="Base URL", description="OpenAI-compatible endpoint, e.g. https://api.openai.com/v1")
     model_name: str = Field(title="Model name")
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, ge=1, title="Max output tokens")
+    timeout: float = Field(default=120, gt=0, description="Seconds before a request is abandoned.")
 
 
 fields = {
@@ -32,113 +36,100 @@ def _client(settings: EngineSettings) -> OpenAI:
     if settings.api_key_name:
         api_key = find_key(settings.api_key_name)
         if not api_key:
-            raise RuntimeError(f"No API key found for '{settings.api_key_name}'")
-    return OpenAI(base_url=settings.base_url, api_key=api_key)
+            raise EngineError(f"No API key named '{settings.api_key_name}' is stored.", code="api_key_missing", retryable=False)
+    return OpenAI(base_url=settings.base_url, api_key=api_key, timeout=settings.timeout, max_retries=0)
 
 
-def _strip_tools_for_api(tools: list[dict] | None) -> list[dict]:
-    return [{"type": t["type"], "function": t["function"]} for t in (tools or [])]
-
-@traced
-def _to_openai_messages(history: list[MessageOut]) -> list[dict]:
-    messages = []
-    for msg in history:
-        meta = msg.meta or {}
-
-        if msg.role in ("system", "user", "assistant"):
-            messages.append({"role": msg.role, "content": meta.get("content") or ""})
-
-        elif msg.role == "tool-calling":
-            tool_calls = meta.get("tool-calling") or []
-            messages.append({
-                "role": "assistant",
-                "content": meta.get("content"),
-                "tool_calls": [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc.get("arguments") or {}),
-                        },
-                    }
-                    for tc in tool_calls
-                ],
-            })
-
-        elif msg.role == "tool-response":
-            tr = meta.get("tool-response") or {}
-            result = tr.get("result")
-            if isinstance(result, str):
-                content = result
-            else:
-                try:
-                    content = json.dumps(result)
-                except TypeError:
-                    content = str(result)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tr.get("id"),
-                "content": content,
-            })
-        # autre role inconnu -> ignoré défensivement plutot que de casser l'appel API
-
-    return messages
-
-@traced
-def single_turn(query: str, settings: EngineSettings, instructions: str = None, tools: list[dict] = None):
-    client = _client(settings)
-    messages = [{"role": "system", "content": instructions}] if instructions else []
-    messages.append({"role": "user", "content": query})
-
-    response = client.chat.completions.create(
-        model=settings.model_name,
-        messages=messages,
-        tools=_strip_tools_for_api(tools) or None,
-    )
-    return Response(
-        content=response.choices[0].message.content,
-        reasoning=response.choices[0].message.reasoning if hasattr(response.choices[0].message, "reasoning") else None,
-    )
+def _to_openai(messages: list[ChatMessage]) -> list[dict]:
+    converted = []
+    for message in messages:
+        if message.role == "tool":
+            converted.append({"role": "tool", "tool_call_id": message.tool_call_id, "content": message.content or ""})
+        elif message.tool_calls:
+            converted.append(
+                {
+                    "role": "assistant",
+                    "content": message.content or None,
+                    "tool_calls": [
+                        {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": json.dumps(call.arguments)}}
+                        for call in message.tool_calls
+                    ],
+                }
+            )
+        else:
+            converted.append({"role": message.role, "content": message.content or ""})
+    return converted
 
 
-def chat(settings: EngineSettings, tools: list[dict] = None, history: list[MessageOut] = None):
-    client = _client(settings)
+def _engine_error(error: Exception) -> EngineError:
+    import openai
 
-    response = client.chat.completions.create(
-        model=settings.model_name,
-        messages=_to_openai_messages(history or []),
-        tools=_strip_tools_for_api(tools) or None,
-    )
-
-    choice_message = response.choices[0].message
-    reasoning = choice_message.reasoning if hasattr(choice_message, "reasoning") else None
-
-    if choice_message.tool_calls:
-        return {
-            "role": "tool-calling",
-            "meta": {
-                "content": choice_message.content,
-                "reasoning": reasoning,
-                "tool-calling": [
-                    {
-                        "id": tc.id,
-                        "name": tc.function.name,
-                        "arguments": json.loads(tc.function.arguments or "{}"),
-                    }
-                    for tc in choice_message.tool_calls
-                ],
-                "model": settings.model_name,
-                "engine": name,
-            },
-        }
-
-    return {
-        "role": "assistant",
-        "meta": {
-            "content": choice_message.content,
-            "reasoning": reasoning,
-            "model": settings.model_name,
-            "engine": name,
-        },
+    permanent = {
+        openai.AuthenticationError: "engine_auth_failed",
+        openai.PermissionDeniedError: "engine_auth_failed",
+        openai.NotFoundError: "engine_model_not_found",
+        openai.BadRequestError: "engine_bad_request",
+        openai.UnprocessableEntityError: "engine_bad_request",
     }
+    for kind, code in permanent.items():
+        if isinstance(error, kind):
+            return EngineError(f"The inference server refused the request: {error}", code=code, retryable=False)
+    if isinstance(error, openai.RateLimitError):
+        return EngineError(f"The inference server is rate limiting: {error}", code="engine_rate_limited")
+    if isinstance(error, (openai.APIConnectionError, openai.APITimeoutError)):
+        return EngineError(f"The inference server cannot be reached: {error}", code="engine_unreachable")
+    return EngineError(f"The inference server failed: {error}", code="engine_server_error")
+
+
+def chat(messages: list[ChatMessage], tools: list[dict], settings: EngineSettings, model, emit: Emitter) -> ChatResult:
+    """Stream a chat completion, emitting tokens and reasoning as they arrive."""
+    client = _client(settings)
+    options = {key: value for key, value in {"temperature": settings.temperature, "max_tokens": settings.max_tokens}.items() if value is not None}
+    result = ChatResult(model=settings.model_name)
+    pending: dict[int, dict[str, str]] = {}
+    content, reasoning = [], []
+    try:
+        stream = client.chat.completions.create(
+            model=settings.model_name, messages=_to_openai(messages), tools=tools or None, stream=True, **options
+        )
+        for chunk in stream:
+            if emit.stopped:
+                stream.close()
+                result.stopped = True
+                break
+            if getattr(chunk, "usage", None):
+                result.usage = chunk.usage.model_dump()
+            if chunk.choices and chunk.model and chunk.model != "keepalive":
+                result.model = chunk.model
+            for choice in chunk.choices[:1]:
+                delta = choice.delta
+                if delta.content:
+                    content.append(delta.content)
+                    emit.token(delta.content)
+                thought = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if isinstance(thought, str) and thought:
+                    reasoning.append(thought)
+                    emit.reasoning(thought)
+                for call in delta.tool_calls or []:
+                    slot = pending.setdefault(call.index, {"id": "", "name": "", "arguments": ""})
+                    slot["id"] = call.id or slot["id"]
+                    if call.function is not None:
+                        slot["name"] += call.function.name or ""
+                        slot["arguments"] += call.function.arguments or ""
+    except EngineError:
+        raise
+    except Exception as error:
+        raise _engine_error(error) from error
+    result.content = "".join(content)
+    result.reasoning = "".join(reasoning) or None
+    if not result.stopped:
+        result.tool_calls = [_tool_call(index, slot) for index, slot in sorted(pending.items())]
+    return result
+
+
+def _tool_call(index: int, slot: dict[str, str]) -> ToolCall:
+    try:
+        arguments = json.loads(slot["arguments"] or "{}")
+    except ValueError:
+        arguments = {"__invalid_json__": slot["arguments"]}
+    return ToolCall(id=slot["id"] or f"call_{index}", name=slot["name"], arguments=arguments if isinstance(arguments, dict) else {"value": arguments})

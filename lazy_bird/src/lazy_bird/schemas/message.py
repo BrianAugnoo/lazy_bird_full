@@ -1,26 +1,24 @@
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import Optional
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
 
 class MessageOut(BaseModel):
     id: int
     conversation_id: int
     role: str
-    meta: dict | None = None
+    content: str | None = None
+    meta: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
-class MessageIn(BaseModel):
-    conversation_id: int
-    role: str
-    meta: dict | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+class UserMessageIn(BaseModel):
+    content: str = Field(min_length=1)
+
 
 class MessageUpdate(BaseModel):
-    role: str | None = None
-    meta: dict | None = None
-
-    model_config = ConfigDict(from_attributes=True)
+    content: str = Field(min_length=1)

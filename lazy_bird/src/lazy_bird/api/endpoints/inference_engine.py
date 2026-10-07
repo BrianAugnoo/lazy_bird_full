@@ -1,9 +1,9 @@
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
 from lazy_bird import inference
 from lazy_bird.api.engine_routes import engine_router
-from lazy_bird.crud.conversation import messages
-from lazy_bird.schemas.inference_engine import PresetInferenceIn, PresetInferenceOut, PresetInferenceUpdate, Response
+from lazy_bird.schemas.inference_engine import PresetInferenceIn, PresetInferenceOut, PresetInferenceUpdate
 
 router = APIRouter()
 router.include_router(
@@ -19,12 +19,21 @@ router.include_router(
 )
 
 
-@router.post("/inference-engines/single-turn", response_model=Response, tags=["inference"])
-def single_turn(query: str, instructions: str | None = None, preset_id: int | None = None):
-    return inference.single_turn(query, instructions, preset_id)
+class CompletionIn(BaseModel):
+    prompt: str = Field(min_length=1)
+    instructions: str | None = None
+    preset_id: int | None = Field(default=None, description="Inference preset; the default one when omitted.")
 
 
-@router.post("/inference-engines/agentic-loop", tags=["inference"])
-def agentic_loop(conversation_id: int, max_iter: int = 20, preset_id: int | None = None):
-    inference.agentic_loop(conversation_id, None, max_iter, preset_id)
-    return messages(conversation_id)
+class CompletionOut(BaseModel):
+    content: str
+    reasoning: str | None = None
+    model: str | None = None
+    usage: dict | None = None
+
+
+@router.post("/inference/complete", response_model=CompletionOut, tags=["inference"])
+def complete(payload: CompletionIn):
+    """One prompt, one answer: handy to check that an inference preset works."""
+    result = inference.complete(payload.prompt, payload.instructions, payload.preset_id)
+    return CompletionOut(content=result.content, reasoning=result.reasoning, model=result.model, usage=result.usage)

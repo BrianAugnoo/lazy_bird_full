@@ -144,9 +144,16 @@ def get_by_session(session_id: int) -> list[AgentOut]:
         return [_out(agent) for agent in agents]
 
 
+def _inference_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
+    from lazy_bird.inference import agent_meta
+
+    return agent_meta(meta)
+
+
 def create(payload: AgentIn) -> AgentOut:
     data = payload.model_dump(exclude={"sub_agents_ids"})
     _check_references(data)
+    data["meta"] = _inference_meta(data.get("meta"))
     with db() as session:
         _require_session(session, payload.session_id)
         if payload.master:
@@ -163,6 +170,8 @@ def create(payload: AgentIn) -> AgentOut:
 def update(agent_id: int, changes: dict[str, Any]) -> AgentOut:
     children = changes.pop("sub_agents_ids", None)
     _check_references({key: value for key, value in changes.items() if key in LIST_FIELDS})
+    if "meta" in changes:
+        changes["meta"] = _inference_meta(changes["meta"])
     with db() as session:
         agent = _row(session, agent_id)
         if changes.get("master"):
@@ -223,6 +232,7 @@ def instantiate(session_id: int, preset_id: str, existing: dict[str, int], chain
             f"Agent presets form a cycle: {' -> '.join((*chain, preset_id))}.", code="preset_cycle", details={"preset": preset_id}
         )
     data = agent_preset.registry.valid_data(preset_id)
+    meta = _inference_meta(None)
     children = [
         existing.get(child) or instantiate(session_id, child, existing, (*chain, preset_id))
         for child in data.sub_agents
@@ -238,6 +248,7 @@ def instantiate(session_id: int, preset_id: str, existing: dict[str, int], chain
             instruction_fulls=data.instruction_fulls,
             instruction_subs=data.instruction_subs,
             preset=preset_id,
+            meta=meta,
         )
         session.add(agent)
         session.flush()

@@ -1,33 +1,24 @@
-from fastapi import APIRouter, HTTPException
-from lazy_bird.schemas.message import MessageIn, MessageOut, MessageUpdate
+from fastapi import APIRouter, Response
+
 import lazy_bird.crud.message as MessageCrud
+from lazy_bird.schemas.message import MessageOut, MessageUpdate
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
-@router.get("/{id}", response_model=MessageOut)
-async def get_message(id: int):
-    message = MessageCrud.get(id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return message
 
-@router.post("/", response_model=MessageOut)
-async def create_message(message: MessageIn):
-    result = MessageCrud.create(message)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return result
+@router.get("/{message_id}", response_model=MessageOut)
+def get_message(message_id: int):
+    return MessageCrud.get(message_id)
 
-@router.delete("/{id}")
-async def delete_message(id: int):
-    success = MessageCrud.delete(id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Message not found or cannot be deleted (must be non-assistant and most recent)")
-    return {"message": "Message deleted"}
 
-@router.patch("/{id}", response_model=MessageOut)
-async def edit_message(id: int, message_update: MessageUpdate):
-    result = MessageCrud.edit(id, message_update)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Message not found or cannot be edited (must be non-assistant and most recent)")
-    return result
+@router.patch("/{message_id}", response_model=MessageOut)
+def edit_message(message_id: int, payload: MessageUpdate):
+    """Edit a user or system message; rewind the conversation to answer it again."""
+    return MessageCrud.edit(message_id, payload.content)
+
+
+@router.delete("/{message_id}", status_code=204)
+def delete_message(message_id: int):
+    """Delete the last message of its conversation."""
+    MessageCrud.delete(message_id)
+    return Response(status_code=204)

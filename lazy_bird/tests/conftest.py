@@ -63,11 +63,30 @@ def make_upload_file(
     )
 
 
+@pytest.fixture(scope="session")
+def migrated_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One database migrated to head per test session; tests get a copy of it."""
+    import lazy_bird.database as database
+
+    path = tmp_path_factory.mktemp("template") / "template.db"
+    url = f"sqlite:///{path}"
+    previous = database.db_url
+    database.db_url = url
+    try:
+        command.upgrade(alembic_config(url), "head")
+    finally:
+        database.db_url = previous
+    return path
+
+
 @pytest.fixture
-def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[MigratedDatabase]:
+def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, migrated_template: Path) -> Iterator[MigratedDatabase]:
     """A temporary SQLite database migrated to head and used by ``database.db()``."""
+    import shutil
+
     db_path = tmp_path / "lazy_bird_test.db"
     db_url = f"sqlite:///{db_path}"
+    shutil.copyfile(migrated_template, db_path)
 
     # env.py imports this value when Alembic starts.
     monkeypatch.setattr(database_module, "db_url", db_url)
@@ -75,7 +94,6 @@ def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     monkeypatch.setitem(database_module.config.vector_databases["lancedb"].settings, "path", str(tmp_path / "lance"))
     monkeypatch.setattr(lancedb_adapter, "_connection", None)
     monkeypatch.setattr(database_module, "_vector_initialized", None)
-    command.upgrade(alembic_config(db_url), "head")
     engine = initialize(url=f"sqlite:///{db_path}")
     monkeypatch.setattr(database_module, "engine", engine)
     monkeypatch.setattr(database_module, "status", database_module.DatabaseStatus(ready=True, revision="head"))
@@ -239,3 +257,54 @@ def isolated_scheduler():
     if tasks_module._scheduler is not None and tasks_module._scheduler.started:
         tasks_module._scheduler.stop(timeout=2)
     tasks_module._scheduler = None
+
+
+class FakeInferenceSettings(BaseModel):
+    label: str = "fake"
+
+
+def _fake_chat(messages, tools, settings, model, emit):
+    """Replay the next scripted step: a ChatResult (its content is streamed) or an exception."""
+    from lazy_bird.inference.types import ChatResult
+
+    module = _fake_chat.module
+    module.calls.append({"messages": list(messages), "tools": list(tools)})
+    step = module.script.pop(0) if module.script else ChatResult(content="(no script)")
+    if callable(step) and not isinstance(step, ChatResult):
+        step = step(messages, emit)
+    if isinstance(step, BaseException):
+        raise step
+    streamed = []
+    for piece in step.content.split(" ") if step.content else []:
+        if emit.stopped:
+            return ChatResult(content=" ".join(streamed), stopped=True, model="fake-model")
+        text = piece if not streamed else f" {piece}"
+        streamed.append(piece)
+        emit.token(text)
+    if step.reasoning:
+        emit.reasoning(step.reasoning)
+    step.model = step.model or "fake-model"
+    return step
+
+
+@pytest.fixture
+def fake_inference(crud_database, monkeypatch):
+    """A scriptable inference engine registered as the default inference preset.
+
+    Set ``fake_inference.script`` to a list of ``ChatResult``s, exceptions or
+    ``callable(messages, emit)``; ``fake_inference.calls`` records each request.
+    """
+    from lazy_bird.inference import engine_family
+
+    module = ModuleType("fake_inference_engine")
+    module.name = "fake-llm"
+    module.EngineSettings = FakeInferenceSettings
+    module.chat = _fake_chat
+    module.script = []
+    module.calls = []
+    _fake_chat.module = module
+    monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
+    engine = engine_family.register(module)
+    module.preset = engine_family.create_preset("fake", engine.id, {}, default=True)
+    module.engine = engine
+    return module

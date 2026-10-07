@@ -93,3 +93,35 @@ def create_from_preset(preset_id: str, title: str | None = None) -> SessionOut:
         session.add(master)
         session.commit()
     return get(created.id)
+
+
+def master_of(session_id: int):
+    """The master agent of a session (the one receiving the user's prompts)."""
+    from lazy_bird.crud import agent as agent_crud
+    from lazy_bird.errors import ConflictError
+
+    agents = agent_crud.get_by_session(session_id)
+    master = next((agent for agent in agents if agent.master), None)
+    if master is None:
+        raise ConflictError("This session has no master agent: mark one of its agents as master.", code="no_master_agent")
+    return master
+
+
+def chat(session_id: int, content: str, conversation_id: int | None = None):
+    """Give a user prompt to the session's master, in a conversation of its own.
+
+    Uses ``conversation_id`` (which must belong to the master), else the master's
+    latest conversation, else a new one. Returns the conversation; run it to answer.
+    """
+    from lazy_bird.crud import conversation as conversation_crud
+    from lazy_bird.errors import InvalidInputError
+
+    master = master_of(session_id)
+    if conversation_id is not None:
+        conversation = conversation_crud.get(conversation_id)
+        if conversation.agent_id != master.id:
+            raise InvalidInputError("This conversation does not belong to the session's master agent.", code="not_master_conversation")
+    else:
+        conversation = conversation_crud.latest(master.id) or conversation_crud.create(master.id)
+    conversation_crud.add_user_message(conversation.id, content)
+    return conversation_crud.detail(conversation.id)

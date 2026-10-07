@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Response
 
 import lazy_bird.crud.session as SessionCrud
+from lazy_bird.schemas.conversation import ChatIn, ConversationDetail
 from lazy_bird.schemas.session import SessionFromPreset, SessionIn, SessionOut, SessionUpdate
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -36,3 +37,9 @@ def update_session(session_id: int, payload: SessionUpdate):
 def delete_session(session_id: int):
     SessionCrud.delete(session_id)
     return Response(status_code=204)
+
+
+@router.post("/{session_id}/chat", response_model=ConversationDetail, status_code=201)
+def chat(session_id: int, payload: ChatIn):
+    """Send a prompt to the session's master agent; run the returned conversation to get the answer."""
+    return SessionCrud.chat(session_id, payload.content, payload.conversation_id)

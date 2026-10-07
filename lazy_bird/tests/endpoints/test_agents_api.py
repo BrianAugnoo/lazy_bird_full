@@ -1,4 +1,4 @@
-def test_a_team_is_created_from_a_session_preset(client):
+def test_a_team_is_created_from_a_session_preset(client, fake_inference):
     presets = {item["id"]: item for item in client.get("/session-presets/").json()}
     assert presets["default/research-team"]["valid"] is True
 
@@ -12,7 +12,7 @@ def test_a_team_is_created_from_a_session_preset(client):
     assert [tool["name"] for tool in client.get(f"/agents/{researcher['id']}/tools").json()] == ["search_knowledge_base", "load_skill", "read_skill_file"]
 
 
-def test_invalid_presets_and_references_are_explained(client):
+def test_invalid_presets_and_references_are_explained(client, fake_inference):
     session = client.post("/sessions/", json={"title": "s"}).json()
 
     unknown = client.post("/agents/from-preset", json={"session_id": session["id"], "preset_id": "default/ghost"})

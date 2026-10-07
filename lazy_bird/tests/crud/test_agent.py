@@ -10,7 +10,7 @@ from lazy_bird.schemas.session import SessionIn
 
 
 @pytest.fixture
-def registries(crud_database):
+def registries(crud_database, fake_inference):
     initialize_tools()
     initialize_hooks()
 

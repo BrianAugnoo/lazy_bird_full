@@ -28,9 +28,3 @@ class PresetInferenceOut(BaseModel):
     valid: bool = True
     errors: dict[str, str] = Field(default_factory=dict)
     model_config = ConfigDict(from_attributes=True)
-
-
-class Response(BaseModel):
-    content: str | None = None
-    reasoning: str | None = None
-    model_config = ConfigDict(from_attributes=True)
