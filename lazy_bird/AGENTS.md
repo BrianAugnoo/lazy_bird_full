@@ -666,3 +666,9 @@ Before declaring work complete, verify all applicable items:
 - Every branch intended for merge was pushed to GitHub and its remote `HEAD` was verified.
 - Any uncertainty that could not be verified has been clearly handed back to the developer.
 - `AGENT.md` accurately reflects every material repository change discovered during the task.
+
+## Omniroute for test with LLM
+A local OpenAI-compatible proxy (Omniroute) is available for manual and end-to-end LLM tests.
+Its base URL, model name and API key live in the git-ignored file `lazy_bird/.env`
+(`LAZY_BIRD_TEST_LLM_BASE_URL`, `LAZY_BIRD_TEST_LLM_MODEL`, `LAZY_BIRD_TEST_LLM_API_KEY`).
+Never commit the key itself.
