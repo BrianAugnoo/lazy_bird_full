@@ -1,90 +1,133 @@
+"""Runtime preferences stored in ``preference.yaml``.
+
+The file has one mapping per section; ``SECTIONS`` declares them with a pydantic
+model each, so values are validated and missing ones take their default. The
+frontend edits them with the generic settings form (``kwargs_key`` per section).
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
+from lazy_bird.errors import AppError, InvalidInputError, InvalidSettingsError
+from lazy_bird.extension.settings import SettingsContract
 
 PREFERENCE_FILE = Path(__file__).with_name("preference.yaml")
+
+
+class InvalidPreferencesError(AppError):
+    """``preference.yaml`` was edited by hand into an invalid state."""
+
+    status_code = 500
+    code = "invalid_preferences"
+
+
+class AutoEmbedding(BaseModel):
+    enable: bool = Field(default=True, description="Chunk and embed every new or changed file automatically.")
+    model_config = ConfigDict(extra="forbid")
+
+
+class Chunking(BaseModel):
+    max_tokens: int = Field(default=512, ge=2, description="Token budget of one chunk.")
+    model_config = ConfigDict(extra="forbid")
+
+
+class Files(BaseModel):
+    scan_every_minutes: int = Field(default=10, ge=0, description="How often stored files are checked for changes on disk (0 = only at startup).")
+    model_config = ConfigDict(extra="forbid")
+
+
+class Tasks(BaseModel):
+    workers: int = Field(default=4, ge=1, description="Background tasks running at the same time (applied at restart).")
+    resources: dict[str, float] = Field(default_factory=dict, description='Capacity overrides, e.g. {"vram_mb": 12000}.')
+    model_config = ConfigDict(extra="forbid")
+
+
+SECTIONS: dict[str, tuple[type[BaseModel], str]] = {
+    "auto-embedding": (AutoEmbedding, "Automatic processing"),
+    "chunking": (Chunking, "Chunking"),
+    "files": (Files, "Files"),
+    "tasks": (Tasks, "Background tasks"),
+}
+RESTART_REQUIRED = {("tasks", "workers")}
 
 
 def _read_preferences() -> dict[str, Any]:
     if not PREFERENCE_FILE.exists():
         return {}
-    with PREFERENCE_FILE.open(encoding="utf-8") as preference_file:
-        values = yaml.safe_load(preference_file) or {}
+    try:
+        values = yaml.safe_load(PREFERENCE_FILE.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as error:
+        raise InvalidPreferencesError(f"preference.yaml is not valid YAML: {error}") from error
     if not isinstance(values, dict):
-        raise ValueError("preference.yaml must contain a mapping")
+        raise InvalidPreferencesError("preference.yaml must contain a mapping.")
     return values
 
 
-def get_preferences() -> dict[str, Any]:
-    return _read_preferences()
+def _section(values: dict[str, Any], name: str) -> BaseModel:
+    model = SECTIONS[name][0]
+    try:
+        return SettingsContract(model).validate(values.get(name) or {})
+    except InvalidSettingsError as error:
+        raise InvalidPreferencesError(f"preference.yaml, section '{name}': {error.message}", details={"fields": error.fields}) from error
 
 
-def update_preferences(values: dict[str, Any]) -> bool:
-    current = _read_preferences()
-    if current == values:
-        return False
-    PREFERENCE_FILE.write_text(
-        yaml.safe_dump(values, sort_keys=False, allow_unicode=False),
-        encoding="utf-8",
-    )
-    return True
+def get_preferences() -> dict[str, dict[str, Any]]:
+    """Every section with its values (defaults filled in)."""
+    values = _read_preferences()
+    return {name: _section(values, name).model_dump() for name in SECTIONS}
+
+
+def form() -> dict[str, dict[str, Any]]:
+    """The settings form of every section: ``{section: {"title", "kwargs_key"}}``."""
+    return {name: {"title": title, "kwargs_key": SettingsContract(model).kwargs_key()} for name, (model, title) in SECTIONS.items()}
+
+
+def update_preferences(changes: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Merge changes (``{section: {key: value}}``) into the file.
+
+    Returns the new preferences and the keys that only apply after a restart.
+    Raises ``InvalidInputError`` with one message per invalid key.
+    """
+    unknown = [name for name in changes if name not in SECTIONS]
+    if unknown:
+        raise InvalidInputError(f"Unknown preference section(s): {', '.join(unknown)}.", code="unknown_preference", details={"fields": {name: "Unknown section" for name in unknown}})
+    current = get_preferences()
+    merged, errors = {}, {}
+    for name, (model, _) in SECTIONS.items():
+        candidate = {**current[name], **(changes.get(name) or {})}
+        try:
+            merged[name] = SettingsContract(model).validate(candidate).model_dump()
+        except InvalidSettingsError as error:
+            errors.update({f"{name}.{key}": message for key, message in error.fields.items()})
+    if errors:
+        raise InvalidInputError("Some preferences are invalid.", code="invalid_preferences", details={"fields": errors})
+    PREFERENCE_FILE.write_text(yaml.safe_dump(merged, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    restart = [f"{section}.{key}" for section, key in RESTART_REQUIRED if merged[section][key] != current[section][key]]
+    return merged, restart
 
 
 def auto_embedding_enabled() -> bool:
-    auto_embedding = _read_preferences().get("auto-embedding", {})
-    if not isinstance(auto_embedding, dict):
-        raise ValueError("preference.yaml: auto-embedding must contain a mapping")
-    enabled = auto_embedding.get("enable", auto_embedding.get("enabled", True))
-    if not isinstance(enabled, bool):
-        raise ValueError("preference.yaml: auto-embedding.enable must be a boolean")
-    return enabled
-
-
-DEFAULT_CHUNK_MAX_TOKENS = 512
+    return _section(_read_preferences(), "auto-embedding").enable
 
 
 def chunking_max_tokens() -> int:
     """Token budget of one chunk (``chunking.max_tokens``), independent of embedding models."""
-    chunking = _read_preferences().get("chunking", {})
-    if not isinstance(chunking, dict):
-        raise ValueError("preference.yaml: chunking must contain a mapping")
-    value = chunking.get("max_tokens", DEFAULT_CHUNK_MAX_TOKENS)
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 1:
-        raise ValueError("preference.yaml: chunking.max_tokens must be an integer greater than 1")
-    return value
-
-
-DEFAULT_TASK_WORKERS = 4
-
-
-def task_preferences() -> dict[str, Any]:
-    """``tasks.workers`` (parallel runs) and ``tasks.resources`` (capacity overrides)."""
-    tasks = _read_preferences().get("tasks", {}) or {}
-    if not isinstance(tasks, dict):
-        raise ValueError("preference.yaml: tasks must contain a mapping")
-    workers = tasks.get("workers", DEFAULT_TASK_WORKERS)
-    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
-        raise ValueError("preference.yaml: tasks.workers must be a positive integer")
-    resources = tasks.get("resources", {}) or {}
-    if not isinstance(resources, dict) or not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in resources.values()):
-        raise ValueError("preference.yaml: tasks.resources must map resource names to numbers")
-    return {"workers": workers, "resources": {name: float(value) for name, value in resources.items()}}
-
-
-DEFAULT_SCAN_MINUTES = 10
+    return _section(_read_preferences(), "chunking").max_tokens
 
 
 def scan_every_minutes() -> int:
     """``files.scan_every_minutes``: how often files are checked for changes on disk (0 = never)."""
-    files = _read_preferences().get("files", {}) or {}
-    if not isinstance(files, dict):
-        raise ValueError("preference.yaml: files must contain a mapping")
-    value = files.get("scan_every_minutes", DEFAULT_SCAN_MINUTES)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("preference.yaml: files.scan_every_minutes must be a non-negative integer")
-    return value
+    return _section(_read_preferences(), "files").scan_every_minutes
+
+
+def task_preferences() -> dict[str, Any]:
+    """``tasks.workers`` (parallel runs) and ``tasks.resources`` (capacity overrides)."""
+    return _section(_read_preferences(), "tasks").model_dump()
 
 
 def apply_preferences() -> int:
@@ -92,12 +135,16 @@ def apply_preferences() -> int:
 
     - auto-embedding: every file gets its chunks and the vectors of the default
       embedding preset;
-    - files.scan_every_minutes: a periodic scan detects files changed on disk.
+    - files.scan_every_minutes: a periodic scan detects files changed on disk;
+    - tasks.resources: capacity overrides of the running scheduler.
     """
+    from lazy_bird import tasks
     from lazy_bird.crud import file_processing
     from lazy_bird.tasks.default.files import schedule_scan
+    from lazy_bird.tasks.resources import detect_capacity
 
     queued = file_processing.ensure_all() if auto_embedding_enabled() else 0
-    minutes = scan_every_minutes()
-    schedule_scan(minutes)
+    schedule_scan(scan_every_minutes())
+    if tasks._scheduler is not None:
+        tasks._scheduler.pool.capacity.update({**detect_capacity(), **task_preferences()["resources"]})
     return queued

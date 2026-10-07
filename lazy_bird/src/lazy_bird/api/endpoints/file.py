@@ -1,122 +1,54 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from lazy_bird.errors import NotFoundError
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi import APIRouter, File, Response, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel
+
 import lazy_bird.crud.file as FileCrud
 from lazy_bird.schemas.files import FileContentIn, FileOut, FileUpdate, ProcessRequest
 from lazy_bird.schemas.task import TaskOut
+from lazy_bird.storages import directories
 
 router = APIRouter(prefix="/files", tags=["files"])
 
+
+class PathOut(BaseModel):
+    path: str
+
+
+class DeletedOut(BaseModel):
+    deleted: int
+
+
 @router.post("/upload", response_model=list[FileOut])
-async def upload_files(dir: str, files: list[UploadFile] = File(...)):
-    try:
-        return await FileCrud.creates(dir, files)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+async def upload_files(dir: str = "", files: list[UploadFile] = File(...)):
+    """Store files in ``dir`` (relative to the storage). A file with the same name is replaced."""
+    return await FileCrud.creates(dir, files)
 
-
-@router.post("/directory")
-def create_directory(path: str):
-    try:
-        created_path = FileCrud.create_empty_directory(path)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"path": created_path}
-
-
-@router.patch("/directory")
-def move_directory(source: str, destination: str):
-    try:
-        moved_path = FileCrud.move_directory(source, destination)
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"path": moved_path}
-
-
-@router.delete("/directory")
-def delete_directory(path: str):
-    try:
-        deleted_path = FileCrud.remove_directory(path)
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"path": deleted_path}
 
 @router.get("/", response_model=list[FileOut])
-async def get_all_files():
+def get_all_files():
     return FileCrud.get_all()
 
-@router.get("/{file_id}")
-async def get_file(file_id: int) -> FileOut | None:
-    return FileCrud.find(file_id)
+
+@router.get("/directories", response_model=list[str])
+def list_directories():
+    """Every directory of the storage (relative paths), empty ones included."""
+    return directories()
 
 
-@router.get("/{file_id}/content")
-async def get_file_content(file_id: int):
-    result = FileCrud.content(file_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    file, content = result
-    return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+@router.post("/directory", response_model=PathOut, status_code=201)
+def create_directory(path: str):
+    return PathOut(path=FileCrud.create_empty_directory(path))
 
 
-@router.get("/{file_id}/full")
-async def get_full_file(file_id: int):
-    result = FileCrud.full(file_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    content, filename, media_type = result
-    return Response(
-        content=content,
-        media_type=media_type or "application/octet-stream",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
-    )
+@router.patch("/directory", response_model=PathOut)
+def move_directory(source: str, destination: str):
+    return PathOut(path=FileCrud.move_directory(source, destination))
 
 
-@router.get("/{file_id}/download")
-async def download_file(file_id: int):
-    result = FileCrud.download_info(file_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    path, filename, media_type = result
-    return FileResponse(path, filename=filename, media_type=media_type)
-
-
-@router.put("/{file_id}/content", response_model=FileOut)
-async def update_file_content(file_id: int, payload: FileContentIn):
-    result = FileCrud.update_content(file_id, payload.content)
-    if result is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    return result
-
-
-@router.patch("/{file_id}", response_model=FileOut)
-async def update_file(file_id: int, payload: FileUpdate):
-    if payload.name is None and payload.dir is None:
-        raise HTTPException(status_code=422, detail="At least one field is required")
-    try:
-        result = FileCrud.update_file(file_id, name=payload.name, dir=payload.dir)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    if result is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    return result
-
-@router.post("/{file_id}/process", status_code=202, response_model=FileOut)
-def process_file(file_id: int):
-    """Queue what the file still needs: its chunks and the default embedding."""
-    if FileCrud.get(file_id) is None:
-        raise NotFoundError("File", file_id)
-    return FileCrud.process(file_id)
-
-
-@router.post("/{file_id}/processing", status_code=202, response_model=FileOut)
-def reprocess_file(file_id: int, payload: ProcessRequest):
-    """Compute one processing again (e.g. embedding with a given model), even if up to date."""
-    return FileCrud.reprocess(file_id, payload.processor, payload.target)
+@router.delete("/directory", response_model=PathOut)
+def delete_directory(path: str):
+    """Delete a directory and every file in it."""
+    return PathOut(path=FileCrud.remove_directory(path))
 
 
 @router.post("/scan", status_code=202, response_model=TaskOut)
@@ -126,15 +58,67 @@ def scan_files():
 
     return schedule_scan(0)
 
-@router.delete("/")
-async def delete_files(ids: list[int]):
-    FileCrud.deletes(ids)
-    return {"message": "Files deleted successfully."}
 
-@router.delete("/delete_all")
-async def delete_all_files():
-    try:
-        FileCrud.delete_all()
-        return {"message": "All files deleted successfully."}
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+@router.delete("/", response_model=DeletedOut)
+def delete_files(ids: list[int]):
+    return DeletedOut(deleted=FileCrud.deletes(ids))
+
+
+@router.delete("/all", response_model=DeletedOut)
+def delete_all_files():
+    return DeletedOut(deleted=FileCrud.deletes([file.id for file in FileCrud.get_all()]))
+
+
+@router.get("/{file_id}", response_model=FileOut)
+def get_file(file_id: int):
+    return FileCrud.get_out(file_id)
+
+
+@router.get("/{file_id}/content", response_class=PlainTextResponse)
+def get_file_content(file_id: int):
+    """The text of a file (422 ``not_text`` for binary files)."""
+    return PlainTextResponse(FileCrud.text_content(file_id), media_type="text/plain; charset=utf-8")
+
+
+@router.put("/{file_id}/content", response_model=FileOut)
+def update_file_content(file_id: int, payload: FileContentIn):
+    return FileCrud.update_content(file_id, payload.content)
+
+
+@router.get("/{file_id}/full")
+def get_full_file(file_id: int):
+    """The raw bytes of a file, to display it inline."""
+    content, filename, media_type = FileCrud.full(file_id)
+    return Response(
+        content=content,
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/{file_id}/download")
+def download_file(file_id: int):
+    path, filename, media_type = FileCrud.download_info(file_id)
+    return FileResponse(path, filename=filename, media_type=media_type)
+
+
+@router.patch("/{file_id}", response_model=FileOut)
+def update_file(file_id: int, payload: FileUpdate):
+    """Rename and/or move a file."""
+    from lazy_bird.errors import InvalidInputError
+
+    if payload.name is None and payload.dir is None:
+        raise InvalidInputError("Give a new name, a new directory, or both.", code="nothing_to_update")
+    return FileCrud.update_file(file_id, name=payload.name, dir=payload.dir)
+
+
+@router.post("/{file_id}/process", status_code=202, response_model=FileOut)
+def process_file(file_id: int):
+    """Queue what the file still needs: its chunks and the default embedding."""
+    return FileCrud.process(file_id)
+
+
+@router.post("/{file_id}/processing", status_code=202, response_model=FileOut)
+def reprocess_file(file_id: int, payload: ProcessRequest):
+    """Compute one processing again (e.g. embedding with a given model), even if up to date."""
+    return FileCrud.reprocess(file_id, payload.processor, payload.target)

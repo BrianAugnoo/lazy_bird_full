@@ -33,6 +33,8 @@ class FileOut(BaseModel):
     size: int
     extension: str
     path: str
+    relative_path: str = ""
+    directory: str = ""
     content_hash: str | None = None
     missing: bool = False
     chunk_count: int = 0

@@ -11,6 +11,7 @@ from lazy_bird.crud import file_processing
 from lazy_bird.database import db
 from lazy_bird.models.file import File as FileORM
 from lazy_bird.preferences import auto_embedding_enabled
+from lazy_bird.errors import InvalidInputError, NotFoundError
 from lazy_bird.schemas.files import FileOut
 from lazy_bird.storages import (
     content_hash,
@@ -19,10 +20,16 @@ from lazy_bird.storages import (
     fingerprint,
     move_directory as move_storage_directory,
     read_file,
+    relative_path,
     rename_or_move_file,
     store_file,
     write_file,
 )
+
+
+def _directory(relative: str) -> str:
+    parent = Path(relative).parent.as_posix()
+    return "" if parent == "." else parent
 
 
 def _outputs(files: list[FileORM]) -> list[FileOut]:
@@ -32,6 +39,8 @@ def _outputs(files: list[FileORM]) -> list[FileOut]:
     return [
         FileOut.model_validate(file).model_copy(
             update={
+                "relative_path": relative_path(file.path),
+                "directory": _directory(relative_path(file.path)),
                 "chunk_count": chunk_counts.get(file.id, 0),
                 "state": file_processing.summarize(file, rows.get(file.id, [])),
                 "processing": [file_processing.to_out(row, file) for row in rows.get(file.id, [])],
@@ -55,7 +64,7 @@ def _refresh_identity(file: FileORM) -> bool:
 
 
 def create_empty_directory(path: str) -> str:
-    return create_directory(path)
+    return relative_path(create_directory(path))
 
 
 def remove_directory(path: str) -> str:
@@ -68,7 +77,7 @@ def remove_directory(path: str) -> str:
             chunk_crud.delete_for_file(file.id)
             session.delete(file)
         session.commit()
-    return str(directory_path)
+    return relative_path(str(directory_path))
 
 
 def move_directory(source: str, destination: str) -> str:
@@ -86,10 +95,11 @@ def move_directory(source: str, destination: str) -> str:
             file.path = str(destination_root / relative_path)
             session.add(file)
         session.commit()
-    return str(destination_root)
+    return relative_path(str(destination_root))
 
 
 async def creates(dir: str, files: list[UploadFile]):
+    """Store uploaded files; a name already used in the directory gets a numbered suffix."""
     created = []
     with db() as session:
         for file in files:
@@ -103,8 +113,6 @@ async def creates(dir: str, files: list[UploadFile]):
             session.flush()
             created.append(record)
         session.commit()
-        for record in created:
-            session.refresh(record)
         file_ids = [record.id for record in created]
 
     if auto_embedding_enabled():
@@ -116,13 +124,13 @@ async def creates(dir: str, files: list[UploadFile]):
 def process(file_id: int) -> FileOut:
     """Queue whatever the file still needs (chunks, default embedding)."""
     file_processing.ensure(file_id)
-    return find(file_id)
+    return get_out(file_id)
 
 
 def reprocess(file_id: int, processor: str, target: str = "") -> FileOut:
     """Compute one processing of the file again, even if it is up to date."""
     file_processing.request(file_id, processor, target)
-    return find(file_id)
+    return get_out(file_id)
 
 
 def detect_changes(progress: Callable[[float], None] = lambda value: None) -> dict:
@@ -188,58 +196,63 @@ def find(id: int):
     return _outputs([file])[0] if file is not None else None
 
 
+def get_out(id: int) -> FileOut:
+    found = find(id)
+    if found is None:
+        raise NotFoundError("File", id)
+    return found
+
+
+def _require(session, id: int) -> FileORM:
+    file = session.get(FileORM, id)
+    if file is None:
+        raise NotFoundError("File", id)
+    return file
+
+
 def get(id: int):
     with db() as session:
         return session.get(FileORM, id)
 
 
-def content(id: int):
+def text_content(id: int) -> str:
+    """The content of a text file (422 for binary files)."""
     with db() as session:
-        file = session.get(FileORM, id)
-        if file is None:
-            return None
-        return file, read_file(file.path)
+        file = _require(session, id)
+        data = read_file(file.path)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InvalidInputError("This file is not a UTF-8 text file; download it instead.", code="not_text") from error
 
 
 def full(id: int):
     with db() as session:
-        file = session.get(FileORM, id)
-        if file is None:
-            return None
-        return (
-            read_file(file.path),
-            f"{file.name}{file.extension}",
-            mimetypes.guess_type(file.path)[0],
-        )
+        file = _require(session, id)
+        return read_file(file.path), f"{file.name}{file.extension}", mimetypes.guess_type(file.path)[0]
 
 
 def download_info(id: int):
     with db() as session:
-        file = session.get(FileORM, id)
-        if file is None:
-            return None
+        file = _require(session, id)
         return file.path, f"{file.name}{file.extension}", mimetypes.guess_type(file.path)[0]
 
 
-def update_content(id: int, value: str):
+def update_content(id: int, value: str) -> FileOut:
     with db() as session:
-        file = session.get(FileORM, id)
-        if file is None:
-            return None
+        file = _require(session, id)
         write_file(file.path, value)
         content_changed = _refresh_identity(file)
         session.add(file)
         session.commit()
     if content_changed:
         file_processing.on_content_changed(id)
-    return find(id)
+    return get_out(id)
 
 
-def update_file(id: int, name: str | None = None, dir: str | None = None):
+def update_file(id: int, name: str | None = None, dir: str | None = None) -> FileOut:
     with db() as session:
-        file = session.get(FileORM, id)
-        if file is None:
-            return None
+        file = _require(session, id)
         if name is not None or dir is not None:
             file.path = rename_or_move_file(file.path, name=name, dir=dir)
             if name is not None:
@@ -249,20 +262,22 @@ def update_file(id: int, name: str | None = None, dir: str | None = None):
                 file.size, file.modified_at = found
             session.add(file)
             session.commit()
-    return find(id)
+    return get_out(id)
 
 
-def deletes(ids: list[int]):
+def deletes(ids: list[int]) -> int:
+    """Delete files (disk, chunks, vectors); unknown ids are ignored. Returns how many were deleted."""
+    deleted = 0
     with db() as session:
         for id in ids:
             file = session.get(FileORM, id)
             if file:
                 chunk_crud.delete_for_file(file.id)
                 session.delete(file)
-                path = Path(file.path)
-                if path.exists():
-                    path.unlink()
+                Path(file.path).unlink(missing_ok=True)
+                deleted += 1
         session.commit()
+    return deleted
 
 
 def delete_all():

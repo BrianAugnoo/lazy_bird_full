@@ -65,11 +65,10 @@ def test_file_output_includes_its_chunk_count(client, crud_database):
     assert [chunk["content"] for chunk in client.get(f"/files/{file_id}/chunks").json()] == ["a", "b"]
 
 
-def test_file_endpoint_returns_null_for_unknown_id(client):
-    response = client.get("/files/9999")
-
-    assert response.status_code == 200
-    assert response.json() is None
+def test_unknown_files_are_not_found(client):
+    for response in (client.get("/files/9999"), client.get("/files/9999/content"), client.get("/files/9999/download"), client.post("/files/9999/process")):
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "file_not_found"
 
 
 def test_file_endpoint_deletes_file_with_its_chunks_and_vectors(client, crud_database):
@@ -84,17 +83,38 @@ def test_file_endpoint_deletes_file_with_its_chunks_and_vectors(client, crud_dat
     response = client.request("DELETE", "/files/", json=[file_id])
 
     assert response.status_code == 200, response.text
-    assert client.get(f"/files/{file_id}").json() is None
+    assert response.json() == {"deleted": 1}
+    assert client.get(f"/files/{file_id}").status_code == 404
     assert chunk_crud.for_file(file_id) == []
     assert database.vector_count("org/model") == 0
 
 
-def test_file_endpoint_requires_directory_and_files(client):
-    missing_directory = client.post("/files/upload", files={"files": ("file.txt", b"data")})
+def test_uploads_need_files_and_default_to_the_storage_root(client):
+    at_root = client.post("/files/upload", files={"files": ("file.txt", b"data")})
     missing_files = client.post("/files/upload?dir=documents")
 
-    assert missing_directory.status_code == 422
-    assert missing_files.status_code == 422
+    assert at_root.status_code == 200 and at_root.json()[0]["relative_path"] == "file.txt"
+    assert missing_files.status_code == 422 and missing_files.json()["error"]["code"] == "invalid_request"
+
+
+def test_uploading_an_existing_name_keeps_both_files(client):
+    first = client.post("/files/upload?dir=docs", files={"files": ("a.txt", b"one", "text/plain")}).json()[0]
+    second = client.post("/files/upload?dir=docs", files={"files": ("a.txt", b"two", "text/plain")}).json()[0]
+    third = client.post("/files/upload?dir=docs", files={"files": ("a.txt", b"three", "text/plain")}).json()[0]
+
+    assert [first["relative_path"], second["relative_path"], third["relative_path"]] == ["docs/a.txt", "docs/a (1).txt", "docs/a (2).txt"]
+    assert second["name"] == "a (1)"
+    assert client.get(f"/files/{first['id']}/content").text == "one"
+    assert client.get(f"/files/{second['id']}/content").text == "two"
+
+
+def test_directories_are_listed_and_binary_content_is_refused(client):
+    client.post("/files/directory?path=empty/inner")
+    binary = client.post("/files/upload?dir=bin", files={"files": ("blob.bin", b"\xff\xfe\x00", "application/octet-stream")}).json()[0]
+
+    assert client.get("/files/directories").json() == ["bin", "empty", "empty/inner"]
+    assert binary["directory"] == "bin"
+    assert client.get(f"/files/{binary['id']}/content").json()["error"]["code"] == "not_text"
 
 
 def test_file_endpoint_reads_edits_renames_moves_and_downloads_file(client):
@@ -129,4 +149,5 @@ def test_file_endpoint_rejects_parent_directory(client):
         files={"files": ("file.txt", b"data", "text/plain")},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_path"

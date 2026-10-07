@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Response
 from lazy_bird import database
 from lazy_bird.crud import file_processing
 from lazy_bird.preferences import auto_embedding_enabled
@@ -24,10 +24,8 @@ def get_selected_database():
 
 @router.put("/select")
 def select_database(payload: DatabaseSelectionIn):
-    try:
-        selected = database.switch_database(payload.kind, payload.name, payload.settings)
-    except (ValueError, KeyError, RuntimeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    """Connect to another database; switching vector database outdates the embeddings."""
+    selected = database.switch_database(payload.kind, payload.name, payload.settings)
     if payload.kind == "vector":
         file_processing.outdate_processor("embedding", f"The vector database changed to {payload.name}.")
         file_processing.ensure_all(automatic=auto_embedding_enabled())
@@ -35,10 +33,7 @@ def select_database(payload: DatabaseSelectionIn):
 
 @router.put("/disconnect")
 def disconnect_database(payload: DatabaseDisconnectIn):
-    try:
-        return database.disconnect_database(payload.kind, payload.name, payload.drop)
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return database.disconnect_database(payload.kind, payload.name, payload.drop)
 
 
 @router.get("/vector/tables", response_model=list[VectorTableOut])

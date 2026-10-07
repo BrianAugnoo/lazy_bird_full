@@ -1,21 +1,33 @@
 from typing import Any
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
-import lazy_bird.crud.preferences as preferences_crud
-from lazy_bird.preferences import apply_preferences
+from lazy_bird import preferences
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
 
+class PreferencesUpdateOut(BaseModel):
+    preferences: dict[str, dict[str, Any]]
+    restart_required: list[str]
+
+
 @router.get("/")
-def get_preferences() -> dict[str, Any]:
-    return preferences_crud.get()
+def get_preferences() -> dict[str, dict[str, Any]]:
+    """Every preference section with its values (defaults filled in)."""
+    return preferences.get_preferences()
 
 
-@router.put("/")
-def update_preferences(values: dict[str, Any]) -> dict[str, Any]:
-    changed = preferences_crud.update(values)
-    if changed:
-        apply_preferences()
-    return preferences_crud.get()
+@router.get("/form")
+def get_preferences_form() -> dict[str, dict[str, Any]]:
+    """The settings form of each section (``title`` and ``kwargs_key``)."""
+    return preferences.form()
+
+
+@router.patch("/", response_model=PreferencesUpdateOut)
+def update_preferences(changes: dict[str, dict[str, Any]]):
+    """Change some preferences (``{section: {key: value}}``) and apply them."""
+    values, restart = preferences.update_preferences(changes)
+    preferences.apply_preferences()
+    return PreferencesUpdateOut(preferences=values, restart_required=restart)

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import lazy_bird.storages as storage
+from lazy_bird.errors import InvalidInputError
 
 
 def test_store_file_writes_nested_file_and_returns_metadata(storage_root: Path, upload_file_factory):
@@ -31,19 +32,21 @@ def test_store_file_removes_path_from_client_filename(storage_root: Path, upload
 
 @pytest.mark.parametrize("directory", ["../outside", "/absolute/path"])
 def test_store_file_rejects_unsafe_destination(directory, upload_file_factory):
-    with pytest.raises(ValueError, match="Invalid destination directory"):
+    with pytest.raises(InvalidInputError) as error:
         storage.store_file(directory, upload_file_factory())
+    assert error.value.code == "invalid_path"
 
 
 def test_store_file_rejects_windows_parent_directory(storage_root, upload_file_factory):
-    with pytest.raises(ValueError, match="Invalid destination directory"):
+    with pytest.raises(InvalidInputError):
         storage.store_file(r"..\outside", upload_file_factory())
 
 
 @pytest.mark.parametrize("filename", [None, "", "."])
 def test_store_file_rejects_empty_filename(storage_root, upload_file_factory, filename):
-    with pytest.raises(ValueError, match="Invalid file name"):
+    with pytest.raises(InvalidInputError) as error:
         storage.store_file("documents", upload_file_factory(filename))
+    assert error.value.code == "invalid_file_name"
 
 
 def test_store_file_wraps_disk_errors(storage_root, upload_file_factory, monkeypatch):
@@ -52,5 +55,5 @@ def test_store_file_wraps_disk_errors(storage_root, upload_file_factory, monkeyp
 
     monkeypatch.setattr(storage.shutil, "copyfileobj", fail_copy)
 
-    with pytest.raises(RuntimeError, match="Failed to store file document.txt: disk full"):
+    with pytest.raises(storage.StorageError, match="Failed to store file document.txt: disk full"):
         storage.store_file("documents", upload_file_factory())

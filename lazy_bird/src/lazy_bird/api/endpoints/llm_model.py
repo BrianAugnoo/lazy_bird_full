@@ -38,6 +38,23 @@ def sync_llm_models() -> dict[str, list[str]]:
     return LLMModel.sync_cache()
 
 
+@router.get("/hub/status")
+def hub_status() -> dict:
+    """Hugging Face login state (store an API key named "HuggingFace" to log in)."""
+    from lazy_bird.tools.hf_auth import hub_status as status
+
+    return status()
+
+
+@router.post("/hub/login")
+def hub_login() -> dict:
+    """Log in to Hugging Face again with the stored "HuggingFace" API key."""
+    from lazy_bird.tools.hf_auth import authenticate_hf, hub_status as status
+
+    authenticate_hf()
+    return status()
+
+
 @router.get("/hub/{repo_id:path}/files", response_model=list[HubFileOut])
 def list_hub_files(repo_id: str, revision: str | None = None):
     """Files of a Hugging Face repository, to choose which weights to download."""

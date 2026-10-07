@@ -4,19 +4,27 @@ import pytest
 
 from lazy_bird import database
 from lazy_bird.database.contracts import VectorTableNotFoundError
+from lazy_bird.errors import InvalidSettingsError, NotFoundError
 from lazy_bird.database.vector_db import lancedb
 
 
-def test_database_catalog_exposes_adapter_schemas():
+def test_database_catalog_exposes_adapter_settings_forms():
     catalog = database.adapter_catalog()
-    assert "sqlite" in catalog["sql"]
-    assert "lancedb" in catalog["vector"]
-    assert catalog["sql"]["sqlite"]["settings_schema"]["type"] == "object"
+    assert catalog["sql"]["sqlite"]["kwargs_key"]["url"]["content"] == "default.basic.text"
+    assert catalog["vector"]["lancedb"]["kwargs_key"]["path"]["nullable"] is True
+    assert catalog["sql"]["sqlite"]["selected"] is True
 
 
 def test_unknown_database_cannot_be_selected():
-    with pytest.raises(ValueError, match="Unknown vector database"):
+    with pytest.raises(NotFoundError) as error:
         database.switch_database("vector", "missing", {})
+    assert error.value.code == "unknown_database"
+
+
+def test_invalid_adapter_settings_are_reported_per_field():
+    with pytest.raises(InvalidSettingsError) as error:
+        database.switch_database("vector", "lancedb", {"path": 3, "other": 1})
+    assert set(error.value.fields) == {"path", "other"}
 
 
 @pytest.fixture

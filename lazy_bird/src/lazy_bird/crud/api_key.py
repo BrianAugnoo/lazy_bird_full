@@ -35,3 +35,38 @@ def get_all():
         statement = select(APIKeyORM)
         api_keys = session.exec(statement).all()
         return [APIKeyOut.model_validate(api_key) for api_key in api_keys]
+
+
+HUGGING_FACE_KEY = "HuggingFace"
+
+
+def update(name: str, key: str) -> APIKeyOut:
+    from lazy_bird.errors import NotFoundError
+
+    with db() as session:
+        api_key = session.get(APIKeyORM, name)
+        if api_key is None:
+            raise NotFoundError("API key", name)
+        api_key.key = key
+        session.add(api_key)
+        session.commit()
+        return APIKeyOut.model_validate(api_key)
+
+
+def delete(name: str) -> None:
+    from lazy_bird.errors import NotFoundError
+
+    with db() as session:
+        api_key = session.get(APIKeyORM, name)
+        if api_key is None:
+            raise NotFoundError("API key", name)
+        session.delete(api_key)
+        session.commit()
+
+
+def on_change(name: str) -> None:
+    """Log in to Hugging Face again when its key changes."""
+    if name == HUGGING_FACE_KEY:
+        from lazy_bird.tools.hf_auth import authenticate_hf
+
+        authenticate_hf()

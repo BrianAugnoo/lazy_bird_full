@@ -100,7 +100,7 @@ def test_package_function_is_traced_without_decorator():
     sink_id = logger.add(messages.append, format="{message}")
     set_package_tracing(True)
     try:
-        asyncio.run(main_module.read_root())
+        asyncio.run(main_module.health())
     finally:
         set_package_tracing(False)
         logger.remove(sink_id)
@@ -109,7 +109,7 @@ def test_package_function_is_traced_without_decorator():
     assert any(
         event["event"] == "function_call"
         and event["module"] == "lazy_bird.main"
-        and event["function"] == "read_root"
+        and event["function"] == "health"
         for event in events
     )
 

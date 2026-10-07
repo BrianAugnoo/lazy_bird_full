@@ -87,7 +87,7 @@ async def require_database(request: Request, call_next):
     started = perf_counter()
     database_status = getattr(request.app.state, "database_status", database.status)
     startup_error = getattr(request.app.state, "startup_error", database_status.error)
-    if request.url.path != "/" and startup_error:
+    if request.url.path not in ("/", "/health") and startup_error:
         logger.warning("HTTP request rejected during startup: method={} path={}", request.method, request.url.path)
         return JSONResponse(status_code=503, content=error_payload("startup_failed", startup_error))
     try:
@@ -102,13 +102,27 @@ async def require_database(request: Request, call_next):
             (perf_counter() - started) * 1000,
         )
 
+def _version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("lazy-bird")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 @app.get("/")
-async def read_root():
+@app.get("/health")
+async def health():
+    """Whether the server is ready; ``error`` explains a failed startup."""
     database_status = getattr(app.state, "database_status", database.status)
     startup_error = getattr(app.state, "startup_error", database_status.error)
-    if startup_error:
-        return {"success": False, "error": startup_error}
-    return {"success": True, "message": "Welcome to Lazy Bird!", "database_revision": database_status.revision}
+    return {
+        "ready": not startup_error,
+        "version": _version(),
+        "database_revision": database_status.revision,
+        "error": {"code": "startup_failed", "message": startup_error, "details": {}} if startup_error else None,
+    }
 
 
 @app.get("/shemas", include_in_schema=False)

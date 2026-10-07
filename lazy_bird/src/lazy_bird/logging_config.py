@@ -174,10 +174,19 @@ def _console_sink(message: str) -> None:
         return None
 
 
+LOG_FILE = Path("logs.txt").resolve()
+
+
+def tracing_enabled() -> bool:
+    return _trace_profile_enabled
+
+
 def configure_logging(log_file: str | Path = "logs.txt", trace_all: bool = False) -> None:
     """Install the application-wide Loguru sinks and stdlib bridge once."""
+    global LOG_FILE
     if getattr(configure_logging, "configured", False):
         return
+    LOG_FILE = Path(log_file).resolve()
 
     logger.remove()
     log_format = (

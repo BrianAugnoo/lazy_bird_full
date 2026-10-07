@@ -1,9 +1,7 @@
-def test_root_endpoint_returns_welcome_message(client):
-    response = client.get("/")
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    assert response.json()["message"] == "Welcome to Lazy Bird!"
+def test_health_reports_a_ready_server(client):
+    for path in ("/", "/health"):
+        body = client.get(path).json()
+        assert body["ready"] is True and body["error"] is None and body["database_revision"]
 
 
 def test_development_template_routes_are_not_exposed(client):
@@ -40,8 +38,10 @@ def test_root_reports_database_failure_without_running_startup_services(monkeypa
         blocked = client.get("/models/")
 
     assert root.status_code == 200
-    assert root.json() == {"success": False, "error": "connection refused"}
+    assert root.json()["ready"] is False
+    assert root.json()["error"] == {"code": "startup_failed", "message": "connection refused", "details": {}}
     assert blocked.status_code == 503
+    assert blocked.json()["error"]["code"] == "startup_failed"
     assert calls == []
 
 
@@ -57,7 +57,7 @@ def test_successful_startup_runs_services_after_database_is_ready(migrated_datab
     with TestClient(main_module.app) as client:
         response = client.get("/")
 
-    assert response.json()["success"] is True
+    assert response.json()["ready"] is True
     assert calls == ["database", "auth", "sync", "engines", "vector"]
 
 
@@ -72,6 +72,6 @@ def test_service_initialization_failure_is_exposed_without_starting_later_servic
         root = client.get("/")
         blocked = client.get("/models/")
 
-    assert root.json() == {"success": False, "error": "Application initialization failed: cache unavailable"}
+    assert root.json()["error"]["message"] == "Application initialization failed: cache unavailable"
     assert blocked.status_code == 503
     assert calls == ["auth"]

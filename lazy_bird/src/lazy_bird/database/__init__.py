@@ -165,52 +165,121 @@ def initialize_selected_vector_database():
     _vector_initialized = module.name
     return connection
 
-def switch_database(kind: str, name: str, settings: dict[str, Any]):
-    global config, engine, db_url, db_type, _vector_initialized
-    adapters = SQL_ADAPTERS if kind == "sql" else VECTOR_ADAPTERS
+def _adapters(kind: str) -> dict[str, ModuleType]:
+    from lazy_bird.errors import InvalidInputError
+
+    if kind not in ("sql", "vector"):
+        raise InvalidInputError("The database kind is 'sql' or 'vector'.", code="invalid_database_kind")
+    return SQL_ADAPTERS if kind == "sql" else VECTOR_ADAPTERS
+
+
+def _adapter(kind: str, name: str) -> ModuleType:
+    from lazy_bird.errors import NotFoundError
+
+    adapters = _adapters(kind)
     if name not in adapters:
-        raise ValueError(f"Unknown {kind} database: {name}")
-    validated = _settings(adapters[name], settings)
+        raise NotFoundError(f"{kind.upper()} database adapter", name, code="unknown_database")
+    return adapters[name]
+
+
+def _contract(module):
+    from lazy_bird.extension.settings import settings_contract
+
+    return settings_contract(module, "Settings")
+
+
+def _validated(module, settings: dict[str, Any]) -> dict[str, Any]:
+    """Validate adapter settings (``InvalidSettingsError`` per field)."""
+    contract = _contract(module)
+    if contract is None:
+        return {}
+    return contract.validate(settings).model_dump(exclude_none=True)
+
+
+def _save_config() -> None:
+    CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+
+
+def switch_database(kind: str, name: str, settings: dict[str, Any]):
+    """Connect to another SQL or vector database and remember the choice.
+
+    A SQL database must already be migrated to the current revision.
+    """
+    global engine, db_url, db_type, status, _vector_initialized
+    from lazy_bird.errors import ConflictError, ExternalServiceError
+
+    module = _adapter(kind, name)
+    validated = _validated(module, settings)
+    try:
+        connection = module.initialize(**validated)
+    except Exception as error:
+        raise ExternalServiceError(f"Could not connect to {name}: {error}", code="database_unreachable") from error
     if kind == "sql":
-        new_engine = adapters[name].initialize(**validated)
-        alembic_config = alembic_config_for(str(new_engine.url))
-        expected = ScriptDirectory.from_config(alembic_config).get_current_head()
-        current = _current_revision(new_engine)
+        expected = ScriptDirectory.from_config(alembic_config_for(str(connection.url))).get_current_head()
+        current = _current_revision(connection)
         if current != expected:
-            new_engine.dispose()
-            raise RuntimeError(f"Database migrations are not current: expected {expected}, found {current}")
-        engine.dispose(); engine = new_engine
-        db_url, db_type = str(engine.url), name
+            connection.dispose()
+            raise ConflictError(
+                f"The {name} database is at revision {current}, not {expected}: migrate it with alembic first.",
+                code="database_not_migrated",
+                details={"expected": expected, "current": current},
+            )
+        engine.dispose()
+        engine, db_url, db_type = connection, str(connection.url), name
+        status = DatabaseStatus(ready=True, revision=current)
         config.selected_sql_database = name
         config.sql_databases[name] = DatabaseEntry(settings=validated)
     else:
-        adapters[name].initialize(**validated)
         config.selected_vector_database = name
         config.vector_databases[name] = DatabaseEntry(settings=validated)
         _vector_initialized = name
-    CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
-    return {"selected": name, "messages": adapters[name].messages}
+    _save_config()
+    return {"selected": name, "messages": module.messages}
+
 
 def adapter_catalog():
-    def describe(items):
-        return {name: {"settings_schema": module.Settings.model_json_schema() if hasattr(module, "Settings") else None, "messages": module.messages} for name, module in items.items()}
-    return {"sql": describe(SQL_ADAPTERS), "vector": describe(VECTOR_ADAPTERS)}
+    """Every adapter with its settings form (``kwargs_key``), saved settings and messages."""
+
+    def describe(kind: str, items: dict[str, ModuleType], selected: str, entries: dict[str, DatabaseEntry]):
+        catalog = {}
+        for name, module in items.items():
+            contract = _contract(module)
+            catalog[name] = {
+                "kwargs_key": contract.kwargs_key() if contract else {},
+                "settings": entries.get(name, DatabaseEntry()).settings,
+                "messages": module.messages,
+                "selected": name == selected,
+            }
+        return catalog
+
+    return {
+        "sql": describe("sql", SQL_ADAPTERS, config.selected_sql_database, config.sql_databases),
+        "vector": describe("vector", VECTOR_ADAPTERS, config.selected_vector_database, config.vector_databases),
+    }
+
 
 def disconnect_database(kind: str, name: str, drop: bool = False):
-    global config, engine, db_url, db_type
-    adapters = SQL_ADAPTERS if kind == "sql" else VECTOR_ADAPTERS
-    if name not in adapters: raise ValueError(f"Unknown {kind} database: {name}")
+    """Disconnect a database (``drop`` also deletes its data) and fall back to the default one."""
+    global engine, db_url, db_type, status
+    from lazy_bird.errors import ConflictError
+
+    module = _adapter(kind, name)
     if kind == "sql":
-        if name != config.selected_sql_database: raise ValueError("SQL database is not selected")
-        adapters[name].disconnect(engine, drop)
+        if name != config.selected_sql_database:
+            raise ConflictError("Only the selected SQL database can be disconnected.", code="database_not_selected")
+        if name == "sqlite":
+            raise ConflictError("SQLite is the fallback database: select another one instead.", code="fallback_database")
+        module.disconnect(engine, drop)
         config.selected_sql_database = "sqlite"
-        engine = SQL_ADAPTERS["sqlite"].initialize(**_settings(SQL_ADAPTERS["sqlite"], config.sql_databases["sqlite"].settings))
+        engine = SQL_ADAPTERS["sqlite"].initialize(**_validated(SQL_ADAPTERS["sqlite"], config.sql_databases["sqlite"].settings))
         db_url, db_type = str(engine.url), "sqlite"
+        status = DatabaseStatus(ready=True, revision=_current_revision(engine))
     else:
-        adapters[name].disconnect(drop)
-        config.selected_vector_database = "lancedb"
-        initialize_selected_vector_database()
-    CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        module.disconnect(drop)
+        if name == config.selected_vector_database:
+            config.selected_vector_database = "lancedb"
+            initialize_selected_vector_database()
+    _save_config()
     return {"selected_sql": config.selected_sql_database, "selected_vector": config.selected_vector_database}
 
 def vector_tables() -> list[str]:
