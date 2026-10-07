@@ -1,0 +1,10 @@
+{
+  "name": "assistant",
+  "description": "General assistant that can delegate research to a researcher.",
+  "tools": [],
+  "hooks": [],
+  "skills": [],
+  "sub_agents": ["default/researcher"],
+  "instruction_fulls": ["default/orchestrator"],
+  "instruction_subs": ["default/concise"]
+}

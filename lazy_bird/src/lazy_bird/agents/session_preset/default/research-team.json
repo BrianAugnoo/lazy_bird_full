@@ -1,0 +1,7 @@
+{
+  "name": "research-team",
+  "description": "An assistant directing a researcher over your documents.",
+  "agents": ["default/assistant", "default/researcher"],
+  "meta": {},
+  "master": "default/assistant"
+}

@@ -23,6 +23,7 @@ dist/
 
 # Local application data
 logs.txt
+logs.*.txt
 /src/lazy_bird/storages/uploads/
 /src/lazy_bird/database/storage/*.db
 /src/lazy_bird/database/storage/*.db-shm
@@ -44,3 +45,10 @@ sandbox/documents/
 sandbox/data/
 sandbox/lancedb/
 tests/tools/test_models/
+
+# User extensions (custom/ folders belong to the user, not to the repository)
+/src/lazy_bird/agents/**/custom/*
+!/src/lazy_bird/agents/**/custom/.gitkeep
+!/src/lazy_bird/agents/**/custom/__init__.py
+/src/lazy_bird/tasks/custom/*
+!/src/lazy_bird/tasks/custom/__init__.py

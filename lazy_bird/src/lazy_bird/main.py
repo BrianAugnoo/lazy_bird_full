@@ -32,14 +32,22 @@ from lazy_bird.agents.tools import initialize_tools
 from loguru import logger
 
 
-def tools_initialization():
-    validation = initialize_tools()
-    for success in validation["success"]:
-        logger.info("Tool loaded: {}.{}.{}", success["package"], success["module"], success["name"])
-    for error in validation["failed"]:
-        logger.warning(
-            "Tool failed to load: {}.{}.{} - {}", error["package"], error["module"], error["name"], error["error"]
-        )
+def initialize_extensions() -> None:
+    """Discover every extension point (failures are logged and listed in /extensions/failures)."""
+    from lazy_bird.agents import agent_preset, instruction, session_preset, skill
+    from lazy_bird.agents.hook import initialize_hooks
+    from lazy_bird.tasks import discover_tasks
+
+    initialize_embedding_engines()
+    initialize_inference_engines()
+    for ensure in (instruction.ensure_folders, skill.ensure_folders, agent_preset.registry.ensure_folders, session_preset.registry.ensure_folders):
+        ensure()
+    tools = initialize_tools()
+    hooks = initialize_hooks()
+    skill.skills()
+    discover_tasks()
+    logger.info("Extensions loaded: {} tools, {} hooks", len(tools.entries), len(hooks.entries))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,9 +61,7 @@ async def lifespan(app: FastAPI):
     try:
         authenticate_hf()
         sync_cached_models()
-        initialize_embedding_engines()
-        initialize_inference_engines()
-        tools_initialization()
+        initialize_extensions()
         database.initialize_selected_vector_database()
         apply_preferences()
         start_scheduler()

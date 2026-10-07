@@ -1,64 +1,49 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Response
+
 import lazy_bird.crud.agent as AgentCrud
-from lazy_bird.schemas.agent import AgentIn, AgentOut
-from lazy_bird.schemas.conversation import ConversationOut
+from lazy_bird.schemas.agent import AgentFromPreset, AgentIn, AgentOut, AgentToolOut, AgentUpdate
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 @router.get("/", response_model=list[AgentOut])
-async def get_all_agents():
+def get_all_agents():
     return AgentCrud.get_all()
 
-@router.post("/chat", response_model=ConversationOut)
-async def chat_with_agent(agent_id: int, query: str, selected_conversation_id: int = None, max_iter: int = 20):
-    try:
-        return AgentCrud.chat(agent_id, query, selected_conversation_id, max_iter)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    
-@router.post("/continue_chat", response_model=list[ConversationOut])
-async def continue_chat_with_agent(agent_id: int, conversation_id: int, max_iter: int = 20):
-    try:
-        return AgentCrud.continue_chat(agent_id, conversation_id, max_iter)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 @router.get("/session/{session_id}", response_model=list[AgentOut])
-async def get_agents_by_session(session_id: int):
+def get_agents_by_session(session_id: int):
     return AgentCrud.get_by_session(session_id)
 
 
-@router.get("/{agent_id}", response_model=AgentOut)
-async def get_agent(agent_id: int):
-    agent = AgentCrud.get_by_id(agent_id)
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    return agent
-
-
 @router.post("/", response_model=AgentOut, status_code=201)
-async def create_agent(payload: AgentIn):
-    try:
-        return AgentCrud.create(payload)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+def create_agent(payload: AgentIn):
+    return AgentCrud.create(payload)
+
+
+@router.post("/from-preset", response_model=AgentOut, status_code=201)
+def create_agent_from_preset(payload: AgentFromPreset):
+    """Create an agent (and its missing sub-agents) in a session from an agent preset."""
+    return AgentCrud.create_from_preset(payload.session_id, payload.preset_id)
+
+
+@router.get("/{agent_id}", response_model=AgentOut)
+def get_agent(agent_id: int):
+    return AgentCrud.get(agent_id)
+
+
+@router.get("/{agent_id}/tools", response_model=list[AgentToolOut])
+def get_agent_tools(agent_id: int):
+    """The agent's tools under the names its LLM sees (skill tools included)."""
+    return AgentCrud.tools_of(agent_id)
 
 
 @router.patch("/{agent_id}", response_model=AgentOut)
-async def update_agent(agent_id: int, payload: AgentIn):
-    try:
-        agent = AgentCrud.update(agent_id, payload)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    return agent
+def update_agent(agent_id: int, payload: AgentUpdate):
+    return AgentCrud.update(agent_id, payload.model_dump(exclude_unset=True))
 
 
-@router.delete("/{agent_id}")
-async def delete_agent(agent_id: int):
-    deleted = AgentCrud.delete(agent_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    return {"message": "Agent deleted successfully"}
+@router.delete("/{agent_id}", status_code=204)
+def delete_agent(agent_id: int):
+    AgentCrud.delete(agent_id)
+    return Response(status_code=204)

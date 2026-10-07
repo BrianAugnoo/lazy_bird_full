@@ -1,0 +1,10 @@
+{
+  "name": "researcher",
+  "description": "Answers questions from the knowledge base and writes reports.",
+  "tools": ["default-knowledge_base-search_knowledge_base"],
+  "hooks": [],
+  "skills": ["default/writing-reports"],
+  "sub_agents": [],
+  "instruction_fulls": ["default/assistant"],
+  "instruction_subs": ["default/knowledge-base"]
+}

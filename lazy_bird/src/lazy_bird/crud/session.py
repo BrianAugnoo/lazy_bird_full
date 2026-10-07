@@ -1,51 +1,95 @@
+"""Sessions: groups of agents sharing a ``meta`` dict, one of them being the master."""
+
+from typing import Any
+
+from sqlmodel import select
+
+from lazy_bird.agents import session_preset
 from lazy_bird.database import db
+from lazy_bird.errors import NotFoundError
+from lazy_bird.models.agent import Agent as AgentORM, AgentHierarchy
 from lazy_bird.models.session import Session as SessionORM
 from lazy_bird.schemas.session import SessionIn, SessionOut
-from sqlmodel import select
+
+
+def _row(session, session_id: int) -> SessionORM:
+    found = session.get(SessionORM, session_id)
+    if found is None:
+        raise NotFoundError("Session", session_id)
+    return found
 
 
 def get_all() -> list[SessionOut]:
     with db() as session:
-        statement = select(SessionORM)
-        sessions = session.exec(statement).all()
-        return [SessionOut.model_validate(s) for s in sessions]
+        return [SessionOut.model_validate(item) for item in session.exec(select(SessionORM).order_by(SessionORM.id)).all()]
 
 
-def get_by_id(id: int) -> SessionOut | None:
+def get(session_id: int) -> SessionOut:
     with db() as session:
-        session_orm = session.get(SessionORM, id)
-        if session_orm is None:
-            return None
-        return SessionOut.model_validate(session_orm)
+        return SessionOut.model_validate(_row(session, session_id))
+
+
+def get_by_id(session_id: int) -> SessionOut | None:
+    try:
+        return get(session_id)
+    except NotFoundError:
+        return None
+
+
+def meta_of(session_id: int) -> dict[str, Any]:
+    with db() as session:
+        return dict(_row(session, session_id).meta or {})
 
 
 def create(payload: SessionIn) -> SessionOut:
     with db() as session:
-        session_orm = SessionORM(**payload.model_dump())
-        session.add(session_orm)
+        created = SessionORM(**payload.model_dump())
+        session.add(created)
         session.commit()
-        session.refresh(session_orm)
-        return SessionOut.model_validate(session_orm)
+        session.refresh(created)
+        return SessionOut.model_validate(created)
 
 
-def update(id: int, payload: SessionIn) -> SessionOut | None:
+def update(session_id: int, changes: dict[str, Any]) -> SessionOut:
     with db() as session:
-        session_orm = session.get(SessionORM, id)
-        if session_orm is None:
-            return None
-        for key, value in payload.model_dump(exclude_unset=True).items():
-            setattr(session_orm, key, value)
-        session.add(session_orm)
+        found = _row(session, session_id)
+        for key, value in changes.items():
+            setattr(found, key, value)
+        session.add(found)
         session.commit()
-        session.refresh(session_orm)
-        return SessionOut.model_validate(session_orm)
+        session.refresh(found)
+        return SessionOut.model_validate(found)
 
 
-def delete(id: int) -> bool:
+def delete(session_id: int) -> None:
+    """Delete a session with its agents, their links, conversations and messages."""
     with db() as session:
-        session_orm = session.get(SessionORM, id)
-        if session_orm is None:
-            return False
-        session.delete(session_orm)
+        found = _row(session, session_id)
+        agent_ids = [agent.id for agent in found.agents]
+        if agent_ids:
+            links = session.exec(
+                select(AgentHierarchy).where(AgentHierarchy.parent_id.in_(agent_ids) | AgentHierarchy.child_id.in_(agent_ids))
+            ).all()
+            for link in links:
+                session.delete(link)
+            session.flush()
+        session.delete(found)
         session.commit()
-        return True
+
+
+def create_from_preset(preset_id: str, title: str | None = None) -> SessionOut:
+    """Create a session, its agents (sharing sub-agents) and its master from a preset."""
+    from lazy_bird.crud import agent as agent_crud
+
+    data = session_preset.registry.valid_data(preset_id)
+    created = create(SessionIn(title=title or data.name, meta=data.meta))
+    existing: dict[str, int] = {}
+    for agent_preset_id in data.agents:
+        if agent_preset_id not in existing:
+            agent_crud.instantiate(created.id, agent_preset_id, existing, ())
+    with db() as session:
+        master = session.get(AgentORM, existing[data.master])
+        master.master = True
+        session.add(master)
+        session.commit()
+    return get(created.id)

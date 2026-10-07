@@ -1,39 +1,38 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Response
+
 import lazy_bird.crud.session as SessionCrud
-from lazy_bird.schemas.session import SessionIn, SessionOut
+from lazy_bird.schemas.session import SessionFromPreset, SessionIn, SessionOut, SessionUpdate
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 @router.get("/", response_model=list[SessionOut])
-async def get_all_sessions():
+def get_all_sessions():
     return SessionCrud.get_all()
 
 
-@router.get("/{session_id}", response_model=SessionOut)
-async def get_session(session_id: int):
-    session = SessionCrud.get_by_id(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
-
-
 @router.post("/", response_model=SessionOut, status_code=201)
-async def create_session(payload: SessionIn):
+def create_session(payload: SessionIn):
     return SessionCrud.create(payload)
 
 
+@router.post("/from-preset", response_model=SessionOut, status_code=201)
+def create_session_from_preset(payload: SessionFromPreset):
+    """Create a session with the agents of a session preset and its master."""
+    return SessionCrud.create_from_preset(payload.preset_id, payload.title)
+
+
+@router.get("/{session_id}", response_model=SessionOut)
+def get_session(session_id: int):
+    return SessionCrud.get(session_id)
+
+
 @router.patch("/{session_id}", response_model=SessionOut)
-async def update_session(session_id: int, payload: SessionIn):
-    session = SessionCrud.update(session_id, payload)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+def update_session(session_id: int, payload: SessionUpdate):
+    return SessionCrud.update(session_id, payload.model_dump(exclude_unset=True))
 
 
-@router.delete("/{session_id}")
-async def delete_session(session_id: int):
-    deleted = SessionCrud.delete(session_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"message": "Session deleted successfully"}
+@router.delete("/{session_id}", status_code=204)
+def delete_session(session_id: int):
+    SessionCrud.delete(session_id)
+    return Response(status_code=204)

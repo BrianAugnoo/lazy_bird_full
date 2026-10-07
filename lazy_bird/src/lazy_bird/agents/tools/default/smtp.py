@@ -13,10 +13,12 @@ class ToolSettings(BaseModel):
     
 fields = {
     "smtp_password": {"default_field": True, "content": "default.basic.password", "args": {"confirm": False}},
-    "sender_email": {"default_field": True, "content": "default.basic.email"} # or args: None
+    "sender_email": {"default_field": True, "content": "default.basic.email"},
 }
 
 class Smtp:
+    """Send emails through an SMTP server configured in the tool settings."""
+
     def __init__(self, settings: ToolSettings):
         self.settings = settings
 
