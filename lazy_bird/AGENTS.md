@@ -35,7 +35,7 @@ lazy_bird_full/
   lazy_bird/          backend (FastAPI, Python ≥ 3.12, uv)   ← this guide
     src/lazy_bird/    the package
     tests/            pytest suite
-    sandbox/          independent experiments: ignore it entirely
+    sandbox/          independent experiments (git-ignored, not tracked): ignore it entirely
   web/                frontend (React, Vite) — see web/AGENTS.md
 ```
 
