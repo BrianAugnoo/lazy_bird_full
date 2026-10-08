@@ -1,3 +1,4 @@
+import gc
 from functools import lru_cache
 from typing import Literal
 
@@ -16,6 +17,7 @@ class EngineSettings(BaseModel):
     )
     batch_size: int = Field(default=32, ge=1, description="Number of texts encoded at once.")
     model_config = ConfigDict(extra="forbid")
+    unloading: bool = Field(default=True, description="Unload the model from memory after each embedding call.")
 
 
 fields = {
@@ -55,10 +57,31 @@ def _load(path: str, device: str, backend: str):
     return SentenceTransformer(path, device=device, backend=backend, model_kwargs=model_kwargs)
 
 
-def embed(texts, settings, model):
+def unload() -> None:
+    """Drop the cached model and give its memory back (GPU memory included)."""
+    _load.cache_clear()
+    gc.collect()
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _encode(texts, settings, model):
     backend = "onnx" if (model.selected_format or "").lower() == "onnx" else "torch"
     encoder = _load(model.local_path, settings.device or detect_device(), backend)
     vectors = encoder.encode(
         list(texts), batch_size=settings.batch_size, convert_to_numpy=True, show_progress_bar=False
     )
     return vectors.tolist()
+
+
+def embed(texts, settings, model):
+    # The encoder lives only inside _encode, so nothing but the cache keeps it alive when unload() runs.
+    try:
+        return _encode(texts, settings, model)
+    finally:
+        if settings.unloading:
+            unload()

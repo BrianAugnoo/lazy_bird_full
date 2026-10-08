@@ -243,6 +243,11 @@ unsetting the default without choosing another is a conflict). Settings with
 `model_id` reference an `LLMModel`: the family checks it exists and that the engine
 supports its selected format, then hands the resolved model to the engine.
 
+The shipped `sentence-transformers` embedding engine caches its model in memory
+(`_load`); with its `unloading` setting (default on) it releases the model, and the
+GPU cache, at the end of every `embed` call, even when the call fails. Turn it off
+to keep the model loaded between calls.
+
 Python tool and hook code is only added on disk (never uploaded over HTTP). Through
 the API, `default/` items are read-only and `custom/` items can be created, edited
 and deleted (instructions, skills, presets) or configured (tool/hook settings).
