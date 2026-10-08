@@ -16,6 +16,10 @@ const TEXT: Record<EngineKind, { title: string; description: string }> = {
     title: 'Embedding',
     description: 'Embedding turns files into vectors for semantic search. The default preset embeds every file; changing it embeds them again.',
   },
+  cross_encoder: {
+    title: 'Cross-encoder',
+    description: 'Cross-encoders rerank search results: they read the question together with each candidate passage and score how well it answers. Search uses the default preset unless you choose another.',
+  },
   inference: {
     title: 'Inference',
     description: 'Inference presets are the language models agents answer with. Agents use the default preset unless they choose another one.',
@@ -228,7 +232,7 @@ export function EnginePresets({ kind }: { kind: EngineKind }) {
           <>
             <div className="state-title">No preset yet</div>
             <p className="state-desc">
-              {engines.length === 0 ? `No ${kind} engine is installed.` : 'Create a preset to get started. The first one becomes the default.'}
+              {engines.length === 0 ? `No ${kind.replace('_', '-')} engine is installed.` : 'Create a preset to get started. The first one becomes the default.'}
             </p>
             {engines.length > 0 && (
               <button type="button" className="btn btn-primary btn-sm" onClick={create}>

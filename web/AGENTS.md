@@ -207,13 +207,13 @@ by side / preview, text).
 | --- | --- | --- |
 | Chat (`chat`) | `modules/chat` | `/sessions/*` (incl. `from-preset`), `/agents/*` (incl. `from-preset`, `/{id}/tools`), `/conversations/*` (incl. `rewind`, `stop`), `/messages/*`, `WS /ws/conversations/{id}`, `/session-presets/`, `/agent-presets/`, tools/hooks/skills/instructions lists, inference presets/engines |
 | Files (`files`) | `modules/files` | `/files/*` (upload, directories, directory CRUD, content, full, download, process, processing, scan, all), `/files/{id}/chunks`, file events of `/ws/tasks` |
-| Search (`search`) | `modules/search` | `POST /search/`, embedding presets, files |
+| Search (`search`) | `modules/search` | `POST /search/` (embedding only, or reranking with `rerank`, `cross_encoder_preset_id`, `top_n`), embedding and cross-encoder presets, files |
 | Tools, Hooks (`tools`, `hooks`) | `modules/tools` | `/tools/*`, `/hooks/*` (list, reload, settings per module file) |
 | Skills (`skills`) | `modules/skills` | `/skills/*` (incl. resource files) |
 | Instructions (`instructions`) | `modules/instructions` | `/instructions/{full|sub}/*` |
 | Agent / session presets | `modules/presets` | `/agent-presets/*`, `/session-presets/*` |
 | Models (`models`) | `modules/models` | `/models/*` (download with file choice, upload from the computer with progress, sync, hub status/login/files), model tasks |
-| Embedding, Inference | `modules/engines` | `/{kind}-engines/`, `/{kind}-presets/*`, `POST /inference/complete` |
+| Embedding, Cross-encoder (`cross-encoder`), Inference | `modules/engines` | `/{kind}-engines/`, `/{kind}-presets/*` (kind `embedding`, `cross-encoder`, `inference`), `POST /inference/complete` |
 | Tasks (`tasks`) | `modules/tasks` | `WS /ws/tasks` (snapshot, events, commands), `DELETE /tasks/finished` |
 | Databases (`databases`) | `modules/databases` | `/databases/*`, `/databases/vector/tables/*` |
 | API keys (`api-keys`) | `modules/api-keys` | `/api-keys/*` |
@@ -228,6 +228,20 @@ REST commands replace the socket while it is down. Single-item reads (`GET
 non-streaming chat calls (`POST /conversations/{id}/messages`, `/run`,
 `/sessions/{id}/chat`) are typed in `api/endpoints/` for future screens; the chat
 streams over the WebSocket instead.
+
+### Search modes
+
+The Search page has two tabs. **Embedding only** (default) sends `query`, `top_k`
+(Results, default 8), the embedding preset and the file filter. **Reranking** shows,
+in Options (opened when the tab is chosen): embedding preset, cross-encoder preset,
+Embedding candidates (`top_n`, default 50) and Final results (`top_k`, default 10),
+and sends `rerank: true` with them. `top_n` is the candidate pool read by the
+cross-encoder, `top_k` the final count, and `top_n > top_k` is required: the page
+shows the error under the field and disables Search (`candidatesError` in
+`modules/search/searchRequest.ts`, which also builds the payload), and still shows
+the backend's `fields.top_n` error if the server rejects it. Reranked results show
+their cross-encoder `score` next to the embedding `distance`. Without a
+cross-encoder preset the page links to the Cross-encoder page instead of searching.
 
 ## 14. Chat
 

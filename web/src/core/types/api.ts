@@ -111,7 +111,7 @@ export interface ResourceSnapshot {
 }
 
 // ----------------------------------------------------- engines and presets
-export type EngineKind = 'embedding' | 'inference';
+export type EngineKind = 'embedding' | 'cross_encoder' | 'inference';
 
 export interface EngineOut {
   id: number;
@@ -128,6 +128,8 @@ export interface PresetOut {
   name: string;
   /** Present on embedding presets. */
   embedding_engine_id?: number;
+  /** Present on cross-encoder presets. */
+  cross_encoder_engine_id?: number;
   /** Present on inference presets. */
   inference_engine_id?: number;
   kwargs: Record<string, unknown>;
@@ -217,6 +219,12 @@ export interface SearchPayload {
   top_k?: number;
   preset_id?: number | null;
   file_ids?: number[] | null;
+  /** Rerank the embedding candidates with a cross-encoder. */
+  rerank?: boolean;
+  /** Cross-encoder preset used when reranking; the default preset when null. */
+  cross_encoder_preset_id?: number | null;
+  /** Embedding candidates handed to the reranker; must be greater than `top_k`. */
+  top_n?: number;
 }
 
 export interface Chunk {
@@ -238,6 +246,8 @@ export interface SearchResult {
   file_name: string;
   file_path: string;
   distance: number | null;
+  /** Cross-encoder score; only set when the search reranked. */
+  score: number | null;
 }
 
 // --------------------------------------------------------------- databases

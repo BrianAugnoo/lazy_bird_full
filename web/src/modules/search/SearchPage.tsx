@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ApiError } from '@/api/client';
 import { engineApi } from '@/api/endpoints/engines';
 import { files as filesApi, search } from '@/api/endpoints/files';
 import { buildHash } from '@/core/router';
@@ -7,41 +8,64 @@ import { useResource } from '@/core/useResource';
 import { Icon } from '@/ui/Icon';
 import { MultiSelect } from '@/ui/MultiSelect';
 import { PageHeader } from '@/ui/PageHeader';
+import { candidatesError, DEFAULT_CANDIDATES, DEFAULT_RESULTS, MAX_CANDIDATES, MAX_RESULTS, toPayload, type SearchMode } from './searchRequest';
 
 const embedding = engineApi('embedding');
+const crossEncoder = engineApi('cross_encoder');
+
+const MODES: { id: SearchMode; label: string; hint: string }[] = [
+  { id: 'embedding', label: 'Embedding only', hint: 'Finds the passages closest in meaning to the question.' },
+  { id: 'rerank', label: 'Reranking', hint: 'Finds candidates by meaning, then a cross-encoder reads each one with the question and keeps the best.' },
+];
 
 function loadOptions() {
-  return Promise.all([embedding.listPresets(), filesApi.list()]).then(([presets, files]) => ({ presets, files }));
+  return Promise.all([embedding.listPresets(), crossEncoder.listPresets(), filesApi.list()]).then(([presets, crossEncoderPresets, files]) => ({
+    presets,
+    crossEncoderPresets,
+    files,
+  }));
 }
 
 export function SearchPage() {
   const options = useResource(loadOptions, []);
   const [query, setQuery] = useState('');
-  const [topK, setTopK] = useState(8);
+  const [mode, setMode] = useState<SearchMode>('embedding');
+  const [embeddingResults, setEmbeddingResults] = useState<number>(DEFAULT_RESULTS.embedding);
+  const [rerankResults, setRerankResults] = useState<number>(DEFAULT_RESULTS.rerank);
+  const [candidates, setCandidates] = useState(DEFAULT_CANDIDATES);
   const [presetId, setPresetId] = useState<number | ''>('');
+  const [crossEncoderPresetId, setCrossEncoderPresetId] = useState<number | ''>('');
   const [fileIds, setFileIds] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const files = options.data?.files ?? [];
   const presets = options.data?.presets ?? [];
+  const crossEncoderPresets = options.data?.crossEncoderPresets ?? [];
+  const reranking = mode === 'rerank';
+  const resultCount = reranking ? rerankResults : embeddingResults;
+  const form = { mode, query, presetId, crossEncoderPresetId, results: resultCount, candidates, fileIds };
+  const candidatesProblem = candidatesError(form);
+  const missingCrossEncoder = reranking && options.data !== undefined && crossEncoderPresets.length === 0;
+  const canSearch = !busy && query.trim() !== '' && !candidatesProblem && !missingCrossEncoder;
+
+  const chooseMode = (next: SearchMode) => {
+    setMode(next);
+    if (next === 'rerank') setShowFilters(true);
+  };
 
   const run = async () => {
-    if (!query.trim()) return;
+    if (!canSearch) return;
     setBusy(true);
     setError(null);
+    setFieldErrors({});
     try {
-      setResults(
-        await search({
-          query: query.trim(),
-          top_k: topK,
-          preset_id: presetId === '' ? null : presetId,
-          file_ids: fileIds.length ? fileIds.map(Number) : null,
-        }),
-      );
+      setResults(await search(toPayload(form)));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (reason instanceof ApiError && Object.keys(reason.fieldErrors).length > 0) setFieldErrors(reason.fieldErrors);
+      else setError(reason instanceof Error ? reason.message : String(reason));
       setResults(null);
     } finally {
       setBusy(false);
@@ -62,16 +86,24 @@ export function SearchPage() {
           <div className="search-bar">
             <Icon name="search" />
             <input className="search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask something about your files…" aria-label="Search" autoFocus />
-            <button type="submit" className="btn btn-primary" disabled={busy || !query.trim()}>
+            <button type="submit" className="btn btn-primary" disabled={!canSearch}>
               {busy ? 'Searching…' : 'Search'}
             </button>
           </div>
+          <div className="tabs" role="tablist" aria-label="Search mode" style={{ marginBottom: 0 }}>
+            {MODES.map((item) => (
+              <button key={item.id} type="button" role="tab" aria-selected={mode === item.id} className={`tab ${mode === item.id ? 'is-active' : ''}`} onClick={() => chooseMode(item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="form-hint">{MODES.find((item) => item.id === mode)?.hint}</div>
           <button type="button" className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters}>
             <Icon name={showFilters ? 'chevronDown' : 'chevronRight'} /> Options
-            {(presetId !== '' || fileIds.length > 0) && <span className="chip chip-accent">active</span>}
+            {(presetId !== '' || fileIds.length > 0 || (reranking && crossEncoderPresetId !== '')) && <span className="chip chip-accent">active</span>}
           </button>
           {showFilters && (
-            <div className="search-options">
+            <div className={`search-options ${reranking ? 'search-options-rerank' : ''}`}>
               <div className="form-group">
                 <label className="form-label" htmlFor="search-preset">
                   Embedding preset
@@ -86,11 +118,70 @@ export function SearchPage() {
                 </select>
                 <div className="form-hint">Only files embedded with this preset's model are found.</div>
               </div>
+              {reranking && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="search-cross-encoder">
+                    Cross-encoder preset
+                  </label>
+                  <select
+                    id="search-cross-encoder"
+                    className="form-input"
+                    value={crossEncoderPresetId}
+                    onChange={(event) => setCrossEncoderPresetId(event.target.value ? Number(event.target.value) : '')}
+                  >
+                    <option value="">Default</option>
+                    {crossEncoderPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </option>
+                    ))}
+                  </select>
+                  {missingCrossEncoder ? (
+                    <div className="form-error">
+                      No cross-encoder preset yet. <a href={buildHash('cross-encoder')}>Create one</a> to rerank.
+                    </div>
+                  ) : (
+                    <div className="form-hint">Scores each candidate against the question.</div>
+                  )}
+                  {fieldErrors.cross_encoder_preset_id && <div className="form-error">{fieldErrors.cross_encoder_preset_id}</div>}
+                </div>
+              )}
+              {reranking && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="search-candidates">
+                    Embedding candidates
+                  </label>
+                  <input
+                    id="search-candidates"
+                    type="number"
+                    min={1}
+                    max={MAX_CANDIDATES}
+                    className="form-input"
+                    value={candidates}
+                    onChange={(event) => setCandidates(Math.max(1, Number(event.target.value) || 1))}
+                    aria-invalid={Boolean(candidatesProblem || fieldErrors.top_n)}
+                  />
+                  {candidatesProblem || fieldErrors.top_n ? (
+                    <div className="form-error">{candidatesProblem ?? fieldErrors.top_n}</div>
+                  ) : (
+                    <div className="form-hint">Passages the cross-encoder reads.</div>
+                  )}
+                </div>
+              )}
               <div className="form-group">
                 <label className="form-label" htmlFor="search-count">
-                  Results
+                  {reranking ? 'Final results' : 'Results'}
                 </label>
-                <input id="search-count" type="number" min={1} max={50} className="form-input" value={topK} onChange={(event) => setTopK(Math.max(1, Number(event.target.value) || 1))} />
+                <input
+                  id="search-count"
+                  type="number"
+                  min={1}
+                  max={MAX_RESULTS}
+                  className="form-input"
+                  value={resultCount}
+                  onChange={(event) => (reranking ? setRerankResults : setEmbeddingResults)(Math.max(1, Number(event.target.value) || 1))}
+                />
+                {reranking && <div className="form-hint">Best passages kept after reranking.</div>}
               </div>
               <div className="form-group search-files">
                 <label className="form-label">Only in these files</label>
@@ -123,6 +214,7 @@ export function SearchPage() {
                 </a>
                 <span className="muted small">
                   lines {result.chunk.start_line}–{result.chunk.end_line}
+                  {result.score !== null && ` · score ${result.score.toFixed(3)}`}
                   {result.distance !== null && ` · distance ${result.distance.toFixed(3)}`}
                 </span>
               </header>

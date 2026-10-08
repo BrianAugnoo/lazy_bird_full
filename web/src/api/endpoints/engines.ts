@@ -3,8 +3,9 @@ import type { CompletionOut, EngineKind, EngineOut, PresetChanges, PresetOut } f
 
 /** Typed access to one engine family: `/{kind}-engines/` and `/{kind}-presets/`. */
 export function engineApi(kind: EngineKind) {
-  const engines = `/${kind}-engines`;
-  const presets = `/${kind}-presets`;
+  const route = kind.replace('_', '-');
+  const engines = `/${route}-engines`;
+  const presets = `/${route}-presets`;
   const engineKey = `${kind}_engine_id`;
 
   const body = (changes: PresetChanges) => {
@@ -13,7 +14,7 @@ export function engineApi(kind: EngineKind) {
   };
 
   return {
-    engineIdOf: (preset: PresetOut): number => (kind === 'embedding' ? preset.embedding_engine_id : preset.inference_engine_id) ?? -1,
+    engineIdOf: (preset: PresetOut): number => preset[engineKey as 'embedding_engine_id' | 'cross_encoder_engine_id' | 'inference_engine_id'] ?? -1,
     listEngines: () => request<EngineOut[]>(`${engines}/`),
     listPresets: () => request<PresetOut[]>(`${presets}/`),
     createPreset: (changes: Required<Pick<PresetChanges, 'name' | 'engine_id'>> & PresetChanges) =>

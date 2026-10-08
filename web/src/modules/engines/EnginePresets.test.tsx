@@ -68,4 +68,27 @@ describe('EnginePresets', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Field required'));
     expect(calls('POST /inference-presets/')[0]).toEqual({ name: 'remote', inference_engine_id: 1, kwargs: {} });
   });
+
+  it('manages cross-encoder presets through their own routes', async () => {
+    const calls = mockApi({
+      'GET /cross-encoder-engines/': [{ ...engine, name: 'sentence-transformers' }],
+      'GET /cross-encoder-presets/': [{ id: 1, name: 'reranker', cross_encoder_engine_id: 1, kwargs: {}, default: true, valid: true, errors: {} }],
+      'POST /cross-encoder-presets/': { id: 2 },
+    });
+
+    render(
+      <ToastProvider>
+        <EnginePresets kind="cross_encoder" />
+      </ToastProvider>,
+    );
+
+    expect(await screen.findByText('reranker', { selector: '.list-row-title' })).toBeTruthy();
+    expect(screen.getByText('sentence-transformers', { selector: '.list-row-meta' })).toBeTruthy();
+    fireEvent.click((await screen.findAllByText('New preset'))[0]);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'second' } });
+    fireEvent.click(screen.getByText('Save preset'));
+
+    await waitFor(() => expect(calls('POST /cross-encoder-presets/')).toHaveLength(1));
+    expect(calls('POST /cross-encoder-presets/')[0]).toEqual({ name: 'second', cross_encoder_engine_id: 1, kwargs: {} });
+  });
 });

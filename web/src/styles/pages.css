@@ -478,6 +478,7 @@ button.tool-card-head:hover { background: var(--bg-card-hover); }
 .search-bar > .icon { color: var(--text-muted); }
 .search-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: var(--text-lg); color: var(--text-primary); padding: 6px 0; }
 .search-options { display: grid; grid-template-columns: 1fr 120px; gap: 12px; }
+.search-options-rerank { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .search-files { grid-column: 1 / -1; }
 .search-results { display: flex; flex-direction: column; gap: 10px; }
 .search-result { padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border-base); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 8px; }
