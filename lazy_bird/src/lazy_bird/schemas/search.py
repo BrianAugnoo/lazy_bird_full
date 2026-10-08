@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic_core import PydanticCustomError
 
 from lazy_bird.schemas.chunk import ChunkOut
 
@@ -33,7 +34,9 @@ class SearchIn(BaseModel):
     @classmethod
     def candidates_outnumber_results(cls, top_n: int, info: ValidationInfo) -> int:
         if info.data.get("rerank") and "top_k" in info.data and top_n <= info.data["top_k"]:
-            raise ValueError("Embedding candidates (top_n) must be greater than the final results (top_k).")
+            raise PydanticCustomError(
+                "top_n_not_greater", "Must be greater than the final results (top_k = {top_k}).", {"top_k": info.data["top_k"]}
+            )
         return top_n
 
 

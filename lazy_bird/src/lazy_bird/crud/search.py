@@ -33,7 +33,7 @@ def search(
         raise InvalidInputError(
             "Embedding candidates (top_n) must be greater than the final results (top_k).",
             code="invalid_top_n",
-            details={"fields": {"top_n": f"Must be greater than top_k ({top_k})."}},
+            details={"fields": {"top_n": f"Must be greater than the final results (top_k = {top_k})."}},
         )
     reranker = cross_encoder_family.resolve(cross_encoder_preset_id)  # fail before the embedding model is loaded
     candidates = _nearest(query, top_n, preset_id, file_ids)

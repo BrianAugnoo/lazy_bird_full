@@ -128,7 +128,7 @@ def test_candidates_must_outnumber_the_final_results(client, fake_embedding, fak
     assert response.status_code == 422
     error = response.json()["error"]
     assert error["code"] == "invalid_request"
-    assert "top_n" in error["details"]["fields"]
+    assert error["details"]["fields"]["top_n"] == "Must be greater than the final results (top_k = 5)."
 
 
 def test_default_candidates_must_also_outnumber_the_final_results(client, fake_embedding, fake_cross_encoder):
