@@ -1,3 +1,5 @@
+import pytest
+
 
 from tests.conftest import process_inline
 
@@ -46,3 +48,118 @@ def test_vector_tables_can_be_listed_and_dropped(client, fake_embedding):
     assert client.delete("/databases/vector/tables/org/model").status_code == 204
     assert client.get("/databases/vector/tables").json() == []
     assert client.delete("/databases/vector/tables/org/model").json()["error"]["code"] == "vector_table_not_found"
+
+
+# With the fake engines, the embedding order for "zebra zone" is b, d, a, c while
+# the cross-encoder (words shared with the query) prefers b, then a and c, then d.
+CORPUS = {"a": b"zzzz zzzz zebra", "b": b"zebra zone", "c": b"zebra apple apple apple", "d": b"quiet river"}
+
+
+def upload_corpus(client) -> dict[str, int]:
+    return {name: upload_and_process(client, f"{name}.md", content) for name, content in CORPUS.items()}
+
+
+def contents(response) -> list[str]:
+    return [result["chunk"]["content"] for result in response.json()]
+
+
+def test_embedding_only_search_has_no_cross_encoder_score(client, fake_embedding):
+    upload_corpus(client)
+
+    response = client.post("/search/", json={"query": "zebra zone", "top_k": 2})
+
+    assert contents(response) == ["zebra zone", "quiet river"]
+    assert [result["score"] for result in response.json()] == [None, None]
+
+
+def test_reranking_orders_the_embedding_candidates_by_cross_encoder_score(client, fake_embedding, fake_cross_encoder):
+    ids = upload_corpus(client)
+
+    response = client.post("/search/", json={"query": "zebra zone", "top_k": 2, "top_n": 3, "rerank": True})
+
+    assert response.status_code == 200, response.text
+    assert contents(response) == ["zebra zone", "zzzz zzzz zebra"]
+    assert [result["score"] for result in response.json()] == [2.0, 1.0]
+    best = response.json()[0]
+    assert best["file_name"] == "b.md" and best["chunk"]["file_id"] == ids["b"] and best["distance"] == 0.0
+
+
+def test_only_the_top_n_embedding_candidates_are_reranked(client, fake_embedding, fake_cross_encoder):
+    upload_corpus(client)
+
+    response = client.post("/search/", json={"query": "zebra zone", "top_k": 1, "top_n": 2, "rerank": True})
+
+    assert contents(response) == ["zebra zone"]
+    # With every chunk a candidate, equal scores keep the embedding order and the worst chunk drops out.
+    wide = client.post("/search/", json={"query": "zebra zone", "top_k": 3, "top_n": 4, "rerank": True})
+    assert contents(wide) == ["zebra zone", "zzzz zzzz zebra", "zebra apple apple apple"]
+
+
+def test_reranking_respects_the_file_filter(client, fake_embedding, fake_cross_encoder):
+    ids = upload_corpus(client)
+
+    response = client.post(
+        "/search/", json={"query": "zebra zone", "top_k": 1, "top_n": 2, "rerank": True, "file_ids": [ids["a"], ids["d"]]}
+    )
+
+    assert contents(response) == ["zzzz zzzz zebra"]
+
+
+def test_reranking_can_use_a_chosen_cross_encoder_preset(client, fake_embedding, fake_cross_encoder):
+    upload_corpus(client)
+
+    response = client.post(
+        "/search/",
+        json={"query": "zebra zone", "top_k": 1, "top_n": 2, "rerank": True, "cross_encoder_preset_id": fake_cross_encoder.id},
+    )
+    missing = client.post("/search/", json={"query": "zebra zone", "top_k": 1, "top_n": 2, "rerank": True, "cross_encoder_preset_id": 999})
+
+    assert response.status_code == 200
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "preset_not_found"
+
+
+@pytest.mark.parametrize("top_n", [1, 5])
+def test_candidates_must_outnumber_the_final_results(client, fake_embedding, fake_cross_encoder, top_n):
+    upload_corpus(client)
+
+    response = client.post("/search/", json={"query": "zebra zone", "top_k": 5, "top_n": top_n, "rerank": True})
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "invalid_request"
+    assert "top_n" in error["details"]["fields"]
+
+
+def test_default_candidates_must_also_outnumber_the_final_results(client, fake_embedding, fake_cross_encoder):
+    response = client.post("/search/", json={"query": "zebra", "top_k": 60, "rerank": True})
+
+    assert response.status_code == 422
+    assert "top_n" in response.json()["error"]["details"]["fields"]
+
+
+def test_top_n_is_not_checked_without_reranking(client, fake_embedding):
+    upload_corpus(client)
+
+    response = client.post("/search/", json={"query": "zebra zone", "top_k": 5, "top_n": 1})
+
+    assert response.status_code == 200
+
+
+def test_the_search_function_rejects_invalid_candidates_too(crud_database, fake_embedding, fake_cross_encoder):
+    from lazy_bird.crud.search import search
+    from lazy_bird.errors import InvalidInputError
+
+    with pytest.raises(InvalidInputError) as error:
+        search("zebra", top_k=5, rerank=True, top_n=5)
+
+    assert error.value.code == "invalid_top_n"
+
+
+def test_reranking_without_cross_encoder_preset_explains_how_to_fix_it(client, fake_embedding):
+    upload_corpus(client)
+
+    response = client.post("/search/", json={"query": "zebra zone", "top_k": 2, "rerank": True})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "no_default_cross_encoder_preset"

@@ -448,7 +448,15 @@ default preset automatically. The API summarizes rows into one file `state`:
   formats they load.
 - **Search**: `POST /search/` embeds the query with a preset (default one when
   omitted) and returns the nearest chunks of that model's table, optionally limited
-  to some files.
+  to some files. Two modes: *embedding only* (`rerank: false`, the default) returns
+  the `top_k` nearest chunks; *reranking* (`rerank: true`) retrieves `top_n`
+  candidates (default 50), scores each against the query with a cross-encoder preset
+  (`cross_encoder_preset_id`, default preset when omitted) and returns the `top_k`
+  best, ordered by `score` (results keep their embedding `distance`). `top_n` is the
+  candidate pool, `top_k` the final count, and `top_n > top_k` is required: `422
+  invalid_request` with `details.fields.top_n` at the API, `invalid_top_n` from
+  `crud.search.search`. The cross-encoder preset is resolved before the embedding
+  model runs, so a missing preset fails fast.
 - **Preferences** (`preference.yaml`, `GET/PATCH /preferences/`, form at
   `/preferences/form`): `auto-embedding.enable`, `chunking.max_tokens` (chunk budget,
   independent of models), `files.scan_every_minutes` (0 = startup only),
