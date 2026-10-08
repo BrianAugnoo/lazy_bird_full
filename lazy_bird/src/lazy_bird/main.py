@@ -19,6 +19,7 @@ from lazy_bird.api.error_handlers import install_error_handlers
 from lazy_bird.errors import error_payload
 from lazy_bird.tools.hf_auth import authenticate_hf
 from lazy_bird.crud.llm_model import sync_cache as sync_cached_models
+from lazy_bird.cross_encoder import initialize_cross_encoder_engines
 from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
@@ -37,6 +38,7 @@ def initialize_extensions() -> None:
     from lazy_bird.tasks import discover_tasks
 
     initialize_embedding_engines()
+    initialize_cross_encoder_engines()
     initialize_inference_engines()
     for ensure in (instruction.ensure_folders, skill.ensure_folders, agent_preset.registry.ensure_folders, session_preset.registry.ensure_folders):
         ensure()

@@ -83,6 +83,7 @@ class EngineFamily:
         on_default_change: Callable[[], None] | None = None,
     ) -> None:
         self.kind = kind
+        self.label = kind.replace("_", " ")  # how messages name the family
         self.package = package
         self.required = required
         self.engine_table = engine_table
@@ -156,7 +157,7 @@ class EngineFamily:
         with db() as session:
             row = session.get(self.engine_table, engine_id)
             if row is None:
-                raise NotFoundError(f"{self.kind.capitalize()} engine", engine_id, code="engine_not_found")
+                raise NotFoundError(f"{self.label.capitalize()} engine", engine_id, code="engine_not_found")
             return self._engine_out(row)
 
     def loaded(self, engine: EngineOut) -> LoadedEngine:
@@ -164,7 +165,7 @@ class EngineFamily:
         loaded = self._loaded.get(engine.name)
         if loaded is None:
             raise UnavailableError(
-                f"{self.kind.capitalize()} engine '{engine.name}' is not available (its module failed to load or was removed).",
+                f"{self.label.capitalize()} engine '{engine.name}' is not available (its module failed to load or was removed).",
                 code="engine_unavailable",
                 details={"engine_id": engine.id, "engine": engine.name},
             )
@@ -221,7 +222,7 @@ class EngineFamily:
     def _preset_row(self, session, preset_id: int) -> SQLModel:
         row = session.get(self.preset_table, preset_id)
         if row is None:
-            raise NotFoundError(f"{self.kind.capitalize()} preset", preset_id, code="preset_not_found")
+            raise NotFoundError(f"{self.label.capitalize()} preset", preset_id, code="preset_not_found")
         return row
 
     def presets(self) -> list[BaseModel]:
@@ -251,7 +252,7 @@ class EngineFamily:
         except IntegrityError as error:
             session.rollback()
             raise ConflictError(
-                f"The {self.kind} preset name '{name}' is already taken.",
+                f"The {self.label} preset name '{name}' is already taken.",
                 code="preset_name_taken",
                 details={"name": name},
             ) from error
@@ -290,7 +291,7 @@ class EngineFamily:
                 row.default = True
             elif changes.get("default") is False and row.default:
                 raise ConflictError(
-                    f"A default {self.kind} preset is required; mark another preset as default instead.",
+                    f"A default {self.label} preset is required; mark another preset as default instead.",
                     code="default_preset_required",
                 )
             session.add(row)
@@ -322,11 +323,11 @@ class EngineFamily:
             preset = self.default_preset()
             if preset is None:
                 raise UnavailableError(
-                    f"No {self.kind} preset exists yet. Create one to use {self.kind}.",
+                    f"No {self.label} preset exists yet. Create one to use {self.label}.",
                     code=f"no_default_{self.kind}_preset",
                 )
         else:
             preset = self.preset(preset_id)
         if not preset.valid:
-            raise InvalidSettingsError(preset.errors, message=f"{self.kind.capitalize()} preset '{preset.name}' is invalid.")
+            raise InvalidSettingsError(preset.errors, message=f"{self.label.capitalize()} preset '{preset.name}' is invalid.")
         return self.resolve_settings(getattr(preset, self.engine_fk), preset.kwargs, preset.id)

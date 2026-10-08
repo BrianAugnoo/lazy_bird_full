@@ -208,6 +208,30 @@ def fake_embedding(crud_database, monkeypatch):
     return engine_family.create_preset("fake", engine.id, {}, default=True)
 
 
+class FakeCrossEncoderSettings(BaseModel):
+    pass
+
+
+def _fake_rerank(query, documents, settings, model):
+    """Deterministic scores: how many words of the query a document contains."""
+    words = set(query.lower().split())
+    return [float(len(words & set(document.lower().split()))) for document in documents]
+
+
+@pytest.fixture
+def fake_cross_encoder(crud_database, monkeypatch):
+    """Register a fake cross-encoder engine and make one of its presets the default."""
+    from lazy_bird.cross_encoder import engine_family
+
+    module = ModuleType("fake_cross_encoder_engine")
+    module.name = "fake-cross-encoder"
+    module.EngineSettings = FakeCrossEncoderSettings
+    module.rerank = _fake_rerank
+    monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
+    engine = engine_family.register(module)
+    return engine_family.create_preset("fake-reranker", engine.id, {}, default=True)
+
+
 @pytest.fixture
 def running_scheduler(migrated_database, monkeypatch):
     """A started scheduler with generous resources, stopped after the test."""

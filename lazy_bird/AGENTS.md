@@ -120,6 +120,7 @@ suite never calls it (it uses the `fake_inference` fixture).
 | `storages/` | files on disk: uploads in `storages/uploads/` (git-ignored), safe paths, hashes |
 | `chunker/` | splits files into chunks, one extension per file type |
 | `embedding/` | embedding engine family, `embed_texts`, `embed_query`, vector spaces |
+| `cross_encoder/` | cross-encoder engine family (reranking), `rerank_scores` |
 | `inference/` | inference engine family, agentic loop, streaming types |
 | `agents/` | tools, hooks, skills, instructions, agent and session presets, agent runtime |
 | `tasks/` | background task system: registry, scheduler, resources, events, task kinds |
@@ -172,7 +173,7 @@ WebSockets send `{"type": "error", "error": {...}}` with the same body.
 
 Two layouts:
 
-- **flat packages** — `embedding/engines/`, `inference/engines/`, `chunker/extensions/`,
+- **flat packages** — `embedding/engines/`, `cross_encoder/engines/`, `inference/engines/`, `chunker/extensions/`,
   `database/sql_db/`, `database/vector_db/`: every module whose name does not start
   with `_` is an extension;
 - **extension folders** — `agents/tools/`, `agents/hook/`, `agents/skill/`,
@@ -223,6 +224,7 @@ The frontend builds every settings form from `kwargs_key` (see `web/AGENTS.md` �
 | SQL database | `database/sql_db/<name>.py` | `name`, `messages = {"initialize", "disconnect"}`, optional `Settings`; `initialize(**settings) -> Engine`, `disconnect(engine, drop=False)` (`database/contracts.py`) |
 | Vector database | `database/vector_db/<name>.py` | same metadata; `initialize`, `disconnect(drop)`, `tables()`, `create(model_name, rows)`, `delete(model_name, chunk_ids)`, `count(model_name, chunk_ids=None)`, `retrieve(model_name, top_k, vector, chunk_ids=None)`, `drop(model_name)`. One table per model with `chunk_id` + `vector` only; chunk content lives in SQL |
 | Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; optional `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}` |
+| Cross-encoder engine | `cross_encoder/engines/<name>.py` | same as an embedding engine (`name`, `EngineSettings`, `fields`, `formats`); `rerank(query, documents, settings, model) -> list[float]`: one relevance score per document, in order, higher = more relevant. No vector space |
 | Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`resources`; `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
 | Chunker | `chunker/extensions/<ext>.py` (`md.py` for `.md`) | `async def chunk(file, max_token) -> list[dict]`; each dict has `content`, `start_line`, `end_line` and optionally `start_row`, `end_row`, `token_count`, `meta` |
 | Task kind | `tasks/{extension}/*.py` | functions decorated with `@task(...)` (§7) |
@@ -243,10 +245,15 @@ unsetting the default without choosing another is a conflict). Settings with
 `model_id` reference an `LLMModel`: the family checks it exists and that the engine
 supports its selected format, then hands the resolved model to the engine.
 
-The shipped `sentence-transformers` embedding engine caches its model in memory
-(`_load`); with its `unloading` setting (default on) it releases the model, and the
-GPU cache, at the end of every `embed` call, even when the call fails. Turn it off
-to keep the model loaded between calls.
+The shipped `sentence-transformers` embedding and cross-encoder engines cache their
+model in memory (`_load`); with their `unloading` setting (default on) they release
+the model, and the GPU cache, at the end of every `embed` / `rerank` call, even when
+the call fails. Turn it off to keep the model loaded between calls. The
+cross-encoder family is separate from the embedding one (own tables and presets,
+`/cross-encoder-engines`, `/cross-encoder-presets`); it only scores query/document
+pairs. `sentence-transformers` loads `CrossEncoder` models (e.g.
+`cross-encoder/ms-marco-MiniLM-L6-v2`); listwise rerankers with custom code such as
+`jinaai/jina-reranker-v3.5` are not cross-encoders and need an engine of their own.
 
 Python tool and hook code is only added on disk (never uploaded over HTTP). Through
 the API, `default/` items are read-only and `custom/` items can be created, edited
@@ -462,8 +469,8 @@ Tables (see the live diagram at `/schemas`):
 | `fileprocessing` | processor, target, state, `content_hash`, error | `file_id`, `task_id` |
 | `task` | kind, title, params, status, control, priority, position, `run_at`, resources, progress, state, result, error, attempts, `dedupe_key` | |
 | `llmmodel` | name, `hf_path`, `local_path`, source, formats, files, selections, dimensions, context | |
-| `embeddingengine`, `inferenceengine` | discovered engines: name, file, formats, `kwargs_key` | → presets |
-| `presetembedding`, `presetinference` | name, kwargs, `default` (one per table) | engine id |
+| `embeddingengine`, `crossencoderengine`, `inferenceengine` | discovered engines: name, file, formats, `kwargs_key` | → presets |
+| `presetembedding`, `presetcrossencoder`, `presetinference` | name, kwargs, `default` (one per table) | engine id |
 | `toolsettings`, `hooksettings` | saved settings per module file | |
 | `session` | title, meta | → `agent` |
 | `agent` | name, description, instructions, lists of tools/hooks/skills/instructions, master, preset, meta | `session_id`, `agenthierarchy` (parent/child) |
@@ -499,7 +506,7 @@ checks that models match the migrated schema and that downgrade/upgrade works).
 ## 10. API surface
 
 Routers (`api/endpoints/`): `files`, `chunks`, `search`, `models` (+ uploads, hub
-status, login, files), `embedding-engines`/`embedding-presets`, `inference-engines`/
+status, login, files), `embedding-engines`/`embedding-presets`, `cross-encoder-engines`/`cross-encoder-presets`, `inference-engines`/
 `inference-presets` (+ `/inference/complete`), `tasks` (+ `/ws/tasks`), `databases`,
 `api-keys`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
 `instructions`, `agent-presets`, `session-presets`, `sessions`, `agents`,
