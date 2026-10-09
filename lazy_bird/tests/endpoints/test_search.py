@@ -163,3 +163,36 @@ def test_reranking_without_cross_encoder_preset_explains_how_to_fix_it(client, f
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "no_default_cross_encoder_preset"
+
+
+def test_a_search_only_reads_the_table_of_the_model_it_embeds_the_query_with(client, fake_embedding):
+    from lazy_bird.embedding import engine_family, vector_space
+    from lazy_bird.tasks.default.files import chunk_file, embed_file
+
+    wide = engine_family.create_preset("wide", fake_embedding.embedding_engine_id, {"dimension": 8})  # not the default
+
+    def upload_embedded_with(name: str, content: bytes, preset_id: int) -> int:
+        file_id = client.post("/files/upload?dir=docs", files={"files": (name, content, "text/markdown")}).json()[0]["id"]
+        chunk_file.run(file_id=file_id)
+        embed_file.run(file_id=file_id, target=vector_space(engine_family.resolve(preset_id)), preset_id=preset_id)
+        return file_id
+
+    with_default = upload_embedded_with("small.md", b"zzzz", fake_embedding.id)
+    with_wide = upload_embedded_with("wide.md", b"zzzz", wide.id)
+
+    by_default = client.post("/search/", json={"query": "zzzz", "top_k": 10}).json()
+    by_wide = client.post("/search/", json={"query": "zzzz", "top_k": 10, "preset_id": wide.id}).json()
+
+    assert {result["chunk"]["file_id"] for result in by_default} == {with_default}
+    assert {result["chunk"]["file_id"] for result in by_wide} == {with_wide}
+
+
+def test_a_model_that_embedded_nothing_finds_nothing(client, fake_embedding):
+    from lazy_bird.embedding import engine_family
+
+    unused = engine_family.create_preset("unused", fake_embedding.embedding_engine_id, {"dimension": 8})
+    upload_and_process(client, "zoo.md", b"zzzz zebra")
+
+    response = client.post("/search/", json={"query": "zzzz", "preset_id": unused.id})
+
+    assert response.status_code == 200 and response.json() == []

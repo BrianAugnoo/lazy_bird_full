@@ -1,6 +1,6 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { tasks as tasksApi } from '@/api/endpoints/tasks';
-import { DEFAULT_PRIORITY, isScheduled, moveTask, taskAction, useTaskStore, type TaskAction } from '@/core/tasks/store';
+import { DEFAULT_PRIORITY, PRIORITY_NOW, isScheduled, moveTask, taskAction, useTaskStore, type TaskAction } from '@/core/tasks/store';
 import type { ResourceSnapshot, Task } from '@/core/types/api';
 import { Icon } from '@/ui/Icon';
 import { PageHeader } from '@/ui/PageHeader';
@@ -58,6 +58,7 @@ function Resources({ resources }: { resources: ResourceSnapshot }) {
 interface RowProps {
   task: Task;
   waiting?: string[];
+  unresponsive?: boolean;
   onAction: (action: TaskAction, task: Task) => void;
   drag?: {
     onDragStart: (event: DragEvent) => void;
@@ -70,7 +71,7 @@ interface RowProps {
   };
 }
 
-function TaskRow({ task, waiting, onAction, drag }: RowProps) {
+function TaskRow({ task, waiting, unresponsive, onAction, drag }: RowProps) {
   const [open, setOpen] = useState(false);
   const progress = task.progress ?? null;
   const finished = ['completed', 'failed', 'cancelled'].includes(task.status);
@@ -95,9 +96,14 @@ function TaskRow({ task, waiting, onAction, drag }: RowProps) {
           </button>
           <span className={`chip ${isScheduled(task) ? 'chip-outline' : STATUS_CHIPS[task.status]}`}>{isScheduled(task) ? 'scheduled' : task.status}</span>
           {task.control && <span className="chip chip-warning">{task.control === 'pause' ? 'pausing…' : 'cancelling…'}</span>}
+          {unresponsive && task.status === 'running' && (
+            <span className="chip chip-warning" title="It was asked to make room for a more urgent task but has not stopped yet">
+              not responding
+            </span>
+          )}
           {task.priority !== DEFAULT_PRIORITY && !finished && (
             <span className="chip chip-outline" title="Lower numbers run first">
-              priority {task.priority}
+              {task.priority === PRIORITY_NOW ? 'run now' : `priority ${task.priority}`}
             </span>
           )}
           {task.attempts > 1 && (
@@ -116,7 +122,7 @@ function TaskRow({ task, waiting, onAction, drag }: RowProps) {
         )}
         <div className="task-meta">
           {task.message && <span>{task.message}</span>}
-          {waiting && waiting.length > 0 && <span className="text-warning">Waiting for {waiting.join(', ')}</span>}
+          {waiting && waiting.length > 0 && <span className="text-warning">Waiting for {waiting.map((name) => RESOURCE_LABELS[name]?.label.toLowerCase() ?? name).join(', ')}</span>}
           {isScheduled(task) && <span>Starts {new Date(task.run_at!).toLocaleString()}</span>}
           {finished && <span>{duration(task.started_at, task.finished_at)}</span>}
           {task.error && <span className="text-error">{task.error.message}</span>}
@@ -155,6 +161,16 @@ function TaskRow({ task, waiting, onAction, drag }: RowProps) {
             <Icon name="pause" /> Pause
           </button>
         )}
+        {task.status === 'queued' && task.priority !== PRIORITY_NOW && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => onAction('run_now', task)}
+            title="Start it before everything else, even if other tasks have to step aside"
+          >
+            Run now
+          </button>
+        )}
         {task.status === 'paused' && (
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => onAction('resume', task)}>
             <Icon name="play" /> Resume
@@ -181,7 +197,7 @@ function TaskRow({ task, waiting, onAction, drag }: RowProps) {
 }
 
 export function TasksPage() {
-  const { tasks, resources, waiting, kinds, status } = useTaskStore();
+  const { tasks, resources, waiting, unresponsive, kinds, status } = useTaskStore();
   const toast = useToast();
   const [kind, setKind] = useState('');
   const [dragged, setDragged] = useState<number | null>(null);
@@ -244,7 +260,7 @@ export function TasksPage() {
         ) : (
           <div className="task-list">
             {running.map((task) => (
-              <TaskRow key={task.id} task={task} onAction={act} />
+              <TaskRow key={task.id} task={task} unresponsive={unresponsive.includes(task.id)} onAction={act} />
             ))}
           </div>
         )}

@@ -124,7 +124,8 @@ suite never calls it (it uses the `fake_inference` fixture).
 | `inference/` | inference engine family, agentic loop, streaming types |
 | `agents/` | tools, hooks, skills, instructions, agent and session presets, agent runtime |
 | `tasks/` | background task system: registry, scheduler, resources, events, task kinds |
-| `residency.py` | models of local engines in memory: who holds them, when they are loaded and freed (§5.3) |
+| `residency.py` | models of local engines in memory: who holds them, where they live, when they are loaded and freed (§5.3, §7.5) |
+| `priority.py` | the priority ranks: `NOW` 0, `SEARCH` 1, `INFERENCE` 2, `BACKGROUND` 5 (lower = more urgent) |
 | `tools/` | utilities: Hugging Face cache and auth, model inspection, GGUF reader, schema diagram |
 | `preferences.py` + `preference.yaml` | runtime preferences (§8) |
 | `logging_config.py`, `log_*.py` | loguru setup, call tracing, log search and call trees |
@@ -224,9 +225,9 @@ The frontend builds every settings form from `kwargs_key` (see `web/AGENTS.md` �
 | --- | --- | --- |
 | SQL database | `database/sql_db/<name>.py` | `name`, `messages = {"initialize", "disconnect"}`, optional `Settings`; `initialize(**settings) -> Engine`, `disconnect(engine, drop=False)` (`database/contracts.py`) |
 | Vector database | `database/vector_db/<name>.py` | same metadata; `initialize`, `disconnect(drop)`, `tables()`, `create(model_name, rows)`, `delete(model_name, chunk_ids)`, `count(model_name, chunk_ids=None)`, `retrieve(model_name, top_k, vector, chunk_ids=None)`, `drop(model_name)`. One table per model with `chunk_id` + `vector` only; chunk content lives in SQL |
-| Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; optional `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}`; `local` engines: see below |
+| Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; `local` engines: see below |
 | Cross-encoder engine | `cross_encoder/engines/<name>.py` | same as an embedding engine (`name`, `EngineSettings`, `fields`, `formats`); `rerank(query, documents, settings, model) -> list[float]`: one relevance score per document, in order, higher = more relevant. No vector space; `local` engines: see below |
-| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`resources`/`local`; `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
+| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`local`, and `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}` for engines that are not local (held in the pool during each call); `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
 | Chunker | `chunker/extensions/<ext>.py` (`md.py` for `.md`) | `async def chunk(file, max_token) -> list[dict]`; each dict has `content`, `start_line`, `end_line` and optionally `start_row`, `end_row`, `token_count`, `meta` |
 | Task kind | `tasks/{extension}/*.py` | functions decorated with `@task(...)` (§7) |
 | Tool | `agents/tools/{extension}/<module>.py` | `tools = [...]` functions and/or classes; optional `ToolSettings` + `fields` (§6.1) |
@@ -251,19 +252,27 @@ an API called directly; the flag is stored in the `local` column of the engine t
 and shown on the engine page). Besides the family functions they define
 `load(settings, model) -> instance`, `unload(instance)` and, optionally,
 `load_key(settings, model)`: the settings that change what is loaded (without it, all
-of them), so presets differing only by e.g. `batch_size` share one model. Their
-operations receive the loaded instance first: `embed(encoder, texts, settings, model)`,
-`rerank(scorer, query, documents, settings, model)`. A local engine without `load` and
-`unload` fails to load like any broken extension.
+of them), so presets differing only by e.g. `batch_size` share one model, and
+`placements(settings, model)`: where the model can live, best first, as `(settings
+changes, memory taken)` pairs, e.g. `({"device": "cuda"}, {"vram_mb": 1648})` then
+`({"device": "cpu"}, {"ram_mb": 1392})` (a device chosen in the preset is the only
+place; without `placements` the engine declares no memory and nothing is accounted).
+Their operations receive the loaded instance first: `embed(encoder, texts, settings,
+model)`, `rerank(scorer, query, documents, settings, model)`, with `settings` as they
+apply where the model was placed. A local engine without `load` and `unload` fails to
+load like any broken extension.
 
 `residency.py` owns the loaded models. `resolved.call("embed", texts)` (what
 `embed_texts` / `rerank_scores` do) loads the model for that call and frees it right
 after, even when the call fails; `with resolved.loaded():` is a lease that keeps it
 loaded for every call inside the block, so a caller that knows its workload loads the
 model once (the `files.embed` task wraps all the batches of a file in one). The first
-lease loads, the last one frees; leases on the same engine and `load_key` share one
-instance, and calls on a shared instance run one at a time. No engine decides alone,
-inside a call, to unload.
+lease loads; leases on the same engine and `load_key` share one instance, and calls on
+a shared instance run one at a time. No engine decides alone, inside a call, to unload.
+What happens when the last lease leaves, and how memory is shared, depends on the
+`smart-memory` preference (§7.5): off, the model is freed right away and nothing is
+accounted; on, it stays loaded, holding its memory in the pool, until that memory is
+needed.
 
 The shipped `sentence-transformers` embedding and cross-encoder engines are local. Their
 `cache_optimization` setting (default off) runs the model in inference mode and clears
@@ -334,7 +343,8 @@ max_iter=20)` (one run per conversation at a time, `conversation_busy` otherwise
 2. for each step: run pending tool calls if any; else run the hooks, read the
    conversation, call the engine (`status: generating`), retrying retryable
    `EngineError`s with exponential backoff (`status: retrying`, delay ≤ 8 s), holding
-   the engine's resources from the shared pool (`status: waiting_resources`);
+   the engine's declared `resources` from the shared pool when it is not a local engine
+   (`status: waiting_resources`);
 3. tool calls → store a `tool-calling` message, run each tool, store
    `tool-response` messages (`meta.status` ok/error), continue;
 4. an answer → store an `assistant` message and finish (`done: completed`);
@@ -382,6 +392,9 @@ reindex.submit(folder="notes", priority=1)          # -> TaskOut
 
 - parameters are keyword arguments, JSON-serializable;
 - `resources` (dict, or function of the parameters): `cpu` slots, `vram_mb`, `ram_mb`;
+- `engines` (function of the parameters returning resolved engines): the local models the
+  task uses (`files.embed` declares its preset's engine). Their memory is reserved before
+  the task starts and is not part of `resources` (§7.5);
 - `ctx.checkpoint(progress, message, state)` is the **only** place where pause,
   cancel and shutdown stop a task; resuming runs the function again with
   `ctx.state` = last saved state. `ctx.report(progress, message)` only reports;
@@ -408,11 +421,14 @@ resources from the same pool. Pausing or cancelling a running task sets `control
 applied at its next checkpoint; queued/paused tasks change immediately. Moving a
 task places it before/after another and gives it that task's priority. At shutdown,
 running tasks go back to the queue. Only the most recent finished tasks are kept.
+With `smart-memory` off none of the resource rules above applies: only `tasks.workers`
+limits what runs (§7.5).
 
 ### 7.3 Live control
 
 `WS /ws/tasks` sends `{"type": "snapshot", "tasks", "resources", "kinds"}`, then
-`task`, `task_deleted`, `resources`, `waiting` (why queued tasks wait), `reordered`
+`task`, `task_deleted`, `resources`, `waiting` (why queued tasks wait), `reordered`,
+`task_unresponsive` (`task_id` asked to yield that did not stop in time, §7.5)
 and `file` (`file_id` whose processing changed) events. Commands:
 `{"action": "pause"|"resume"|"cancel"|"retry"|"delete", "task_id", "request_id"}`,
 `{"action": "move", "task_id", "before_id"|"after_id"}`,
@@ -452,6 +468,54 @@ With `auto-embedding.enable` (default), every file is chunked and embedded with 
 default preset automatically. The API summarizes rows into one file `state`:
 `missing`, `processing`, `error`, `outdated`, `pending`, `unsupported`, `ready`, `new`.
 
+### 7.5 Smart memory (`residency.py`, `tasks/memory.py`, `tasks/scheduler.py`)
+
+The `smart-memory` preference section decides how much the machine is supervised:
+
+- `enable: false` — **unsupervised**: tasks start whenever a worker is free, models are
+  loaded without any check and freed when their last lease leaves, even at the risk of
+  running out of memory;
+- `enable: true` (default) — RAM and GPU memory are watched. The pool caps what is free
+  by what the operating system reports (`tasks/memory.system_free`: `psutil` for RAM,
+  `nvidia-smi` for GPU memory, so no CUDA context is created in the server), which
+  counts memory used by other programs too. A reading that is unavailable means "no
+  limit besides the pool".
+- `fallback: wait | cpu` — a model that does not fit in GPU memory right now either
+  waits for it (`wait`, default) or is loaded in RAM instead (`cpu`). It only applies to
+  engines whose `device` is left empty; a device chosen in the preset is respected.
+- `interrupt_timeout_seconds` (T_max, default 60) — how long a task asked to yield may
+  take to reach a checkpoint.
+
+With it on, a loaded model holds its memory in the pool (`engine:*` holders). A model
+nobody uses stays loaded until its memory is needed: it is then evicted, least recently
+used first, and only if it holds the missing resource. A task that declares `engines`
+reserves their models (in the best place that fits, the CPU being the fallback) before
+it starts, and the memory they take is counted once however many tasks share them.
+Search and other direct calls ask for a model the same way and wait for it (up to
+10 minutes, then `resources_busy`).
+
+When a request does not fit, the less urgent work gives way (`priority.py`: the lower the
+number the more urgent; only strictly less urgent running tasks are asked):
+
+1. idle models are evicted first, at no cost to anyone;
+2. otherwise the **fewest** running tasks whose release covers what is missing are asked to
+   yield (among equal sets, the least urgent ones): they stop at their next checkpoint,
+   go back to the queue (the interruption does not count as an attempt) and resume from
+   their saved state once the urgent work is done. What a task releases is its own
+   resources plus the models only it uses;
+3. a task that has not stopped after `interrupt_timeout_seconds` is reported with a
+   `task_unresponsive` event and no longer counted on: the urgent request keeps waiting.
+   Tasks run in threads, so they cannot be killed; forcing them out needs processes
+   (planned: an engine host process, and isolated tasks).
+
+A model that cannot fit in the machine even if everything else gave way is refused with
+`InsufficientResourcesError` (code `insufficient_memory`, 422): "Cannot process with
+'<model>': use a smaller model. Required memory: N MB, available memory: M MB." (M is the
+most the machine could provide: its capacity, or less when other programs hold part of
+it). It is raised when a task is submitted, when a task is about to start, and for direct
+calls such as search. If the model would fit on the CPU, the message says to set the
+fallback to `cpu`.
+
 ## 8. Files, models, search, preferences
 
 - **Files**: uploads go to `storages/uploads/{dir}/`; a name already taken in the
@@ -484,7 +548,8 @@ default preset automatically. The API summarizes rows into one file `state`:
 - **Preferences** (`preference.yaml`, `GET/PATCH /preferences/`, form at
   `/preferences/form`): `auto-embedding.enable`, `chunking.max_tokens` (chunk budget,
   independent of models), `files.scan_every_minutes` (0 = startup only),
-  `tasks.workers` (restart required) and `tasks.resources` (capacity overrides).
+  `tasks.workers` (restart required), `tasks.resources` (capacity overrides) and the
+  `smart-memory` section (`enable`, `fallback`, `interrupt_timeout_seconds`, §7.5).
 - **API keys** (`apikey`): secrets for extensions, never returned by the API. The
   `HuggingFace` key logs in to the Hub (again when replaced, out when deleted).
 - **Logs**: loguru to the console and `logs.txt` (in the server's working directory); `/logs/` searches entries (BM25 or
@@ -559,8 +624,9 @@ schema with unknown ids / invalid bodies and checks the uniform error format.
   - `client` — `TestClient` without scheduler start, Hugging Face login or cache sync;
   - `isolated_hf_cache` (autouse) — every test gets an empty temporary Hugging Face cache;
   - `storage_root`, `upload_file_factory`, `model_cache` (temporary HF cache);
-  - `fake_embedding`, `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
-  - `running_scheduler`, `isolated_scheduler` (autouse), `wait_until`, `process_inline`.
+  - `fake_embedding`, `fake_local_embedding` (a local engine recording its `loads` / `unloads`, with `gpu_mb` / `cpu_mb` placements), `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
+  - `running_scheduler`, `wait_until`, `process_inline`;
+  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `unknown_system_memory`.
 - Tests must be deterministic; never weaken or skip a failing test to get green.
 - Frontend tests: `cd web && npm test` (see `web/AGENTS.md` §17).
 

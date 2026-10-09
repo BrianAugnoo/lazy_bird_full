@@ -9,12 +9,11 @@ from datetime import datetime
 from typing import Any, Callable
 
 from lazy_bird.errors import InvalidInputError
+from lazy_bird.priority import BACKGROUND
 
 Resources = dict[str, float]
 
-# Lower numbers run first. 0 is reserved for "run this now", asked by the user; the program
-# itself never creates it. Search is 1, inference 2, background work (embedding...) 5.
-DEFAULT_PRIORITY = 5
+DEFAULT_PRIORITY = BACKGROUND  # lower numbers run first, see lazy_bird.priority
 
 
 class TaskStop(BaseException):
@@ -31,7 +30,8 @@ class TaskCancelled(TaskStop):
 
 
 class TaskInterrupted(TaskStop):
-    """The server is shutting down: the task goes back to the queue."""
+    """The server is shutting down, or a more urgent request needs the resources of this
+    task: it goes back to the queue and resumes from its last checkpoint."""
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,11 @@ class TaskDefinition:
     priority: int
     retries: int
     description: str
+    engines: Callable[..., list[Any]] | None = None
+
+    def engines_for(self, params: dict[str, Any]) -> list[Any]:
+        """The engines this task will use (``ResolvedEngine``s), so their models can be made ready first."""
+        return list(self.engines(**params)) if self.engines is not None else []
 
     def resources_for(self, params: dict[str, Any]) -> Resources:
         needs = self.resources(**params) if callable(self.resources) else self.resources
@@ -100,6 +105,7 @@ def task(
     resources: Resources | Callable[..., Resources] | None = None,
     priority: int = DEFAULT_PRIORITY,
     retries: int = 0,
+    engines: Callable[..., list[Any]] | None = None,
 ) -> Callable[[Callable[..., Any]], TaskDefinition]:
     """Declare a task kind.
 
@@ -107,6 +113,9 @@ def task(
     ``resources`` is a dict or a function of the parameters returning one.
     ``priority`` is how urgent the task is: the lower the number, the sooner it runs.
     ``retries`` is how many times a failed run is retried automatically.
+    ``engines`` is a function of the parameters returning the resolved engines the task
+    uses: the memory of their models is reserved before the task starts, not in
+    ``resources``.
     """
 
     def decorator(function: Callable[..., Any]) -> TaskDefinition:
@@ -121,6 +130,7 @@ def task(
             priority=priority,
             retries=retries,
             description=inspect.getdoc(function) or "",
+            engines=engines,
         )
         _registry[kind] = definition
         return definition

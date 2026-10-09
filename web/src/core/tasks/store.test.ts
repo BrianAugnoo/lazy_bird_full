@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mockApi } from '@/test/http';
 import type { Task } from '@/core/types/api';
-import { applyTaskEvent, isScheduled, sortTasks, type TaskState } from './store';
+import { applyTaskEvent, isScheduled, sortTasks, taskAction, type TaskState } from './store';
 
 const task = (id: number, changes: Partial<Task> = {}): Task => ({
   id,
@@ -28,7 +29,7 @@ const task = (id: number, changes: Partial<Task> = {}): Task => ({
   ...changes,
 });
 
-const empty: TaskState = { tasks: [], kinds: [], resources: { capacity: {}, used: {}, holders: {} }, waiting: {}, status: 'open' };
+const empty: TaskState = { tasks: [], kinds: [], resources: { capacity: {}, used: {}, holders: {} }, waiting: {}, unresponsive: [], status: 'open' };
 
 describe('task queue order', () => {
   it('puts running tasks first, then waiting ones by priority (lowest number first) and position, then finished ones', () => {
@@ -59,5 +60,31 @@ describe('task queue order', () => {
     expect(isScheduled(task(1, { run_at: '2026-01-01T13:00:00Z' }), now)).toBe(true);
     expect(isScheduled(task(1, { run_at: '2026-01-01T11:00:00Z' }), now)).toBe(false);
     expect(isScheduled(task(1), now)).toBe(false);
+  });
+});
+
+describe('tasks asked to make room', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('remembers the running tasks that did not stop in time, until they do', () => {
+    let state = applyTaskEvent(empty, { type: 'snapshot', tasks: [task(1, { status: 'running' })], resources: empty.resources, kinds: [] });
+
+    state = applyTaskEvent(state, { type: 'task_unresponsive', task_id: 1 });
+    state = applyTaskEvent(state, { type: 'task_unresponsive', task_id: 1 });
+    expect(state.unresponsive).toEqual([1]);
+
+    state = applyTaskEvent(state, { type: 'task', task: task(1, { status: 'running', progress: 0.5 }) });
+    expect(state.unresponsive).toEqual([1]); // still running
+
+    state = applyTaskEvent(state, { type: 'task', task: task(1, { status: 'queued' }) });
+    expect(state.unresponsive).toEqual([]); // it yielded
+  });
+
+  it('runs a task now by giving it the most urgent priority', async () => {
+    const calls = mockApi({ 'PATCH /tasks/7': task(7, { priority: 0 }) });
+
+    await taskAction('run_now', 7);
+
+    expect(calls('PATCH /tasks/7')).toEqual([{ priority: 0 }]);
   });
 });

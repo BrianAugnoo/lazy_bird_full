@@ -13,9 +13,12 @@ number of presets (named kwargs) per engine. Each module must define:
 - ``local`` (optional, ``False``): the engine runs a model on this machine. A local
   engine also defines ``load(settings, model) -> instance`` and ``unload(instance)``
   (and optionally ``load_key(settings, model)``: the settings that change what is
-  loaded, so presets that differ only by e.g. ``batch_size`` share one model). Its
-  family functions receive that instance first, ``embed(instance, texts, settings,
-  model)``, and ``lazy_bird.residency`` decides when the model is loaded and freed.
+  loaded, so presets that differ only by e.g. ``batch_size`` share one model, and
+  ``placements(settings, model)``: where the model can live, best first, as
+  ``(settings changes, memory taken)`` pairs such as ``({"device": "cuda"},
+  {"vram_mb": 900})``). Its family functions receive that instance first,
+  ``embed(instance, texts, settings, model)``, and ``lazy_bird.residency`` decides when
+  the model is loaded and freed.
 
 When ``EngineSettings`` declares ``model_id``, the attribute references an
 ``LLMModel``: the family checks it exists and that the engine supports its format,
@@ -95,13 +98,14 @@ class ResolvedEngine:
         """Run an engine operation: ``operation(*args, settings, model)`` on its module.
 
         A local engine gets its loaded model first, ``operation(instance, *args, settings,
-        model)``. The model is loaded for the call and freed right after it, unless a
-        ``loaded()`` block holds it.
+        model)``, with ``settings`` as they apply where the model was placed (e.g. the CPU
+        when it did not fit on the GPU). The model stays loaded while a ``loaded()`` block
+        or a task holds it; otherwise it is released after the call.
         """
         if not self.local:
             return getattr(self.module, operation)(*args, self.settings, self.model)
         with residency().use(self) as loaded:
-            return loaded.run(operation, *args, self.settings, self.model)
+            return loaded.run(operation, *args, loaded.placed(self.settings), self.model)
 
 
 class EngineFamily:

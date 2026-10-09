@@ -24,6 +24,7 @@ from lazy_bird.embedding import initialize_embedding_engines
 from lazy_bird.inference import initialize_inference_engines
 from lazy_bird import database
 from lazy_bird.preferences import apply_preferences
+from lazy_bird.residency import residency
 from lazy_bird.tasks import start_scheduler, stop_scheduler
 from lazy_bird.tools.db_schema import get_schema_diagram
 from lazy_bird.agents.tools import initialize_tools
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI):
     finally:
         if scheduler_started:
             stop_scheduler()
+        residency().shutdown()
 
 
 app = FastAPI(lifespan=lifespan)

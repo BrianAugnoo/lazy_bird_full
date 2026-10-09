@@ -8,6 +8,12 @@ Scheduling pass (on every wake-up, at least once per ``poll_interval``):
 3. a task that does not fit blocks every later task needing one of the missing
    resources (so a large GPU job is not starved by smaller ones), while tasks that
    need other resources can still start.
+
+With ``smart-memory`` on, a task also reserves the memory of the models of its
+``engines`` before it starts, resources are capped by the memory the machine really
+has free, and a task that does not fit asks the less urgent running tasks (the fewest
+possible) to yield: they stop at their next checkpoint, go back to the queue and
+resume later. With it off, only the number of workers limits what runs.
 """
 
 from __future__ import annotations
@@ -21,13 +27,18 @@ from typing import Any, Callable
 from loguru import logger
 
 from lazy_bird.crud import task as task_crud
-from lazy_bird.errors import AppError
+from lazy_bird import priority as priorities
+from lazy_bird.errors import AppError, InsufficientResourcesError
+from lazy_bird.preferences import smart_memory
+from lazy_bird.residency import MemoryPending, acting_as, residency
 from lazy_bird.schemas.task import TaskOut
 from lazy_bird.tasks.context import TaskContext
 from lazy_bird.tasks.events import EventHub
 from lazy_bird.tasks.registry import TaskCancelled, TaskDefinition, TaskInterrupted, TaskPaused, definition, listeners
-from lazy_bird.tasks.resources import InsufficientResourcesError, ResourcePool
+from lazy_bird.tasks.memory import Candidate, choose_victims
+from lazy_bird.tasks.resources import ResourcePool, Resources
 
+MEMORY = {"vram_mb", "ram_mb"}
 RETRY_DELAY = timedelta(seconds=30)
 FINISHED_TASKS_KEPT = 500
 
@@ -76,6 +87,9 @@ class Scheduler:
         self._running: set[int] = set()
         self._controls: dict[int, str] = {}
         self._waiting: dict[int, list[str]] = {}
+        self._priority_of: dict[int, int] = {}
+        self._yielding: dict[int, float] = {}  # running tasks asked to make room, and when
+        self._unresponsive: set[int] = set()  # asked, but not stopped within the interrupt timeout
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -129,6 +143,9 @@ class Scheduler:
             return self._schedule()
 
     def _schedule(self) -> list[int]:
+        smart = smart_memory()
+        if smart.enable:
+            self._report_unresponsive(smart.interrupt_timeout_seconds)
         started, waiting, blocked = [], {}, set()
         for row in task_crud.ready(self.now()):
             needs = {name: amount for name, amount in (row.resources or {}).items() if amount > 0}
@@ -143,25 +160,119 @@ class Scheduler:
             if blocked & needs.keys():
                 waiting[row.id] = sorted(blocked & needs.keys())
                 continue
-            try:
-                self.pool.check(needs)
-            except InsufficientResourcesError as error:
-                self._publish(task_crud.finish(row.id, "failed", error=_error(error)))
-                continue
-            holder = f"task:{row.id}"
-            if not self.pool.try_acquire(holder, needs):
-                missing = self.pool.blocked_by(needs)
-                blocked |= missing
-                waiting[row.id] = sorted(missing)
-                continue
+            if smart.enable:
+                try:
+                    reasons = self._admit(row, needs, task_definition, blocked)
+                except InsufficientResourcesError as error:
+                    self._publish(task_crud.finish(row.id, "failed", error=_error(error)))
+                    continue
+                if reasons:
+                    waiting[row.id] = reasons
+                    continue
             claimed = task_crud.claim(row.id)
             if claimed is None:
-                self.pool.release(holder)
+                self._release_resources(row.id)
                 continue
             self._launch(claimed, task_definition)
             started.append(row.id)
         self._update_waiting(waiting)
         return started
+
+    def _admit(self, row, needs: Resources, task_definition: TaskDefinition, blocked: set[str]) -> list[str]:
+        """Reserve what a task needs, the models of its engines included.
+
+        Returns why the task has to wait, or ``[]`` when everything is reserved and it can start.
+        When it does not fit, less urgent running tasks are asked to yield.
+        """
+        holder = f"task:{row.id}"
+        residency().release_lessee(holder)  # nothing is left over from an earlier attempt that did not start
+        self.pool.check(needs)
+        engines = self._engines_of(task_definition, row.params)
+        if engines and blocked & MEMORY:
+            return sorted(blocked & MEMORY)  # an earlier task is already waiting for memory
+        try:
+            for resolved in engines:
+                residency().reserve(resolved, lessee=holder, priority=row.priority, preempt=self.preempt)
+        except MemoryPending as pending:
+            residency().release_lessee(holder)
+            blocked |= pending.missing
+            return sorted(pending.missing)
+        except InsufficientResourcesError:
+            residency().release_lessee(holder)
+            raise
+        if not self.pool.try_acquire(holder, needs, real=True):
+            residency().release_lessee(holder)
+            self.preempt(self.pool.deficit(needs, real=True), row.priority)
+            missing = self.pool.blocked_by(needs, real=True)
+            blocked |= missing
+            return sorted(missing)
+        return []
+
+    @staticmethod
+    def _engines_of(task_definition: TaskDefinition, params: dict[str, Any]) -> list:
+        try:
+            return task_definition.engines_for(params)
+        except AppError:
+            return []  # e.g. a deleted preset: the task reports the problem itself when it runs
+        except Exception:
+            logger.exception("Could not resolve the engines of task kind '{}'", task_definition.kind)
+            return []
+
+    def _release_resources(self, task_id: int) -> None:
+        holder = f"task:{task_id}"
+        residency().release_lessee(holder)
+        self.pool.release(holder)
+
+    # ----------------------------------------------------------------- preemption
+    def preempt(self, deficit: Resources, priority: int) -> bool:
+        """Ask the fewest running tasks less urgent than ``priority`` to yield enough of ``deficit``.
+
+        A task yields at its next checkpoint: it goes back to the queue and resumes later.
+        Returns False when even all of them together would not free enough. Asking again is
+        harmless: tasks already yielding (or being paused or cancelled) count as memory on
+        its way.
+        """
+        wanted = {name: amount for name, amount in deficit.items() if amount > 0}
+        if not wanted:
+            return True
+        with self._lock:
+            candidates, coming = [], {}
+            for task_id in self._running:
+                task_priority = self._priority_of.get(task_id, priorities.NOW)
+                if task_priority <= priority or task_id in self._unresponsive:
+                    continue
+                holder = f"task:{task_id}"
+                releases = self.pool.held(holder)
+                for name, amount in residency().exclusive_to(holder).items():
+                    releases[name] = releases.get(name, 0) + amount
+                if task_id in self._controls or task_id in self._yielding:
+                    for name, amount in releases.items():
+                        coming[name] = coming.get(name, 0) + amount
+                else:
+                    candidates.append(Candidate(holder, task_priority, releases))
+            remaining = {name: amount - coming.get(name, 0) for name, amount in wanted.items() if amount > coming.get(name, 0)}
+            if not remaining:
+                return True
+            victims = choose_victims(remaining, candidates)
+            if victims is None:
+                return False
+            now = time.monotonic()
+            for victim in victims:
+                task_id = int(victim.holder.split(":")[1])
+                self._controls[task_id] = "interrupt"
+                self._yielding[task_id] = now
+        logger.info("Asking task(s) {} to yield for a request of priority {}", [victim.holder for victim in victims], priority)
+        return True
+
+    def _report_unresponsive(self, timeout: float) -> None:
+        """Tasks that were asked to yield but did not stop in time are reported (and no longer counted on)."""
+        now = time.monotonic()
+        with self._lock:
+            late = [task_id for task_id, since in self._yielding.items() if task_id in self._running and task_id not in self._unresponsive and now - since > timeout]
+            self._unresponsive.update(late)
+        for task_id in late:
+            logger.warning("Task {} did not yield within {} s: it keeps its resources until it reaches a checkpoint", task_id, timeout)
+            self.events.publish({"type": "task_unresponsive", "task_id": task_id})
 
     def _update_waiting(self, waiting: dict[int, list[str]]) -> None:
         with self._lock:
@@ -173,6 +284,7 @@ class Scheduler:
     def _launch(self, task: TaskOut, task_definition: TaskDefinition) -> None:
         with self._lock:
             self._running.add(task.id)
+            self._priority_of[task.id] = task.priority
         self._publish(task)
         self._publish_resources()
         context = TaskContext(task.id, task.params, task_crud.state_of(task.id), self)
@@ -190,7 +302,7 @@ class Scheduler:
         except TaskCancelled:
             return task_crud.finish(task.id, "cancelled", state=context.state)
         except TaskInterrupted:
-            return task_crud.finish(task.id, "queued", state=context.state)
+            return task_crud.finish(task.id, "queued", state=context.state, refund_attempt=True)
         except Exception as error:
             logger.opt(exception=error).error("Task {} ({}) failed", task.id, task.kind)
             if task.attempts < task.max_attempts:
@@ -199,17 +311,21 @@ class Scheduler:
 
     def _execute(self, task: TaskOut, task_definition: TaskDefinition, context: TaskContext) -> None:
         try:
-            outcome = self._run(task, task_definition, context)
+            with acting_as(f"task:{task.id}", task.priority):
+                outcome = self._run(task, task_definition, context)
             self._publish(outcome)
             if outcome.status in ("completed", "failed", "cancelled"):
                 task_crud.prune_finished(FINISHED_TASKS_KEPT)
         except Exception:
             logger.exception("Could not record the end of task {}", task.id)
         finally:
-            self.pool.release(f"task:{task.id}")
+            self._release_resources(task.id)
             with self._lock:
                 self._running.discard(task.id)
                 self._controls.pop(task.id, None)
+                self._priority_of.pop(task.id, None)
+                self._yielding.pop(task.id, None)
+                self._unresponsive.discard(task.id)
             self._publish_resources()
             self.wake()
 
@@ -249,7 +365,10 @@ class Scheduler:
     def submit(self, task_definition: TaskDefinition, params: dict[str, Any], *, title=None, priority=None, run_at=None, dedupe_key=None, resources=None) -> TaskOut:
         task_definition.check_params(params)
         needs = resources if resources is not None else task_definition.resources_for(params)
-        self.pool.check({name: amount for name, amount in needs.items() if amount > 0})
+        if smart_memory().enable:
+            self.pool.check({name: amount for name, amount in needs.items() if amount > 0})
+            for resolved in self._engines_of(task_definition, params):
+                residency().check(resolved)
         with self._dispatch:
             return self._create(task_definition, params, title, priority, run_at, dedupe_key, needs)
 

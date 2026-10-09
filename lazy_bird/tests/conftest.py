@@ -211,22 +211,28 @@ def fake_embedding(crud_database, monkeypatch):
 class FakeLocalEmbeddingSettings(BaseModel):
     dimension: int = 4
     batch_size: int = 8  # does not change what is loaded (see load_key)
+    device: str | None = None
+    gpu_mb: float = 0  # memory the model takes on the "gpu" (0: the engine declares no memory at all)
+    cpu_mb: float = 0  # memory the model takes on the "cpu"
 
 
 class FakeModel:
     """The "loaded model" of the fake local engine."""
 
-    def __init__(self, dimension: int) -> None:
+    def __init__(self, dimension: int, device: str | None) -> None:
         self.dimension = dimension
+        self.device = device
 
 
 @pytest.fixture
 def fake_local_embedding(crud_database, monkeypatch):
     """A local embedding engine whose model loads and frees are recorded.
 
-    The module keeps ``loads`` (one entry per load), ``unloads`` (the freed models),
-    ``peak`` (most operations running at once on one model) and ``delay`` (seconds each
-    operation lasts); ``module.preset`` is its default preset.
+    The module keeps ``loads`` (one entry per load), ``devices`` (where each load happened),
+    ``unloads`` (the freed models), ``peak`` (most operations running at once on one model)
+    and ``delay`` (seconds each operation lasts); ``module.preset`` is its default preset.
+    With ``gpu_mb`` / ``cpu_mb`` in the settings the model declares the memory it takes on
+    a "gpu" (preferred) and on the "cpu" (when the device is left empty), like a real engine.
     """
     import threading
     import time
@@ -237,13 +243,14 @@ def fake_local_embedding(crud_database, monkeypatch):
     module.name = "fake-local-embedding"
     module.local = True
     module.EngineSettings = FakeLocalEmbeddingSettings
-    module.loads, module.unloads, module.peak, module.delay = [], [], 0, 0.0
+    module.loads, module.devices, module.unloads, module.peak, module.delay = [], [], [], 0, 0.0
     running = {"now": 0}
     guard = threading.Lock()
 
     def load(settings, model):
         module.loads.append(settings.dimension)
-        return FakeModel(settings.dimension)
+        module.devices.append(settings.device)
+        return FakeModel(settings.dimension, settings.device)
 
     def embed(instance, texts, settings, model):
         with guard:
@@ -251,14 +258,24 @@ def fake_local_embedding(crud_database, monkeypatch):
             module.peak = max(module.peak, running["now"])
         try:
             time.sleep(module.delay)
+            module.last_settings = settings
             return _fake_embed(texts, instance, model)
         finally:
             with guard:
                 running["now"] -= 1
 
+    def placements(settings, model):
+        plans = []
+        if settings.gpu_mb and settings.device in (None, "gpu"):
+            plans.append(({"device": "gpu"}, {"vram_mb": settings.gpu_mb}))
+        if settings.cpu_mb and settings.device in (None, "cpu"):
+            plans.append(({"device": "cpu"}, {"ram_mb": settings.cpu_mb}))
+        return plans
+
     module.load = load
     module.unload = lambda instance: module.unloads.append(instance)
-    module.load_key = lambda settings, model: settings.dimension
+    module.load_key = lambda settings, model: (settings.dimension, settings.device)
+    module.placements = placements
     module.embed = embed
     module.vector_space = lambda settings: f"fake/local-{settings.dimension}"
     monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
@@ -336,6 +353,22 @@ def isolated_hf_cache(tmp_path_factory, monkeypatch):
     from lazy_bird.tools import hf_cache
 
     monkeypatch.setattr(hf_cache, "HF_HUB_CACHE", str(tmp_path_factory.mktemp("hf-cache-isolated")))
+
+
+@pytest.fixture(autouse=True)
+def isolated_preferences(tmp_path_factory, monkeypatch):
+    """Tests run with the default preferences, whatever the developer's preference.yaml says."""
+    from lazy_bird import preferences
+
+    monkeypatch.setattr(preferences, "PREFERENCE_FILE", tmp_path_factory.mktemp("preferences") / "preference.yaml")
+
+
+@pytest.fixture(autouse=True)
+def unknown_system_memory(monkeypatch):
+    """Schedulers created by the code under test see no real memory reading (so no limit besides their pool)."""
+    import lazy_bird.tasks as tasks_module
+
+    monkeypatch.setattr(tasks_module, "system_free", lambda: {})
 
 
 @pytest.fixture(autouse=True)

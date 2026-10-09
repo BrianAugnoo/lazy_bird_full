@@ -242,7 +242,7 @@ class _Turn:
 
 @contextmanager
 def _hold(resolved: ResolvedEngine, holder: str, turn: _Turn) -> Iterator[None]:
-    estimate = getattr(resolved.module, "resources", None)
+    estimate = None if resolved.local else getattr(resolved.module, "resources", None)  # local models are accounted by the residency
     needs = {name: amount for name, amount in (estimate(resolved.settings, resolved.model) if estimate else {}).items() if amount > 0}
     if not needs:
         yield

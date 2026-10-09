@@ -137,6 +137,39 @@ async def test_a_new_default_preset_embeds_every_file_with_its_model(pipeline, u
 
 
 @pytest.mark.anyio
+async def test_files_embedded_by_another_model_are_embedded_again_for_the_new_default(pipeline, upload_file_factory):
+    from lazy_bird.embedding import engine_family
+
+    done_with_old = [await upload(upload_file_factory, f"{name}.md", b"Text.") for name in ("a", "b")]
+    for file_id in done_with_old:
+        wait_for_state(file_id, "ready")
+    engine = next(engine for engine in engine_family.engines() if engine.name == "fake-embedding")
+
+    engine_family.create_preset("wide", engine.id, {"dimension": 8}, default=True)  # another model: its vectors cannot be mixed with the old ones
+
+    for file_id in done_with_old:
+        wait_until(lambda: states(file_id).get(("embedding", "fake/space-8")) == "done", message=f"file {file_id} was not embedded with the new model")
+    assert database.vector_count("fake/space-8") == database.vector_count("fake/space-4") > 0  # every chunk, in its own table
+
+
+@pytest.mark.anyio
+async def test_going_back_to_a_model_that_already_embedded_everything_queues_nothing(pipeline, upload_file_factory):
+    from lazy_bird.embedding import engine_family
+
+    file_id = await upload(upload_file_factory, "notes.md", b"Text.")
+    wait_for_state(file_id, "ready")
+    engine = next(engine for engine in engine_family.engines() if engine.name == "fake-embedding")
+    wide = engine_family.create_preset("wide", engine.id, {"dimension": 8}, default=True)
+    wait_until(lambda: states(file_id).get(("embedding", "fake/space-8")) == "done")
+    original = next(preset for preset in engine_family.presets() if preset.name == "fake")
+
+    engine_family.update_preset(original.id, {"default": True})
+
+    assert file_processing.ensure_all() == 0  # nothing is left to embed for either model
+    assert wide.id != original.id and states(file_id)[("embedding", "fake/space-4")] == "done"
+
+
+@pytest.mark.anyio
 async def test_dropping_a_vector_table_forgets_its_embeddings(client, pipeline, upload_file_factory, monkeypatch):
     file_id = await upload(upload_file_factory, "notes.md", b"Text.")
     wait_for_state(file_id, "ready")

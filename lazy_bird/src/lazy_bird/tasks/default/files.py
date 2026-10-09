@@ -26,17 +26,12 @@ def chunk_file(ctx: TaskContext, file_id: int) -> dict:
     return {"file_id": file_id, "chunks": len(stored)}
 
 
-def embedding_resources(file_id: int, target: str, preset_id: int) -> dict[str, float]:
-    """Resources declared by the preset's engine (one CPU slot by default)."""
-    try:
-        resolved = engine_family.resolve(preset_id)
-    except AppError:
-        return {"cpu": 1}
-    estimate = getattr(resolved.module, "resources", None)
-    return dict(estimate(resolved.settings, resolved.model)) if estimate else {"cpu": 1}
+def embedding_engines(file_id: int, target: str, preset_id: int) -> list:
+    """The engine of the preset: its model is reserved before the task starts."""
+    return [engine_family.resolve(preset_id)]
 
 
-@task("files.embed", title="Embed file {file_id} with {target}", resources=embedding_resources)
+@task("files.embed", title="Embed file {file_id} with {target}", resources={"cpu": 1}, engines=embedding_engines)
 def embed_file(ctx: TaskContext, file_id: int, target: str, preset_id: int) -> dict:
     """Embed the chunks of a file with a preset into the vector table of ``target``."""
     resolved = engine_family.resolve(preset_id)

@@ -7,3 +7,7 @@ files:
 tasks:
   workers: 4
   resources: {}
+smart-memory:
+  enable: true
+  fallback: wait
+  interrupt_timeout_seconds: 60

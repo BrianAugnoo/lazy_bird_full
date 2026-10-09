@@ -31,16 +31,28 @@ fields = {
 }
 
 
-CUDA_OVERHEAD_MB = 512
+CUDA_OVERHEAD_MB = 512  # the CUDA context and the working memory of a batch
+CPU_OVERHEAD_MB = 256
 
 
-def resources(settings, model):
-    """GPU runs hold the model weights plus the CUDA context in VRAM."""
+def placements(settings, model):
+    """Where the model can live, best first: (settings it needs there, memory it takes there).
+
+    A device chosen in the preset is the only place; with the device left empty the best
+    device comes first and the CPU is the fallback.
+    """
     from lazy_bird.tools.model_extraction import weights_size_mb
 
-    if (settings.device or detect_device()) != "cuda":
-        return {"cpu": 1}
-    return {"cpu": 1, "vram_mb": round(weights_size_mb(model.local_path, model.selected_format, model.selected_file) + CUDA_OVERHEAD_MB)}
+    size = weights_size_mb(model.local_path, model.selected_format, model.selected_file)
+
+    def at(device):
+        memory = {"vram_mb": size + CUDA_OVERHEAD_MB} if device == "cuda" else {"ram_mb": size + CPU_OVERHEAD_MB}
+        return {"device": device}, {name: round(amount) for name, amount in memory.items()}
+
+    if settings.device:
+        return [at(settings.device)]
+    best = detect_device()
+    return [at(best)] + ([at("cpu")] if best != "cpu" else [])
 
 
 def _backend(model) -> str:

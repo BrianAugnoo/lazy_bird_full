@@ -18,6 +18,9 @@ Writing a task (the whole contract)::
 - parameters are keyword arguments and must be JSON-serializable;
 - ``resources`` (dict or function of the parameters) is what the run holds in the
   shared pool: ``cpu`` slots, ``vram_mb``, ``ram_mb``;
+- ``engines`` (function of the parameters returning resolved engines) lists the local
+  models the task uses: their memory is reserved before the task starts and not part
+  of ``resources``; a more urgent request may make the task yield (it resumes later);
 - ``ctx.checkpoint(...)`` is the only place where pause, cancel and shutdown stop a
   task; on resume the function runs again with ``ctx.state`` = last saved state;
 - ``ctx.report(progress, message)`` shows progress without being a stop point.
@@ -31,6 +34,7 @@ from __future__ import annotations
 from lazy_bird.extension.discovery import LoadFailure, import_module, iter_extension_modules, record_failures
 from lazy_bird.preferences import task_preferences
 from lazy_bird.tasks.context import TaskContext
+from lazy_bird.tasks.memory import system_free
 from lazy_bird.tasks.registry import TaskDefinition, definition, definitions, on_status_change, task
 from lazy_bird.tasks.resources import ResourcePool, detect_capacity
 from lazy_bird.tasks.scheduler import Scheduler
@@ -58,7 +62,7 @@ def scheduler() -> Scheduler:
     if _scheduler is None:
         settings = task_preferences()
         capacity = {**detect_capacity(), **settings["resources"]}
-        _scheduler = Scheduler(ResourcePool(capacity), workers=settings["workers"])
+        _scheduler = Scheduler(ResourcePool(capacity, monitor=system_free), workers=settings["workers"])
     return _scheduler
 
 

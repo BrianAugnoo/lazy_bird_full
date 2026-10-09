@@ -18,6 +18,8 @@ export interface TaskState {
   resources: ResourceSnapshot;
   /** Why queued tasks wait, by task id. */
   waiting: Record<string, string[]>;
+  /** Running tasks asked to make room for a more urgent one that have not stopped yet. */
+  unresponsive: number[];
   status: SocketStatus;
 }
 
@@ -25,6 +27,8 @@ export const ACTIVE: Task['status'][] = ['running', 'queued', 'paused'];
 
 /** Priority of a task that asked for nothing special: the lower the number, the sooner it runs (0 = run now). */
 export const DEFAULT_PRIORITY = 5;
+/** Run immediately: the task may even make urgent ones give way. Only a user asks for it. */
+export const PRIORITY_NOW = 0;
 
 /** A queued task whose start time is still to come (e.g. the next periodic scan). */
 export const isScheduled = (task: Task, now = Date.now()) => task.status === 'queued' && task.run_at !== null && new Date(task.run_at).getTime() > now;
@@ -47,6 +51,7 @@ type TaskEvent =
   | { type: 'task_deleted'; id: number }
   | { type: 'resources'; resources: ResourceSnapshot }
   | { type: 'waiting'; waiting: Record<string, string[]> }
+  | { type: 'task_unresponsive'; task_id: number }
   | { type: 'reordered' }
   | { type: 'file'; file_id: number }
   | { type: 'ack'; request_id: string; task: Task | null }
@@ -59,7 +64,8 @@ export function applyTaskEvent(state: TaskState, event: TaskEvent): TaskState {
       return { ...state, tasks: sortTasks(event.tasks), resources: event.resources, kinds: event.kinds };
     case 'task': {
       const others = state.tasks.filter((task) => task.id !== event.task.id);
-      return { ...state, tasks: sortTasks([...others, event.task]) };
+      const unresponsive = event.task.status === 'running' ? state.unresponsive : state.unresponsive.filter((id) => id !== event.task.id);
+      return { ...state, tasks: sortTasks([...others, event.task]), unresponsive };
     }
     case 'task_deleted':
       return { ...state, tasks: state.tasks.filter((task) => task.id !== event.id) };
@@ -67,12 +73,14 @@ export function applyTaskEvent(state: TaskState, event: TaskEvent): TaskState {
       return { ...state, resources: event.resources };
     case 'waiting':
       return { ...state, waiting: event.waiting };
+    case 'task_unresponsive':
+      return state.unresponsive.includes(event.task_id) ? state : { ...state, unresponsive: [...state.unresponsive, event.task_id] };
     default:
       return state;
   }
 }
 
-const EMPTY: TaskState = { tasks: [], kinds: [], resources: { capacity: {}, used: {}, holders: {} }, waiting: {}, status: 'closed' };
+const EMPTY: TaskState = { tasks: [], kinds: [], resources: { capacity: {}, used: {}, holders: {} }, waiting: {}, unresponsive: [], status: 'closed' };
 
 let state: TaskState = EMPTY;
 let socket: LiveSocket | null = null;
@@ -155,7 +163,7 @@ export function onFileChange(listener: (fileId: number) => void): () => void {
   };
 }
 
-export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'delete';
+export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'delete' | 'run_now';
 
 let requestCounter = 0;
 
@@ -170,8 +178,9 @@ function viaSocket(command: Record<string, unknown>): Promise<Task | null> | nul
   return promise;
 }
 
-/** Pause, resume, cancel, retry or delete a task. */
+/** Pause, resume, cancel, retry or delete a task, or run it now (before everything else). */
 export function taskAction(action: TaskAction, taskId: number): Promise<Task | null> {
+  if (action === 'run_now') return setTaskPriority(taskId, PRIORITY_NOW);
   const sent = viaSocket({ action, task_id: taskId });
   if (sent) return sent;
   if (action === 'delete') return tasksApi.remove(taskId).then(() => null);

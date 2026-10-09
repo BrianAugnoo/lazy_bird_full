@@ -58,6 +58,12 @@ class InvalidInputError(AppError):
     code = "invalid_input"
 
 
+class InsufficientResourcesError(InvalidInputError):
+    """A requirement exceeds what the machine can ever provide: it could never run."""
+
+    code = "insufficient_resources"
+
+
 class InvalidSettingsError(InvalidInputError):
     """Settings rejected by an extension ``*Settings`` model, with one message per field."""
 

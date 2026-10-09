@@ -8,7 +8,7 @@ frontend edits them with the generic settings form (``kwargs_key`` per section).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,11 +47,32 @@ class Tasks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SmartMemory(BaseModel):
+    enable: bool = Field(
+        default=True,
+        title="Supervise memory",
+        description="Watch the memory of this computer (RAM and GPU memory): models and tasks wait, make room or move to the CPU instead of overloading it. Off, everything runs unsupervised, at the risk of a crash.",
+    )
+    fallback: Literal["cpu", "wait"] = Field(
+        default="wait",
+        title="Fallback policy",
+        description="When a model does not fit in GPU memory right now: 'cpu' loads it in RAM instead, 'wait' waits until GPU memory is free. Only applies to engines whose device is left empty.",
+    )
+    interrupt_timeout_seconds: int = Field(
+        default=60,
+        ge=1,
+        title="Time to make room (seconds)",
+        description="How long a task asked to make room for a more urgent one may take to reach its next stopping point before it is reported as not responding.",
+    )
+    model_config = ConfigDict(extra="forbid")
+
+
 SECTIONS: dict[str, tuple[type[BaseModel], str]] = {
     "auto-embedding": (AutoEmbedding, "Automatic processing"),
     "chunking": (Chunking, "Chunking"),
     "files": (Files, "Files"),
     "tasks": (Tasks, "Background tasks"),
+    "smart-memory": (SmartMemory, "Smart memory management"),
 }
 RESTART_REQUIRED = {("tasks", "workers")}
 
@@ -130,21 +151,30 @@ def task_preferences() -> dict[str, Any]:
     return _section(_read_preferences(), "tasks").model_dump()
 
 
+def smart_memory() -> SmartMemory:
+    """The ``smart-memory`` section: whether memory is supervised, and how."""
+    return _section(_read_preferences(), "smart-memory")
+
+
 def apply_preferences() -> int:
     """Queue what the preferences ask for; return how many processing tasks were queued.
 
     - auto-embedding: every file gets its chunks and the vectors of the default
       embedding preset;
     - files.scan_every_minutes: a periodic scan detects files changed on disk;
-    - tasks.resources: capacity overrides of the running scheduler.
+    - tasks.resources: capacity overrides of the running scheduler;
+    - smart-memory: models kept loaded while idle are released when it is turned off.
     """
     from lazy_bird import tasks
     from lazy_bird.crud import file_processing
     from lazy_bird.tasks.default.files import schedule_scan
+    from lazy_bird.residency import residency
     from lazy_bird.tasks.resources import detect_capacity
 
     queued = file_processing.ensure_all() if auto_embedding_enabled() else 0
     schedule_scan(scan_every_minutes())
     if tasks._scheduler is not None:
         tasks._scheduler.pool.capacity.update({**detect_capacity(), **task_preferences()["resources"]})
+    if not smart_memory().enable:
+        residency().release_idle()
     return queued

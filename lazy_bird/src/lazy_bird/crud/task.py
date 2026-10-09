@@ -153,8 +153,12 @@ def state_of(task_id: int) -> dict:
         return dict(_row(session, task_id).state or {})
 
 
-def finish(task_id: int, status: str, *, result: Any = None, error: dict | None = None, state: dict | None = None) -> TaskOut:
-    """Record the end of a run: completed, failed, cancelled, paused or back to queued."""
+def finish(task_id: int, status: str, *, result: Any = None, error: dict | None = None, state: dict | None = None, refund_attempt: bool = False) -> TaskOut:
+    """Record the end of a run: completed, failed, cancelled, paused or back to queued.
+
+    ``refund_attempt``: the run was cut short from outside (shutdown, a more urgent
+    request), so it does not count as one of the task's attempts.
+    """
     with db() as session:
         row = _row(session, task_id)
         row.status = status
@@ -167,6 +171,8 @@ def finish(task_id: int, status: str, *, result: Any = None, error: dict | None 
             row.error = error
         if status == "queued":
             row.position = _queue_end(session)
+            if refund_attempt:
+                row.attempts = max(0, row.attempts - 1)
         return _save(session, row)
 
 
