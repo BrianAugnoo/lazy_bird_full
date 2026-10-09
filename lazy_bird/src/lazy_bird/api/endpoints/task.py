@@ -30,7 +30,7 @@ router = APIRouter(tags=["tasks"])
 
 def _kinds() -> list[TaskKindOut]:
     return [
-        TaskKindOut(kind=item.kind, title=item.title, description=item.description, priority=item.priority, retries=item.retries)
+        TaskKindOut(kind=item.kind, title=item.title, description=item.description, priority=item.priority, retries=item.retries, isolated=item.isolated)
         for item in definitions()
     ]
 

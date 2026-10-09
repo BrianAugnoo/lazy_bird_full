@@ -36,6 +36,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, ContextManager
 
+from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
@@ -82,6 +83,7 @@ class ResolvedEngine:
     settings: BaseModel
     model: LLMModelOut | None
     preset_id: int | None = None
+    kind: str | None = None  # the family (``EngineFamily.families``), so another process can resolve it again
 
     @property
     def local(self) -> bool:
@@ -104,11 +106,12 @@ class ResolvedEngine:
         """
         if not self.local:
             return getattr(self.module, operation)(*args, self.settings, self.model)
-        with residency().use(self) as loaded:
-            return loaded.run(operation, *args, loaded.placed(self.settings), self.model)
+        return residency().call(self, operation, args)
 
 
 class EngineFamily:
+    families: dict[str, EngineFamily] = {}  # the family of each kind (the first one created: lazy_bird's own)
+
     def __init__(
         self,
         *,
@@ -131,6 +134,7 @@ class EngineFamily:
         self.preset_out = preset_out
         self.on_default_change = on_default_change
         self._loaded: dict[str, LoadedEngine] = {}
+        EngineFamily.families.setdefault(kind, self)
 
     # ----------------------------------------------------------------- discovery
     def load_module(self, import_path: str) -> LoadedEngine:
@@ -161,6 +165,20 @@ class EngineFamily:
             self._register(loaded)
         record_failures(f"{self.kind}_engine", failures)
         return self.engines()
+
+    def module_names(self) -> list[str]:
+        """Import paths of the loaded engine modules (what another process needs to load the same engines)."""
+        return [loaded.module.__name__ for loaded in self._loaded.values()]
+
+    def load_modules(self, import_paths: list[str]) -> None:
+        """Load engine modules without touching the database (a task process uses the server's rows)."""
+        for import_path in import_paths:
+            try:
+                loaded = self.load_module(import_path)
+            except Exception as error:
+                logger.warning("Engine module {} could not be loaded: {}", import_path, error)
+                continue
+            self._loaded[loaded.module.name] = loaded
 
     def register(self, module: ModuleType) -> EngineOut:
         """Register an engine module that does not live in the engines package."""
@@ -243,7 +261,7 @@ class EngineFamily:
         engine = self.engine(engine_id)
         loaded = self.loaded(engine)
         settings = loaded.contract.validate(kwargs)
-        return ResolvedEngine(engine, loaded.module, settings, self._model(loaded, settings), preset_id)
+        return ResolvedEngine(engine, loaded.module, settings, self._model(loaded, settings), preset_id, self.kind)
 
     # ------------------------------------------------------------------- presets
     def _preset_errors(self, row: SQLModel) -> dict[str, str]:

@@ -125,6 +125,8 @@ suite never calls it (it uses the `fake_inference` fixture).
 | `agents/` | tools, hooks, skills, instructions, agent and session presets, agent runtime |
 | `tasks/` | background task system: registry, scheduler, resources, events, task kinds |
 | `residency.py` | models of local engines in memory: who holds them, where they live, when they are loaded and freed (§5.3, §7.5) |
+| `processes.py` | child processes of the server: start, private authenticated connection, kill (used by the two hosts below) |
+| `task_host.py` | the process of an isolated task (`python -m lazy_bird.task_host`) and the server side serving it (§7.1) |
 | `engine_host.py` | the host process of a local model (`python -m lazy_bird.engine_host`) and its server-side handle (§7.5) |
 | `priority.py` | the priority ranks: `NOW` 0, `SEARCH` 1, `INFERENCE` 2, `BACKGROUND` 5 (lower = more urgent) |
 | `tools/` | utilities: Hugging Face cache and auth, model inspection, GGUF reader, schema diagram |
@@ -403,6 +405,15 @@ reindex.submit(folder="notes", priority=1)          # -> TaskOut
 - `engines` (function of the parameters returning resolved engines): the local models the
   task uses (`files.embed` declares its preset's engine). Their memory is reserved before
   the task starts and is not part of `resources` (§7.5);
+- `isolated=True` runs each run in a process of its own (`task_host.py`): the server's
+  worker thread serves it (progress, checkpoints and controls are relayed; local model
+  calls are sent back to the server, whose residency keeps the task's models,
+  reservations and accounting), the process attaches to the server's databases and
+  preference file, and a crash only fails the task (`task_crashed`). A run that does not
+  reach a checkpoint within `smart-memory.interrupt_timeout_seconds` after being asked
+  to pause, cancel or make room is **ended** and finishes as asked. The function must be
+  declared at module level (the process imports it by name). Use it for heavy or
+  long work; the shipped kinds run in threads (a process start costs a few seconds);
 - `ctx.checkpoint(progress, message, state)` is the **only** place where pause,
   cancel and shutdown stop a task; resuming runs the function again with
   `ctx.state` = last saved state. `ctx.report(progress, message)` only reports;
@@ -434,9 +445,9 @@ limits what runs (§7.5).
 
 ### 7.3 Live control
 
-`WS /ws/tasks` sends `{"type": "snapshot", "tasks", "resources" (pool + `models` in memory), "kinds"}`, then
+`WS /ws/tasks` sends `{"type": "snapshot", "tasks", "resources" (pool, `models` in memory, `processes` of isolated tasks), "kinds"}`, then
 `task`, `task_deleted`, `resources`, `waiting` (why queued tasks wait), `reordered`,
-`task_unresponsive` (`task_id` asked to yield that did not stop in time, `released` models, §7.5)
+`task_unresponsive` (`task_id` asked to stop that did not in time, `killed`, `released` models, §7.5)
 and `file` (`file_id` whose processing changed) events. Commands:
 `{"action": "pause"|"resume"|"cancel"|"retry"|"delete", "task_id", "request_id"}`,
 `{"action": "move", "task_id", "before_id"|"after_id"}`,
@@ -519,13 +530,12 @@ number the more urgent; only strictly less urgent running tasks are asked):
    their saved state once the urgent work is done. What a task releases is its own
    resources plus the models only it uses;
 3. a task that has not stopped after `interrupt_timeout_seconds` is reported with a
-   `task_unresponsive` event (`released` lists the models taken away) and no longer
-   counted on. Tasks run in threads, which cannot be killed, but the hosted models only
-   it uses are taken away: their processes are ended, the memory is back at once, and its
-   next call on them raises `ModelEvicted`, which sends the task back to the queue (as if
-   it had yielded). Models living in the server, or shared with other tasks, cannot be
-   taken: the urgent request keeps waiting. Forcing out any task needs tasks in processes
-   too (not done yet).
+   `task_unresponsive` event (`killed`, `released`) and no longer counted on. An isolated
+   task (§7.1) is ended and goes back to the queue. A task in a thread cannot be killed,
+   but the hosted models only it uses are taken away: their processes are ended, the
+   memory is back at once, and its next call on them raises `ModelEvicted`, which sends
+   the task back to the queue (as if it had yielded). Models living in the server, or
+   shared with other tasks, cannot be taken: the urgent request keeps waiting.
 
 A model that cannot fit in the machine even if everything else gave way is refused with
 `InsufficientResourcesError` (code `insufficient_memory`, 422): "Cannot process with
@@ -645,7 +655,8 @@ schema with unknown ids / invalid bodies and checks the uniform error format.
   - `storage_root`, `upload_file_factory`, `model_cache` (temporary HF cache);
   - `fake_embedding`, `fake_local_embedding` (a local engine recording its `loads` / `unloads`, with `gpu_mb` / `cpu_mb` placements), `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
   - `running_scheduler`, `wait_until`, `process_inline`;
-  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `unknown_system_memory`.
+  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `unknown_system_memory`;
+  - `tests/hosting/`: an engine (`engine.py`) and task kinds (`tasks.py`) importable by name, for tests that need a child process (model hosts, isolated tasks).
 - Tests must be deterministic; never weaken or skip a failing test to get green.
 - Frontend tests: `cd web && npm test` (see `web/AGENTS.md` §17).
 

@@ -100,6 +100,7 @@ interface RowProps {
   task: Task;
   waiting?: string[];
   unresponsive?: boolean;
+  process?: { pid: number; memory_mb: number | null };
   onAction: (action: TaskAction, task: Task) => void;
   drag?: {
     onDragStart: (event: DragEvent) => void;
@@ -112,7 +113,7 @@ interface RowProps {
   };
 }
 
-function TaskRow({ task, waiting, unresponsive, onAction, drag }: RowProps) {
+function TaskRow({ task, waiting, unresponsive, process, onAction, drag }: RowProps) {
   const [open, setOpen] = useState(false);
   const progress = task.progress ?? null;
   const finished = ['completed', 'failed', 'cancelled'].includes(task.status);
@@ -138,8 +139,13 @@ function TaskRow({ task, waiting, unresponsive, onAction, drag }: RowProps) {
           <span className={`chip ${isScheduled(task) ? 'chip-outline' : STATUS_CHIPS[task.status]}`}>{isScheduled(task) ? 'scheduled' : task.status}</span>
           {task.control && <span className="chip chip-warning">{task.control === 'pause' ? 'pausing…' : 'cancelling…'}</span>}
           {unresponsive && task.status === 'running' && (
-            <span className="chip chip-warning" title="It was asked to make room for a more urgent task but has not stopped yet">
+            <span className="chip chip-warning" title="It was asked to stop but has not reached a stopping point yet">
               not responding
+            </span>
+          )}
+          {process && task.status === 'running' && (
+            <span className="chip chip-outline" title="It runs in a process of its own: it can be ended if it does not stop when asked">
+              own process{process.memory_mb !== null ? ` · ${(process.memory_mb / 1024).toFixed(1)} GB` : ''}
             </span>
           )}
           {task.priority !== DEFAULT_PRIORITY && !finished && (
@@ -302,7 +308,13 @@ export function TasksPage() {
         ) : (
           <div className="task-list">
             {running.map((task) => (
-              <TaskRow key={task.id} task={task} unresponsive={unresponsive.includes(task.id)} onAction={act} />
+              <TaskRow
+                key={task.id}
+                task={task}
+                unresponsive={unresponsive.includes(task.id)}
+                process={resources.processes?.[String(task.id)]}
+                onAction={act}
+              />
             ))}
           </div>
         )}

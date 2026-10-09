@@ -61,8 +61,8 @@ def machine(fake_local_embedding, monkeypatch):
     yield scheduler
     for event in GATES.values():
         event.set()
+    scheduler.stop(timeout=1)
     residency().shutdown()
-    scheduler.stop(timeout=3)
     ENGINES.clear()
 
 
@@ -177,7 +177,7 @@ def test_a_task_that_does_not_yield_is_reported_and_waited_for(machine, monkeypa
 
     urgent = work.submit(name="urgent", model="B", priority=1)
 
-    wait_until(lambda: {"type": "task_unresponsive", "task_id": stuck.id, "released": []} in events, message="the stuck task was not reported")
+    wait_until(lambda: {"type": "task_unresponsive", "task_id": stuck.id, "released": [], "killed": False} in events, message="the stuck task was not reported")
     assert status(machine, urgent.id) == "queued" and running(machine, stuck.id)  # nothing can take its place by force
     gate("stuck").set()
     wait_until(lambda: running(machine, urgent.id), message="the urgent task did not start once the stuck one ended")
@@ -246,3 +246,15 @@ def test_a_stuck_task_is_forced_out_by_taking_its_hosted_model_away(machine, hos
     assert status(machine, stuck.id) == "queued" and machine.task(stuck.id).attempts == 0  # sent back to the queue, nothing lost
     gate("urgent").set()
     wait_until(lambda: status(machine, urgent.id) == "completed")
+
+
+def test_stopping_the_server_takes_its_hosted_models_from_a_task_stuck_in_a_call(machine, hosted_engine):
+    ENGINES["H1"] = engine_family.resolve_settings(hosted_engine.id, {"dimension": 3, "gpu_mb": 600})
+    stuck = hosted_stubborn.submit(name="stuck", model="H1")
+    wait_until(lambda: machine.resources()["models"] and machine.resources()["models"][0]["pid"], message="the model never loaded")
+    pid = machine.resources()["models"][0]["pid"]
+
+    machine.stop(timeout=0.3)
+
+    assert status(machine, stuck.id) == "queued"  # back in the queue for the next start, nothing lost
+    assert not psutil.pid_exists(pid) and machine.task(stuck.id).attempts == 0

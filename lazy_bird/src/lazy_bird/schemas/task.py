@@ -59,3 +59,4 @@ class TaskKindOut(BaseModel):
     description: str
     priority: int
     retries: int
+    isolated: bool = False  # each run happens in a process of its own

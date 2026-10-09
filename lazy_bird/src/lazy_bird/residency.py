@@ -195,6 +195,14 @@ class Residency:
         finally:
             self._leave(entry, lessee)
 
+    def call(self, resolved: ResolvedEngine, operation: str, args: tuple) -> Any:
+        """Run an operation on the model of a local engine: ``operation(instance, *args, settings, model)``.
+
+        ``settings`` are the caller's, as they apply where the model was placed.
+        """
+        with self.use(resolved) as loaded:
+            return loaded.run(operation, *args, loaded.placed(resolved.settings), resolved.model)
+
     def reserve(self, resolved: ResolvedEngine, *, lessee: str, priority: int, preempt: Preempt | None = None) -> Loaded:
         """Make the memory of a model ready for ``lessee`` (a task about to start) without loading it.
 
@@ -333,13 +341,23 @@ class Residency:
             self._check_possible(resolved, plans, plans if memory.fallback == "cpu" else plans[:1])
 
     # ------------------------------------------------------------------- loading
-    @staticmethod
-    def _ensure_loaded(entry: Loaded, resolved: ResolvedEngine) -> None:
+    def _ensure_loaded(self, entry: Loaded, resolved: ResolvedEngine) -> None:
         with entry._loading:
             if entry.evicted:
                 raise ModelEvicted("The model was taken away to make room for more urgent work.")
-            if entry.instance is None:
-                entry.instance = entry.module.load(entry.placed(resolved.settings), resolved.model)
+            if entry.instance is not None:
+                return
+            instance = entry.module.load(entry.placed(resolved.settings), resolved.model)
+            with self._lock:
+                if not entry.removed:
+                    entry.instance = instance
+                    return
+            # Taken away (shutdown, eviction) while it was loading: nobody would ever free it.
+            try:
+                entry.module.unload(instance)
+            except Exception:
+                logger.exception("Unloading the model of engine '{}' failed", entry.key[0])
+            raise ModelEvicted("The model was taken away while it was loading.")
 
     # ------------------------------------------------------------------ eviction
     def evict_idle(self, needs: Resources) -> bool:

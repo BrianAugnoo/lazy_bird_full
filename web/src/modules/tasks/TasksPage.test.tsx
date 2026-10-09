@@ -96,4 +96,14 @@ describe('TasksPage', () => {
     expect(screen.getByText(/1\.6 GB of GPU memory \(really using 2\.2 GB memory, 1\.1 GB GPU\)/)).toBeTruthy();
     expect(screen.getAllByText('own process')).toHaveLength(1); // only the model with a process of its own
   });
+
+  it('shows that a running task has a process of its own, with its memory', () => {
+    show({
+      tasks: [task(3, { status: 'running' }), task(4, { status: 'running' })],
+      resources: { capacity: {}, used: {}, holders: {}, processes: { '3': { pid: 99, memory_mb: 2048 } } },
+    });
+
+    expect(screen.getAllByText(/own process/)).toHaveLength(1);
+    expect(screen.getByText('own process · 2.0 GB')).toBeTruthy();
+  });
 });

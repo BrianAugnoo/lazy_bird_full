@@ -215,7 +215,7 @@ by side / preview, text).
 | Agent / session presets | `modules/presets` | `/agent-presets/*`, `/session-presets/*` |
 | Models (`models`) | `modules/models` | `/models/*` (download with file choice, upload from the computer with progress, sync, hub status/login/files), model tasks |
 | Embedding, Cross-encoder (`cross-encoder`), Inference | `modules/engines` | `/{kind}-engines/`, `/{kind}-presets/*` (kind `embedding`, `cross-encoder`, `inference`), `POST /inference/complete`; engines with `local: true` show that they run the model on this computer |
-| Tasks (`tasks`) | `modules/tasks` | `WS /ws/tasks` (snapshot, events, commands incl. `update` with `priority: 0` = Run now; `resources.models` lists the local models in memory: idle or in use, own process, real memory), `DELETE /tasks/finished` |
+| Tasks (`tasks`) | `modules/tasks` | `WS /ws/tasks` (snapshot, events, commands incl. `update` with `priority: 0` = Run now; `resources.models` lists the local models in memory: idle or in use, own process, real memory; `resources.processes` marks running isolated tasks with their memory), `DELETE /tasks/finished` |
 | Databases (`databases`) | `modules/databases` | `/databases/*`, `/databases/vector/tables/*` |
 | API keys (`api-keys`) | `modules/api-keys` | `/api-keys/*` |
 | Preferences (`preferences`) | `modules/preferences` | `GET/PATCH /preferences/`, `/preferences/form` |

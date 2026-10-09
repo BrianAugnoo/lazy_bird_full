@@ -134,6 +134,33 @@ def initialize_selected_sql_database() -> DatabaseStatus:
         status = DatabaseStatus(ready=False, error=f"Database initialization failed: {exc}")
     return status
 
+def connection_spec() -> dict[str, Any]:
+    """What another process needs to use the same databases as this one (see ``attach``)."""
+    sql, vector = config.selected_sql_database, config.selected_vector_database
+    return {
+        "sql": [sql, dict(config.sql_databases[sql].settings)],
+        "vector": [vector, dict(config.vector_databases[vector].settings)],
+    }
+
+
+def attach(spec: dict[str, Any]) -> None:
+    """Use the databases of the server, in a process it started (a task process).
+
+    The server already migrated them: nothing is migrated and the configuration file is
+    not touched.
+    """
+    global engine, db_url, db_type, status, _vector_initialized
+    (sql, sql_settings), (vector, vector_settings) = spec["sql"], spec["vector"]
+    config.selected_sql_database, config.selected_vector_database = sql, vector
+    config.sql_databases[sql] = DatabaseEntry(settings=sql_settings)
+    config.vector_databases[vector] = DatabaseEntry(settings=vector_settings)
+    module = SQL_ADAPTERS[sql]
+    engine = module.initialize(**_settings(module, sql_settings))
+    db_url, db_type = str(engine.url), sql
+    status = DatabaseStatus(ready=True)
+    _vector_initialized = None
+
+
 @contextmanager
 def db():
     if not status.ready:

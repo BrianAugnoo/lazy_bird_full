@@ -88,8 +88,9 @@ class Scheduler:
         self._controls: dict[int, str] = {}
         self._waiting: dict[int, list[str]] = {}
         self._priority_of: dict[int, int] = {}
-        self._yielding: dict[int, float] = {}  # running tasks asked to make room, and when
+        self._asked: dict[int, float] = {}  # running tasks asked to stop (pause, cancel, make room), and since when
         self._unresponsive: set[int] = set()  # asked, but not stopped within the interrupt timeout
+        self._hosts: dict[int, Any] = {}  # processes of the isolated tasks running now (task_host.TaskHost)
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -113,13 +114,25 @@ class Scheduler:
         self._wake.set()
         with self._lock:
             for task_id in self._running:
-                self._controls[task_id] = "interrupt"
+                self._ask_to_stop(task_id, "interrupt")
         if self._thread is not None:
             self._thread.join(timeout)
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             deadline = time.monotonic() + timeout
             while self._running and time.monotonic() < deadline:
+                time.sleep(0.05)
+            # Tasks that did not stop in time: isolated ones are ended, the others lose their hosted
+            # models (their next call on them fails); either way they go back to the queue.
+            deadline = time.monotonic() + 5
+            while self._running and time.monotonic() < deadline:
+                with self._lock:
+                    running = [(task_id, self._hosts.get(task_id)) for task_id in self._running]
+                for task_id, host in running:
+                    if host is not None:
+                        host.kill("interrupt")
+                    else:
+                        residency().force_release(f"task:{task_id}")
                 time.sleep(0.05)
         self._thread = None
         self._executor = None
@@ -144,8 +157,7 @@ class Scheduler:
 
     def _schedule(self) -> list[int]:
         smart = smart_memory()
-        if smart.enable:
-            self._report_unresponsive(smart.interrupt_timeout_seconds)
+        self._report_unresponsive(smart.interrupt_timeout_seconds)
         started, waiting, blocked = [], {}, set()
         for row in task_crud.ready(self.now()):
             needs = {name: amount for name, amount in (row.resources or {}).items() if amount > 0}
@@ -245,7 +257,7 @@ class Scheduler:
                 releases = self.pool.held(holder)
                 for name, amount in residency().exclusive_to(holder).items():
                     releases[name] = releases.get(name, 0) + amount
-                if task_id in self._controls or task_id in self._yielding:
+                if task_id in self._controls:
                     for name, amount in releases.items():
                         coming[name] = coming.get(name, 0) + amount
                 else:
@@ -256,27 +268,40 @@ class Scheduler:
             victims = choose_victims(remaining, candidates)
             if victims is None:
                 return False
-            now = time.monotonic()
             for victim in victims:
-                task_id = int(victim.holder.split(":")[1])
-                self._controls[task_id] = "interrupt"
-                self._yielding[task_id] = now
+                self._ask_to_stop(int(victim.holder.split(":")[1]), "interrupt")
         logger.info("Asking task(s) {} to yield for a request of priority {}", [victim.holder for victim in victims], priority)
         return True
 
+    def _ask_to_stop(self, task_id: int, control: str) -> None:
+        """Ask a running task to stop at its next checkpoint (lock held)."""
+        self._controls[task_id] = control
+        self._asked.setdefault(task_id, time.monotonic())
+
     def _report_unresponsive(self, timeout: float) -> None:
-        """Tasks that were asked to yield but did not stop in time are reported (and no longer counted on)."""
+        """Deal with running tasks asked to stop that did not reach a checkpoint within ``timeout``.
+
+        An isolated task is ended: its run finishes as asked (paused, cancelled or back in the
+        queue). A task in a thread cannot be ended: it is reported and no longer counted on, and
+        when it was asked to make room, the hosted models only it uses are taken away.
+        """
         now = time.monotonic()
         with self._lock:
-            late = [task_id for task_id, since in self._yielding.items() if task_id in self._running and task_id not in self._unresponsive and now - since > timeout]
+            late = [task_id for task_id, since in self._asked.items() if task_id in self._running and task_id not in self._unresponsive and now - since > timeout]
             self._unresponsive.update(late)
-        for task_id in late:
-            forced = residency().force_release(f"task:{task_id}")
-            if forced:
-                logger.warning("Task {} did not yield within {} s: its models {} were taken away, it goes back to the queue when it next uses one", task_id, timeout, forced)
-            else:
-                logger.warning("Task {} did not yield within {} s: it keeps its resources until it reaches a checkpoint", task_id, timeout)
-            self.events.publish({"type": "task_unresponsive", "task_id": task_id, "released": forced})
+            stops = {task_id: (self._controls.get(task_id, "interrupt"), self._hosts.get(task_id)) for task_id in late}
+        for task_id, (control, host) in stops.items():
+            forced: list[str] = []
+            if host is not None:
+                logger.warning("Task {} did not stop within {} s: its process is ended ({})", task_id, timeout, control)
+                host.kill(control)
+            elif control == "interrupt":
+                forced = residency().force_release(f"task:{task_id}")
+                if forced:
+                    logger.warning("Task {} did not yield within {} s: its models {} were taken away, it goes back to the queue when it next uses one", task_id, timeout, forced)
+            if host is None and not forced:
+                logger.warning("Task {} did not stop within {} s: it keeps its resources until it reaches a checkpoint", task_id, timeout)
+            self.events.publish({"type": "task_unresponsive", "task_id": task_id, "released": forced, "killed": host is not None})
             if forced:
                 self._publish_resources()
                 self.wake()
@@ -302,7 +327,10 @@ class Scheduler:
     def _run(self, task: TaskOut, task_definition: TaskDefinition, context: TaskContext) -> TaskOut:
         """Call the task function and record how its run ended."""
         try:
-            result = task_definition.function(context, **task.params)
+            if task_definition.isolated:
+                result = self._run_isolated(task, task_definition, context)
+            else:
+                result = task_definition.function(context, **task.params)
             return task_crud.finish(task.id, "completed", result=_jsonable(result), state=context.state)
         except TaskPaused:
             return task_crud.finish(task.id, "paused", state=context.state)
@@ -315,6 +343,22 @@ class Scheduler:
             if task.attempts < task.max_attempts:
                 return task_crud.retry_later(task.id, self.now() + RETRY_DELAY, _error(error))
             return task_crud.finish(task.id, "failed", error=_error(error), state=context.state)
+
+    def _run_isolated(self, task: TaskOut, task_definition: TaskDefinition, context: TaskContext) -> Any:
+        """Run the task in a process of its own, this thread serving it (see ``task_host``)."""
+        from lazy_bird.task_host import TaskHost
+
+        host = TaskHost.start()
+        with self._lock:
+            self._hosts[task.id] = host
+        if self._stop.is_set():
+            host.kill("interrupt")  # the server started stopping while the process was starting
+        try:
+            return host.run(task, task_definition, context, self)
+        finally:
+            with self._lock:
+                self._hosts.pop(task.id, None)
+            host.close()
 
     def _execute(self, task: TaskOut, task_definition: TaskDefinition, context: TaskContext) -> None:
         try:
@@ -331,7 +375,7 @@ class Scheduler:
                 self._running.discard(task.id)
                 self._controls.pop(task.id, None)
                 self._priority_of.pop(task.id, None)
-                self._yielding.pop(task.id, None)
+                self._asked.pop(task.id, None)
                 self._unresponsive.discard(task.id)
             self._publish_resources()
             self.wake()
@@ -369,8 +413,11 @@ class Scheduler:
         self.events.publish({"type": "resources", "resources": self.resources()})
 
     def resources(self) -> dict:
-        """The pool (capacity, used, holders) and the models in memory."""
-        return {**self.pool.snapshot(), "models": residency().describe()}
+        """The pool (capacity, used, holders), the models in memory and the processes of isolated tasks."""
+        with self._lock:
+            hosts = dict(self._hosts)
+        processes = {str(task_id): {"pid": host.pid, "memory_mb": host.memory_mb()} for task_id, host in hosts.items()}
+        return {**self.pool.snapshot(), "models": residency().describe(), "processes": processes}
 
     # ------------------------------------------------------------------- commands
     def submit(self, task_definition: TaskDefinition, params: dict[str, Any], *, title=None, priority=None, run_at=None, dedupe_key=None, resources=None) -> TaskOut:
@@ -408,7 +455,7 @@ class Scheduler:
         task = task_crud.pause(task_id)
         if task.status == "running":
             with self._lock:
-                self._controls[task_id] = "pause"
+                self._ask_to_stop(task_id, "pause")
         return self._command(lambda: task)
 
     def resume(self, task_id: int) -> TaskOut:
@@ -418,7 +465,7 @@ class Scheduler:
         task = task_crud.cancel(task_id)
         if task.status == "running":
             with self._lock:
-                self._controls[task_id] = "cancel"
+                self._ask_to_stop(task_id, "cancel")
         return self._command(lambda: task)
 
     def retry(self, task_id: int) -> TaskOut:

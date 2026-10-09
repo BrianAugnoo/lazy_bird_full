@@ -101,6 +101,8 @@ export interface TaskKind {
   description: string;
   priority: number;
   retries: number;
+  /** Each run happens in a process of its own. */
+  isolated?: boolean;
 }
 
 /** A local model in memory. `memory` is what its own process really uses, when it has one. */
@@ -122,6 +124,8 @@ export interface ResourceSnapshot {
   holders: Record<string, Record<string, number>>;
   /** The local models in memory (absent from older servers). */
   models?: LoadedModel[];
+  /** The processes of the isolated tasks running now, by task id. */
+  processes?: Record<string, { pid: number; memory_mb: number | null }>;
 }
 
 // ----------------------------------------------------- engines and presets

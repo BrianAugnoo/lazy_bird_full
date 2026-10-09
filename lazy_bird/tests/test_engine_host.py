@@ -169,3 +169,37 @@ def test_models_shared_with_others_are_not_taken_away(hosted_engine, machine):
     assert residency().force_release("task:9") == []
     residency().release_lessee("task:9")
     residency().release_lessee("task:10")
+
+
+def test_a_model_taken_away_while_it_loads_is_freed_as_soon_as_it_is_loaded(hosted_engine, machine, monkeypatch):
+    from lazy_bird.engine_host import EngineHost
+
+    loading, release = threading.Event(), threading.Event()
+    real_start = EngineHost.start.__func__
+
+    def slow_start(cls, module_name, settings, model):
+        host = real_start(cls, module_name, settings, model)
+        loading.set()
+        release.wait(5)  # the server stops right now, while the model is loading
+        return host
+
+    monkeypatch.setattr(EngineHost, "start", classmethod(slow_start))
+    model = resolved(hosted_engine, gpu_mb=300)
+    outcome = []
+
+    def call():
+        try:
+            outcome.append(model.call("embed", ["a"]))
+        except BaseException as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    assert loading.wait(10), outcome
+    residency().shutdown()
+    release.set()
+    thread.join(10)
+
+    assert isinstance(outcome[0], ModelEvicted)
+    wait_until(lambda: children() == [], message="the model loaded during shutdown was left running")
+    assert machine.snapshot()["used"] == {}

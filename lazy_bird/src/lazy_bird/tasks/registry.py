@@ -44,6 +44,7 @@ class TaskDefinition:
     retries: int
     description: str
     engines: Callable[..., list[Any]] | None = None
+    isolated: bool = False
 
     def engines_for(self, params: dict[str, Any]) -> list[Any]:
         """The engines this task will use (``ResolvedEngine``s), so their models can be made ready first."""
@@ -106,6 +107,7 @@ def task(
     priority: int = DEFAULT_PRIORITY,
     retries: int = 0,
     engines: Callable[..., list[Any]] | None = None,
+    isolated: bool = False,
 ) -> Callable[[Callable[..., Any]], TaskDefinition]:
     """Declare a task kind.
 
@@ -116,6 +118,10 @@ def task(
     ``engines`` is a function of the parameters returning the resolved engines the task
     uses: the memory of their models is reserved before the task starts, not in
     ``resources``.
+    ``isolated`` runs each run in a process of its own (``lazy_bird.task_host``): it can be
+    killed when it does not stop at a checkpoint in time, and a crash only fails the task.
+    The function must then be importable by name (declared at module level) and its
+    parameters, state and result picklable (they already are JSON).
     """
 
     def decorator(function: Callable[..., Any]) -> TaskDefinition:
@@ -131,6 +137,7 @@ def task(
             retries=retries,
             description=inspect.getdoc(function) or "",
             engines=engines,
+            isolated=isolated,
         )
         _registry[kind] = definition
         return definition
