@@ -1,17 +1,12 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { tasks as tasksApi } from '@/api/endpoints/tasks';
 import { DEFAULT_PRIORITY, PRIORITY_NOW, isScheduled, moveTask, taskAction, useTaskStore, type TaskAction } from '@/core/tasks/store';
-import type { LoadedModel, ResourceSnapshot, Task } from '@/core/types/api';
+import type { Task } from '@/core/types/api';
 import { Icon } from '@/ui/Icon';
 import { PageHeader } from '@/ui/PageHeader';
 import { useToast } from '@/ui/toastContext';
-import { duration } from './format';
-
-const RESOURCE_LABELS: Record<string, { label: string; unit?: string; scale?: number }> = {
-  cpu: { label: 'Worker slots' },
-  vram_mb: { label: 'GPU memory', unit: 'GB', scale: 1024 },
-  ram_mb: { label: 'Memory', unit: 'GB', scale: 1024 },
-};
+import { amount, duration, resourceLabel } from './format';
+import { LoadedModels, Resources } from './Resources';
 
 const STATUS_CHIPS: Record<Task['status'], string> = {
   running: 'chip-live',
@@ -21,80 +16,6 @@ const STATUS_CHIPS: Record<Task['status'], string> = {
   failed: 'chip-error',
   cancelled: 'chip-muted',
 };
-
-function amount(name: string, value: number): string {
-  const spec = RESOURCE_LABELS[name];
-  if (spec?.scale) return `${(value / spec.scale).toFixed(1)} ${spec.unit}`;
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function modelMemory(model: LoadedModel): string {
-  const reserved = Object.entries(model.needs)
-    .map(([name, value]) => `${amount(name, value)} ${name === 'vram_mb' ? 'of GPU memory' : 'of memory'}`)
-    .join(', ');
-  const really = model.memory ? ` (really using ${(model.memory.rss_mb / 1024).toFixed(1)} GB memory${model.memory.vram_mb ? `, ${(model.memory.vram_mb / 1024).toFixed(1)} GB GPU` : ''})` : '';
-  return reserved + really;
-}
-
-function LoadedModels({ models }: { models: LoadedModel[] }) {
-  if (models.length === 0) return null;
-  return (
-    <section>
-      <h2 className="section-title">
-        Models in memory <span className="muted">{models.length}</span>
-      </h2>
-      <div className="task-list">
-        {models.map((model) => (
-          <div key={`${model.engine}:${model.model}:${model.device}`} className="task-row">
-            <div className="task-main">
-              <div className="task-title">
-                <span className="task-title-text">{model.model}</span>
-                <span className={`chip ${model.idle ? 'chip-outline' : 'chip-live'}`}>{model.idle ? 'idle' : 'in use'}</span>
-                {model.device && <span className="chip chip-outline">{model.device}</span>}
-                {model.pid !== null && (
-                  <span className="chip chip-outline" title="It runs in a process of its own: unloading it gives all its memory back">
-                    own process
-                  </span>
-                )}
-              </div>
-              <div className="task-meta">
-                <span>{modelMemory(model) || 'no memory declared'}</span>
-                {model.idle && <span>Unloaded when its memory is needed.</span>}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Resources({ resources }: { resources: ResourceSnapshot }) {
-  const names = Object.keys(resources.capacity ?? {});
-  if (names.length === 0) return null;
-  return (
-    <div className="resource-grid">
-      {names.map((name) => {
-        const capacity = resources.capacity[name] ?? 0;
-        const used = resources.used?.[name] ?? 0;
-        const ratio = capacity > 0 ? Math.min(1, used / capacity) : 0;
-        return (
-          <div key={name} className="resource">
-            <div className="row-between small">
-              <span className="resource-name">{RESOURCE_LABELS[name]?.label ?? name}</span>
-              <span className="muted">
-                {amount(name, used)} / {amount(name, capacity)}
-              </span>
-            </div>
-            <div className="progress">
-              <div className={`progress-bar ${used > 0 ? 'progress-live' : ''}`} style={{ width: `${ratio * 100}%` }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 interface RowProps {
   task: Task;
@@ -169,7 +90,7 @@ function TaskRow({ task, waiting, unresponsive, process, onAction, drag }: RowPr
         )}
         <div className="task-meta">
           {task.message && <span>{task.message}</span>}
-          {waiting && waiting.length > 0 && <span className="text-warning">Waiting for {waiting.map((name) => RESOURCE_LABELS[name]?.label.toLowerCase() ?? name).join(', ')}</span>}
+          {waiting && waiting.length > 0 && <span className="text-warning">Waiting for {waiting.map((name) => resourceLabel(name).toLowerCase()).join(', ')}</span>}
           {isScheduled(task) && <span>Starts {new Date(task.run_at!).toLocaleString()}</span>}
           {finished && <span>{duration(task.started_at, task.finished_at)}</span>}
           {task.error && <span className="text-error">{task.error.message}</span>}
@@ -184,7 +105,7 @@ function TaskRow({ task, waiting, unresponsive, process, onAction, drag }: RowPr
               <div>
                 <span className="muted">Needs</span>{' '}
                 {Object.entries(task.resources)
-                  .map(([name, value]) => `${RESOURCE_LABELS[name]?.label ?? name}: ${amount(name, value)}`)
+                  .map(([name, value]) => `${resourceLabel(name)}: ${amount(name, value)}`)
                   .join(', ')}
               </div>
             )}
