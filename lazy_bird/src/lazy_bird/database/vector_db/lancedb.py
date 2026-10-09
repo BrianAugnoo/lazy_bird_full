@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-import lancedb
 from pydantic import BaseModel, ConfigDict
 
 from lazy_bird.database.contracts import VectorTableNotFoundError
@@ -22,6 +21,8 @@ def initialize(**kwargs):
     settings = Settings.model_validate(kwargs)
     path = Path(settings.path) if settings.path else Path(__file__).resolve().parents[1] / "storage" / "lance"
     path.mkdir(parents=True, exist_ok=True)
+    import lancedb  # imported on first use: it takes over a second, and processes that never touch vectors skip it
+
     _connection = lancedb.connect(str(path))
     return _connection
 
