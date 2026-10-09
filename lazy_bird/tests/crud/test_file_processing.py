@@ -179,7 +179,8 @@ async def test_a_new_default_stops_the_work_for_the_previous_model(pipeline, upl
     monkeypatch.setattr(module, "embed", lambda texts, settings, model: (settings.dimension != 4 or gate.wait(5)) and real_embed(texts, settings, model))
     files = [await upload(upload_file_factory, f"{name}.md", b"Text.") for name in "abc"]
     old, new = ("embedding", "fake/space-4"), ("embedding", "fake/space-8")
-    wait_until(lambda: all(states(file_id).get(old) in ("queued", "running") for file_id in files), message="the old model never started")
+    # Two workers: the old model blocks both, so a file may not even be chunked yet (it then never meets the old model).
+    wait_until(lambda: sum(states(file_id).get(old) == "running" for file_id in files) == 2, message="the old model never started")
     original = next(preset for preset in engine_family.presets() if preset.name == "fake")
     engine = next(engine for engine in engine_family.engines() if engine.name == "fake-embedding")
 
@@ -188,12 +189,26 @@ async def test_a_new_default_stops_the_work_for_the_previous_model(pipeline, upl
 
     for file_id in files:
         wait_until(lambda: states(file_id).get(new) == "done", message=f"file {file_id} was not embedded with the new model")
-        assert states(file_id)[old] == "outdated"  # stopped, not failed
+        assert states(file_id).get(old) in (None, "outdated")  # stopped (never failed, never finished)
         assert file_crud.find(file_id).state == "ready"  # what is left of the old model does not make the file look unfinished
+    assert sum(states(file_id).get(old) == "outdated" for file_id in files) >= 2
     engine_family.update_preset(original.id, {"default": True})  # back to the old model: it picks up where it was stopped
     for file_id in files:
         wait_until(lambda: states(file_id).get(old) == "done", message=f"file {file_id} was not embedded again with the old model")
         assert states(file_id)[new] == "done"
+
+
+@pytest.mark.anyio
+async def test_a_restart_drops_what_still_waited_for_the_previous_model(crud_database, storage_root, fake_embedding, upload_file_factory):
+    file_id = await upload(upload_file_factory, "notes.md", b"Text.")
+    with crud_database() as session:
+        for target in ("old/model", "fake/space-4"):  # waiting for the chunks: nothing computed yet
+            session.add(FileProcessing(file_id=file_id, processor="embedding", target=target, state="pending"))
+        session.commit()
+
+    file_processing.restart_embedding()  # the default preset embeds with fake/space-4
+
+    assert states(file_id) == {("embedding", "fake/space-4"): "pending"}
 
 
 @pytest.mark.anyio

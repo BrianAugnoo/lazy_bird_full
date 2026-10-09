@@ -22,6 +22,7 @@ processing tasks onto their rows (running, paused, completed -> done...).
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
@@ -48,6 +49,11 @@ TRANSITIONS: dict[str, set[str]] = {
     "unsupported": {"pending"},
 }
 ACTIVE_STATES = ("queued", "running", "paused")
+
+# Held while ``ensure`` decides what to queue and while ``restart_embedding`` stops the old
+# model's work: a restart never misses a task queued for the previous default model at the
+# same moment, and every ensure after it sees the new default.
+_queueing = threading.RLock()
 
 
 class InvalidProcessingTransitionError(ConflictError):
@@ -203,6 +209,11 @@ def ensure(file_id: int, *, automatic: bool = True, wanted: list[tuple[str, str]
 
     ``automatic`` adds ``automatic_targets()`` to ``wanted``. Returns the queued tasks.
     """
+    with _queueing:
+        return _ensure(file_id, automatic, wanted)
+
+
+def _ensure(file_id: int, automatic: bool, wanted: list[tuple[str, str]] | None) -> list[TaskOut]:
     requested = list(wanted or []) + (automatic_targets() if automatic else [])
     with db() as session:
         file = session.get(File, file_id)
@@ -285,18 +296,23 @@ def ensure_all(*, automatic: bool = True) -> int:
 def restart_embedding() -> None:
     """The default embedding model changed: stop computing vectors for the other models.
 
-    Their queued and running tasks are cancelled and their results marked outdated, so
-    the new model is not made to wait behind their backlog. If one of them becomes the
-    default again, ``ensure`` computes it again.
+    Their queued and running tasks are cancelled and their results marked outdated, and
+    the ones still waiting for their file's chunks are dropped, so the new model is not
+    made to wait behind their backlog. If one of them becomes the default again,
+    ``ensure`` computes it again.
     """
-    wanted = embedding_targets()
-    with db() as session:
-        rows = session.exec(select(FileProcessing).where(FileProcessing.processor == "embedding", FileProcessing.state.in_(ACTIVE_STATES))).all()
-        stale = [row for row in rows if row.target not in wanted]
-        file_ids = {row.file_id for row in stale}
-        to_cancel = _outdate(session, stale, "The default embedding model changed.")
-        session.commit()
-    _cancel_tasks(to_cancel)
+    with _queueing:
+        wanted = embedding_targets()
+        with db() as session:
+            rows = session.exec(select(FileProcessing).where(FileProcessing.processor == "embedding", FileProcessing.state.in_((*ACTIVE_STATES, "pending")))).all()
+            stale = [row for row in rows if row.target not in wanted]
+            file_ids = {row.file_id for row in stale}
+            for row in stale:
+                if row.state == "pending":
+                    session.delete(row)  # nothing computed yet: only a wish that no longer holds
+            to_cancel = _outdate(session, [row for row in stale if row.state != "pending"], "The default embedding model changed.")
+            session.commit()
+        _cancel_tasks(to_cancel)
     for file_id in file_ids:
         _publish_file(file_id)
 
