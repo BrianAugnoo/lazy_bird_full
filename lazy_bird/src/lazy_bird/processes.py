@@ -49,7 +49,14 @@ class ChildProcess:
         listener = Listener(("127.0.0.1", 0), authkey=key)
         host, port = listener.address
         environment = {**os.environ, KEY_VARIABLE: key.hex(), "PYTHONPATH": os.pathsep.join(path for path in sys.path if path)}
-        process = subprocess.Popen([sys.executable, "-m", module, host, str(port), *arguments], env=environment, stdin=subprocess.DEVNULL)
+        python = sys.executable
+        base = getattr(sys, "_base_executable", python)
+        if sys.platform == "win32" and os.path.normcase(base) != os.path.normcase(python):
+            # The python.exe of a Windows virtual environment is a launcher running the real
+            # interpreter as its own child: the pid, and the memory read from it, would be the
+            # launcher's. Run the interpreter itself in the environment, as multiprocessing does.
+            python, environment["__PYVENV_LAUNCHER__"] = base, python
+        process = subprocess.Popen([python, "-m", module, host, str(port), *arguments], env=environment, stdin=subprocess.DEVNULL)
         try:
             connection = cls._accept(listener, process)
         finally:
