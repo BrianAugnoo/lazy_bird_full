@@ -23,9 +23,10 @@ processing tasks onto their rows (running, paused, completed -> done...).
 from __future__ import annotations
 
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable, Hashable
 
 from sqlmodel import select
 
@@ -54,6 +55,30 @@ ACTIVE_STATES = ("queued", "running", "paused")
 # model's work: a restart never misses a task queued for the previous default model at the
 # same moment, and every ensure after it sees the new default.
 _queueing = threading.RLock()
+_restarts = 0  # how many times restart_embedding ran (counted under _queueing)
+
+
+class _Resolutions:
+    """What a pass over every file resolves once instead of once per file (the default
+    preset's targets, the preset embedding with a model), until ``restart_embedding`` runs.
+
+    Read under ``_queueing``, like ``_restarts``: an ensure after a restart sees the new default.
+    """
+
+    def __init__(self) -> None:
+        self._restarts = _restarts
+        self._values: dict[Hashable, Any] = {}
+
+    def get(self, key: Hashable, compute: Callable[[], Any]) -> Any:
+        if self._restarts != _restarts:  # the default preset changed during the pass
+            self._values.clear()
+            self._restarts = _restarts
+        if key not in self._values:
+            self._values[key] = compute()
+        return self._values[key]
+
+
+_resolutions: ContextVar[_Resolutions | None] = ContextVar("resolutions", default=None)
 
 
 class InvalidProcessingTransitionError(ConflictError):
@@ -171,8 +196,18 @@ def _row(session, file_id: int, processor: str, target: str, create: bool = Fals
 
 
 # --------------------------------------------------------------------------- wanted
+def _resolved_once(key: Hashable, compute: Callable[[], Any]) -> Any:
+    """``compute()``, or what it gave earlier in the same pass over every file (``ensure_all``)."""
+    resolutions = _resolutions.get()
+    return resolutions.get(key, compute) if resolutions is not None else compute()
+
+
 def embedding_preset_for(target: str) -> int:
     """The preset embedding with ``target``: the default one when it matches, else the first valid one."""
+    return _resolved_once(("preset", target), lambda: _embedding_preset_for(target))
+
+
+def _embedding_preset_for(target: str) -> int:
     from lazy_bird.embedding import engine_family, vector_space
 
     presets = sorted(engine_family.presets(), key=lambda preset: (not preset.default, preset.id))
@@ -189,6 +224,10 @@ def embedding_preset_for(target: str) -> int:
 
 def automatic_targets() -> list[tuple[str, str]]:
     """What every file should get: its chunks, and vectors from the default embedding preset."""
+    return list(_resolved_once("targets", _automatic_targets))
+
+
+def _automatic_targets() -> list[tuple[str, str]]:
     from lazy_bird.embedding import engine_family, vector_space
 
     wanted = [("chunking", "")]
@@ -287,10 +326,18 @@ def _block(file_id: int, processor: str, target: str, error: dict) -> None:
 
 
 def ensure_all(*, automatic: bool = True) -> int:
-    """``ensure`` every file; return how many tasks were queued."""
+    """``ensure`` every file; return how many tasks were queued.
+
+    The default preset is resolved once for the whole pass, not once per file (each file
+    still takes ``_queueing`` on its own, so uploads are not held up by a long pass).
+    """
     with db() as session:
         file_ids = list(session.exec(select(File.id).where(File.missing == False)).all())  # noqa: E712
-    return sum(len(ensure(file_id, automatic=automatic)) for file_id in file_ids)
+    token = _resolutions.set(_Resolutions())
+    try:
+        return sum(len(ensure(file_id, automatic=automatic)) for file_id in file_ids)
+    finally:
+        _resolutions.reset(token)
 
 
 def restart_embedding() -> None:
@@ -301,7 +348,9 @@ def restart_embedding() -> None:
     made to wait behind their backlog. If one of them becomes the default again,
     ``ensure`` computes it again.
     """
+    global _restarts
     with _queueing:
+        _restarts += 1  # passes in progress resolve the default preset again
         wanted = embedding_targets()
         with db() as session:
             rows = session.exec(select(FileProcessing).where(FileProcessing.processor == "embedding", FileProcessing.state.in_((*ACTIVE_STATES, "pending")))).all()

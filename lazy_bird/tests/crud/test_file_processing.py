@@ -5,11 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from lazy_bird import database
+from sqlmodel import select
+
+from lazy_bird import database, preferences
 from lazy_bird.crud import chunk as chunk_crud
 from lazy_bird.crud import file as file_crud
 from lazy_bird.crud import file_processing
 from lazy_bird.crud.file_processing import InvalidProcessingTransitionError
+from lazy_bird.models.file import File
 from lazy_bird.models.file_processing import FileProcessing
 from tests.conftest import wait_until
 
@@ -196,6 +199,58 @@ async def test_a_new_default_stops_the_work_for_the_previous_model(pipeline, upl
     for file_id in files:
         wait_until(lambda: states(file_id).get(old) == "done", message=f"file {file_id} was not embedded again with the old model")
         assert states(file_id)[new] == "done"
+
+
+def chunked(crud_database, file_ids):
+    """Mark the chunks of these files up to date, as if they had been chunked: their embedding can be queued."""
+    with crud_database() as session:
+        for file_id in file_ids:
+            row = session.exec(select(FileProcessing).where(FileProcessing.file_id == file_id, FileProcessing.processor == "chunking")).first()
+            row = row or FileProcessing(file_id=file_id, processor="chunking", target="")
+            row.state, row.content_hash, row.task_id = "done", session.get(File, file_id).content_hash, None
+            session.add(row)
+        session.commit()
+
+
+@pytest.mark.anyio
+async def test_a_pass_over_every_file_resolves_the_default_preset_once_not_once_per_file(crud_database, storage_root, fake_embedding, upload_file_factory, monkeypatch):
+    from lazy_bird.embedding import engine_family
+
+    files = [await upload(upload_file_factory, f"{name}.md", b"Text.") for name in "abcd"]
+    chunked(crud_database, files)
+    preferences.update_preferences({"smart-memory": {"enable": False}})  # no memory check when a task is submitted: only the pass resolves
+    resolves = []
+    real_resolve = engine_family.resolve
+    monkeypatch.setattr(engine_family, "resolve", lambda *args, **kwargs: resolves.append(args) or real_resolve(*args, **kwargs))
+
+    queued = file_processing.ensure_all()
+
+    assert queued == len(files)  # one embedding per file
+    assert len(resolves) == 2  # the default preset's model, then the preset embedding with it
+
+
+@pytest.mark.anyio
+async def test_a_new_default_during_a_pass_is_used_by_the_rest_of_the_pass(crud_database, storage_root, fake_embedding, upload_file_factory, monkeypatch):
+    from lazy_bird.embedding import engine_family
+
+    files = [await upload(upload_file_factory, f"{name}.md", b"Text.") for name in "ab"]
+    engine = next(engine for engine in engine_family.engines() if engine.name == "fake-embedding")
+    real_ensure, switched = file_processing.ensure, []
+
+    def ensure_then_switch(file_id, **kwargs):
+        queued = real_ensure(file_id, **kwargs)
+        if not switched:  # after the first file of the pass
+            switched.append(file_id)  # first: the new default starts a pass of its own
+            engine_family.create_preset("wide", engine.id, {"dimension": 8}, default=True)
+        return queued
+
+    monkeypatch.setattr(file_processing, "ensure", ensure_then_switch)
+
+    file_processing.ensure_all()
+
+    for file_id in files:  # nothing is left waiting for the previous model, even for the files after the change
+        assert ("embedding", "fake/space-4") not in states(file_id)
+        assert states(file_id)[("embedding", "fake/space-8")] == "pending"
 
 
 @pytest.mark.anyio
