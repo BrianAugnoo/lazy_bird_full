@@ -52,6 +52,9 @@ WAIT_TIMEOUT_SECONDS = 600  # how long a caller that cannot go on without a mode
 
 _lessee: ContextVar[str | None] = ContextVar("lessee", default=None)
 _priority: ContextVar[int] = ContextVar("priority", default=priorities.SEARCH)
+# Orders the uses of models, for "least recently used first". A counter, not a clock:
+# time.monotonic() only moves every 15.6 ms on Windows, so close uses would tie.
+_uses = itertools.count()
 
 
 @contextmanager
@@ -118,7 +121,7 @@ class Loaded:
         self.instance: Any = None
         self.leases = 0
         self.lessees: Counter[str] = Counter()
-        self.last_used = time.monotonic()
+        self.last_used = next(_uses)
         self._loading = threading.Lock()  # the first lease loads, the others wait for it
         self._calls = threading.Lock()  # a model serves one call at a time
 
@@ -248,7 +251,7 @@ class Residency:
     def _join(self, entry: Loaded, lessee: str | None) -> None:
         entry.leases += 1
         entry.lessees[lessee or "call"] += 1
-        entry.last_used = time.monotonic()
+        entry.last_used = next(_uses)
 
     def _leave(self, entry: Loaded, lessee: str | None) -> None:
         with self._lock:
@@ -259,7 +262,7 @@ class Residency:
                 del entry.lessees[name]
             if entry.leases > 0:
                 return
-            entry.last_used = time.monotonic()
+            entry.last_used = next(_uses)
             if entry.needs and entry.instance is not None and smart_memory().enable:
                 return  # kept while idle, until its memory is needed
             detached = self._detach(entry)  # unsupervised, nothing accounted, or never loaded
