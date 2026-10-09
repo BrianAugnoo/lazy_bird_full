@@ -7,6 +7,7 @@ frontend edits them with the generic settings form (``kwargs_key`` per section).
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any, Literal
 
@@ -82,16 +83,28 @@ SECTIONS: dict[str, tuple[type[BaseModel], str]] = {
 RESTART_REQUIRED = {("tasks", "workers")}
 
 
+# Preferences are read on hot paths (every model call, every scheduling pass): the parsed
+# file is kept until the file changes (path, modification time, size).
+_parsed: tuple[tuple, dict[str, Any]] | None = None
+
+
 def _read_preferences() -> dict[str, Any]:
-    if not PREFERENCE_FILE.exists():
+    global _parsed
+    try:
+        stat = PREFERENCE_FILE.stat()
+    except FileNotFoundError:
         return {}
+    signature = (str(PREFERENCE_FILE), stat.st_mtime_ns, stat.st_size)
+    if _parsed is not None and _parsed[0] == signature:
+        return copy.deepcopy(_parsed[1])
     try:
         values = yaml.safe_load(PREFERENCE_FILE.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as error:
         raise InvalidPreferencesError(f"preference.yaml is not valid YAML: {error}") from error
     if not isinstance(values, dict):
         raise InvalidPreferencesError("preference.yaml must contain a mapping.")
-    return values
+    _parsed = (signature, values)
+    return copy.deepcopy(values)
 
 
 def _section(values: dict[str, Any], name: str) -> BaseModel:
@@ -132,7 +145,9 @@ def update_preferences(changes: dict[str, Any]) -> tuple[dict[str, dict[str, Any
             errors.update({f"{name}.{key}": message for key, message in error.fields.items()})
     if errors:
         raise InvalidInputError("Some preferences are invalid.", code="invalid_preferences", details={"fields": errors})
+    global _parsed
     PREFERENCE_FILE.write_text(yaml.safe_dump(merged, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    _parsed = None  # even on a file system whose times are too coarse to tell this write apart
     restart = [f"{section}.{key}" for section, key in RESTART_REQUIRED if merged[section][key] != current[section][key]]
     return merged, restart
 

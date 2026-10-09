@@ -26,6 +26,7 @@ from loguru import logger
 from lazy_bird.errors import InsufficientResourcesError
 
 Resources = dict[str, float]
+MONITORED = frozenset({"ram_mb", "vram_mb"})  # what the machine reports (tasks.memory.system_free)
 
 __all__ = ["InsufficientResourcesError", "ResourcePool", "Resources", "detect_capacity"]
 
@@ -62,9 +63,15 @@ class ResourcePool:
     def __post_init__(self) -> None:
         self._condition = threading.Condition()
 
-    def _actual(self, real: bool) -> Resources:
-        """Free memory reported by the machine (read outside the lock: it may spawn a process)."""
-        return self.monitor() if real and self.monitor is not None else {}
+    def _actual(self, real: bool, needs: Resources | None = None) -> Resources:
+        """Free memory reported by the machine, when ``needs`` involve memory.
+
+        Read outside the lock: reading GPU memory starts a process (``nvidia-smi``), which
+        work needing only CPU slots does not have to wait for.
+        """
+        if not real or self.monitor is None or (needs is not None and not MONITORED & {name for name, amount in needs.items() if amount > 0}):
+            return {}
+        return self.monitor()
 
     def check(self, needs: Resources) -> None:
         """Raise when ``needs`` could never fit, even on an idle machine."""
@@ -100,7 +107,7 @@ class ResourcePool:
         return min(free, actual[name]) if name in actual else free
 
     def fits(self, needs: Resources, real: bool = False) -> bool:
-        actual = self._actual(real)
+        actual = self._actual(real, needs)
         with self._condition:
             return self._fits(needs, actual)
 
@@ -113,7 +120,7 @@ class ResourcePool:
 
     def deficit(self, needs: Resources, real: bool = False) -> Resources:
         """How much of each resource is missing for ``needs`` to fit now (only the missing ones)."""
-        actual = self._actual(real)
+        actual = self._actual(real, needs)
         with self._condition:
             missing = {name: amount - self._free(name, actual) for name, amount in needs.items() if amount > 0}
         return {name: amount for name, amount in missing.items() if amount > 0}
@@ -123,7 +130,7 @@ class ResourcePool:
             return dict(self._holders.get(holder, {}))
 
     def try_acquire(self, holder: str, needs: Resources, real: bool = False) -> bool:
-        actual = self._actual(real)
+        actual = self._actual(real, needs)
         with self._condition:
             if not self._fits(needs, actual):
                 return False

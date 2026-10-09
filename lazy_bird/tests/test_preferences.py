@@ -70,3 +70,19 @@ def test_the_memory_fallback_only_accepts_cpu_or_wait(preference_file):
         preferences.update_preferences({"smart-memory": {"fallback": "gpu", "interrupt_timeout_seconds": 0}})
 
     assert set(error.value.details["fields"]) == {"smart-memory.fallback", "smart-memory.interrupt_timeout_seconds"}
+
+
+def test_a_hand_edit_of_the_file_is_seen_at_once(preference_file):
+    preference_file.write_text("chunking:\n  max_tokens: 256\n")
+    assert preferences.chunking_max_tokens() == 256
+
+    preference_file.write_text("chunking:\n  max_tokens: 1024\n")  # edited outside the server
+
+    assert preferences.chunking_max_tokens() == 1024
+
+
+def test_values_read_cannot_change_the_preferences(preference_file):
+    preference_file.write_text("tasks:\n  resources:\n    vram_mb: 100\n")
+    preferences.task_preferences()["resources"]["vram_mb"] = 1
+
+    assert preferences.task_preferences()["resources"] == {"vram_mb": 100}

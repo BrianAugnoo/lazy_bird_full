@@ -504,7 +504,8 @@ The `smart-memory` preference section decides how much the machine is supervised
   by what the operating system reports (`tasks/memory.system_free`: `psutil` for RAM,
   `nvidia-smi` for GPU memory, so no CUDA context is created in the server), which
   counts memory used by other programs too. A reading that is unavailable means "no
-  limit besides the pool".
+  limit besides the pool". The machine is only asked when a request involves memory
+  (`ram_mb`, `vram_mb`), and readings are kept one second.
 - `fallback: wait | cpu` — a model that does not fit in GPU memory right now either
   waits for it (`wait`, default) or is loaded in RAM instead (`cpu`). It only applies to
   engines whose `device` is left empty; a device chosen in the preset is respected.
@@ -576,7 +577,8 @@ fallback to `cpu`.
   `crud.search.search`. The cross-encoder preset is resolved before the embedding
   model runs, so a missing preset fails fast.
 - **Preferences** (`preference.yaml`, `GET/PATCH /preferences/`, form at
-  `/preferences/form`): `auto-embedding.enable`, `chunking.max_tokens` (chunk budget,
+  `/preferences/form`; the parsed file is kept until it changes, so reading a preference
+  on a hot path is cheap and a hand edit is seen at once): `auto-embedding.enable`, `chunking.max_tokens` (chunk budget,
   independent of models), `files.scan_every_minutes` (0 = startup only),
   `tasks.workers` (restart required), `tasks.resources` (capacity overrides) and the
   `smart-memory` section (`enable`, `fallback`, `isolate_models`, `interrupt_timeout_seconds`, §7.5).

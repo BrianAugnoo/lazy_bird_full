@@ -111,3 +111,13 @@ def test_waiting_for_a_release_wakes_up_when_something_is_released():
     waiter.join(timeout=5)
 
     assert woke and woke[0] - started < 2
+
+
+def test_the_machine_is_only_asked_when_memory_is_involved():
+    readings = []
+    pool = ResourcePool({"cpu": 4, "vram_mb": 1000}, monitor=lambda: readings.append(1) or {"vram_mb": 100})
+
+    assert pool.try_acquire("cpu-only", {"cpu": 1}, real=True)
+    assert readings == []  # no nvidia-smi for work that needs only CPU slots
+    assert not pool.try_acquire("gpu", {"cpu": 1, "vram_mb": 500}, real=True)
+    assert readings == [1]
