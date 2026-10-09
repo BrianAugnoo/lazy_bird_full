@@ -1,17 +1,30 @@
+"""The SQL and vector databases: adapters, the saved choice of each, and their connections.
+
+Importing this package reads, writes and connects nothing: the choices (``config.json``)
+are read on first use (``current_config``), the SQL engine is created when the server
+starts (``initialize_selected_sql_database``) or by a process it started (``attach``),
+and the vector database on its first use.
+"""
+
 from __future__ import annotations
-import importlib, json, pkgutil
-from dataclasses import dataclass
+
+import importlib
+import json
+import pkgutil
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
-from alembic.migration import MigrationContext
-from alembic.script import ScriptDirectory
-from alembic.config import Config
-from alembic import command
+
 from lazy_bird.database.contracts import SQLDatabaseAdapter, VectorDatabaseAdapter
+
+if TYPE_CHECKING:
+    from alembic.config import Config
+    from sqlalchemy.engine import Engine
 
 DATABASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = DATABASE_DIR / "config.json"
@@ -53,7 +66,21 @@ def _discover(package_name: str) -> dict[str, ModuleType]:
 SQL_ADAPTERS: dict[str, SQLDatabaseAdapter] = _discover("lazy_bird.database.sql_db")
 VECTOR_ADAPTERS: dict[str, VectorDatabaseAdapter] = _discover("lazy_bird.database.vector_db")
 
-def initialize_database_config() -> DatabaseConfig:
+_config: DatabaseConfig | None = None
+engine: Engine | None = None  # the selected SQL database, once connected
+status = DatabaseStatus(ready=False, error="Database has not been initialized")
+_vector_initialized: str | None = None
+
+
+def current_config() -> DatabaseConfig:
+    """The saved database choices, read from ``config.json`` on first use (written only when they change)."""
+    global _config
+    if _config is None:
+        _config = _read_config()
+    return _config
+
+
+def _read_config() -> DatabaseConfig:
     raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
     config = DatabaseConfig.model_validate(raw or {})
     for name in SQL_ADAPTERS:
@@ -64,21 +91,21 @@ def initialize_database_config() -> DatabaseConfig:
         config.selected_sql_database = "sqlite"
     if config.selected_vector_database not in VECTOR_ADAPTERS:
         config.selected_vector_database = next(iter(VECTOR_ADAPTERS), "")
-    CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
     return config
+
+
+def _save_config() -> None:
+    CONFIG_FILE.write_text(current_config().model_dump_json(indent=2), encoding="utf-8")
+
 
 def _settings(module, values):
     schema = getattr(module, "Settings", None)
     return schema.model_validate(values).model_dump(exclude_none=True) if schema else {}
 
-config = initialize_database_config()
-engine = SQL_ADAPTERS[config.selected_sql_database].initialize(**_settings(SQL_ADAPTERS[config.selected_sql_database], config.sql_databases[config.selected_sql_database].settings))
-db_url = str(engine.url)
-db_type = config.selected_sql_database
-status = DatabaseStatus(ready=False, error="Database has not been initialized")
-
 def alembic_config_for(url: str) -> Config:
     """Build the only supported Alembic configuration for a database URL."""
+    from alembic.config import Config
+
     alembic_config = Config(str(DATABASE_DIR.parent / "alembic.ini"))
     alembic_config.set_main_option("script_location", str(DATABASE_DIR.parent / "migration"))
     alembic_config.set_main_option("sqlalchemy.url", url)
@@ -88,47 +115,57 @@ def alembic_config_for(url: str) -> Config:
     return alembic_config
 
 
-_alembic_config = alembic_config_for
+def _head_revision(url: str) -> str | None:
+    from alembic.script import ScriptDirectory
+
+    return ScriptDirectory.from_config(alembic_config_for(url)).get_current_head()
+
 
 def selected_sql_adapter():
     """Return the module of the currently selected SQL database."""
-    return SQL_ADAPTERS[config.selected_sql_database]
+    return SQL_ADAPTERS[current_config().selected_sql_database]
 
-def selected_sql_url() -> str:
+def selected_sql_url() -> str | None:
     """Return the connection URL of the selected SQL adapter.
 
     Adapters expose connection URLs, even when an implementation stores data
     in a local file. This keeps Alembic independent from SQLite details.
     """
     module = selected_sql_adapter()
-    settings = _settings(module, config.sql_databases[module.name].settings)
+    settings = _settings(module, current_config().sql_databases[module.name].settings)
     override = settings.get("url")
     if override:
         return str(override)
     default_url = getattr(module, "default_url", None)
     if default_url is not None:
         return str(default_url)
-    return db_url
+    return str(engine.url) if engine is not None else None
 
 def _current_revision(target_engine) -> str | None:
+    from alembic.migration import MigrationContext
+
     with target_engine.connect() as connection:
         return MigrationContext.configure(connection).get_current_revision()
 
 def initialize_selected_sql_database() -> DatabaseStatus:
-    global engine, db_url, db_type, status
+    """Connect the selected SQL database and migrate it to the latest revision (server startup)."""
+    global engine, status
+    from alembic import command
+
     try:
+        config = current_config()
         module = SQL_ADAPTERS[config.selected_sql_database]
         settings = _settings(module, config.sql_databases[module.name].settings)
         new_engine = module.initialize(**settings)
         new_url = str(new_engine.url)
         command.upgrade(alembic_config_for(new_url), "head")
-        expected = ScriptDirectory.from_config(alembic_config_for(new_url)).get_current_head()
+        expected = _head_revision(new_url)
         current = _current_revision(new_engine)
         if current != expected:
             raise RuntimeError(f"Migration verification failed: expected {expected}, found {current}")
-        if engine is not new_engine:
+        if engine is not None and engine is not new_engine:
             engine.dispose()
-        engine, db_url, db_type = new_engine, new_url, module.name
+        engine = new_engine
         status = DatabaseStatus(ready=True, revision=current)
     except Exception as exc:
         status = DatabaseStatus(ready=False, error=f"Database initialization failed: {exc}")
@@ -136,6 +173,7 @@ def initialize_selected_sql_database() -> DatabaseStatus:
 
 def connection_spec() -> dict[str, Any]:
     """What another process needs to use the same databases as this one (see ``attach``)."""
+    config = current_config()
     sql, vector = config.selected_sql_database, config.selected_vector_database
     return {
         "sql": [sql, dict(config.sql_databases[sql].settings)],
@@ -147,16 +185,18 @@ def attach(spec: dict[str, Any]) -> None:
     """Use the databases of the server, in a process it started (a task process).
 
     The server already migrated them: nothing is migrated and the configuration file is
-    not touched.
+    neither read nor written.
     """
-    global engine, db_url, db_type, status, _vector_initialized
+    global _config, engine, status, _vector_initialized
     (sql, sql_settings), (vector, vector_settings) = spec["sql"], spec["vector"]
-    config.selected_sql_database, config.selected_vector_database = sql, vector
-    config.sql_databases[sql] = DatabaseEntry(settings=sql_settings)
-    config.vector_databases[vector] = DatabaseEntry(settings=vector_settings)
+    _config = DatabaseConfig(
+        sql_databases={sql: DatabaseEntry(settings=sql_settings)},
+        vector_databases={vector: DatabaseEntry(settings=vector_settings)},
+        selected_sql_database=sql,
+        selected_vector_database=vector,
+    )
     module = SQL_ADAPTERS[sql]
     engine = module.initialize(**_settings(module, sql_settings))
-    db_url, db_type = str(engine.url), sql
     status = DatabaseStatus(ready=True)
     _vector_initialized = None
 
@@ -168,18 +208,17 @@ def db():
     with Session(engine) as session:
         yield session
 
-_vector_initialized: str | None = None
-
 
 def vector_adapter():
     """The selected vector adapter, connected with its configured settings on first use."""
-    module = VECTOR_ADAPTERS[config.selected_vector_database]
+    module = VECTOR_ADAPTERS[current_config().selected_vector_database]
     if _vector_initialized != module.name:
         initialize_selected_vector_database()
     return module
 
 def initialize_selected_vector_database():
     global _vector_initialized
+    config = current_config()
     module = VECTOR_ADAPTERS[config.selected_vector_database]
     connection = module.initialize(**_settings(module, config.vector_databases[module.name].settings))
     _vector_initialized = module.name
@@ -216,16 +255,12 @@ def _validated(module, settings: dict[str, Any]) -> dict[str, Any]:
     return contract.validate(settings).model_dump(exclude_none=True)
 
 
-def _save_config() -> None:
-    CONFIG_FILE.write_text(config.model_dump_json(indent=2), encoding="utf-8")
-
-
 def switch_database(kind: str, name: str, settings: dict[str, Any]):
     """Connect to another SQL or vector database and remember the choice.
 
     A SQL database must already be migrated to the current revision.
     """
-    global engine, db_url, db_type, status, _vector_initialized
+    global engine, status, _vector_initialized
     from lazy_bird.errors import ConflictError, ExternalServiceError
 
     module = _adapter(kind, name)
@@ -234,8 +269,9 @@ def switch_database(kind: str, name: str, settings: dict[str, Any]):
         connection = module.initialize(**validated)
     except Exception as error:
         raise ExternalServiceError(f"Could not connect to {name}: {error}", code="database_unreachable") from error
+    config = current_config()
     if kind == "sql":
-        expected = ScriptDirectory.from_config(alembic_config_for(str(connection.url))).get_current_head()
+        expected = _head_revision(str(connection.url))
         current = _current_revision(connection)
         if current != expected:
             connection.dispose()
@@ -244,8 +280,9 @@ def switch_database(kind: str, name: str, settings: dict[str, Any]):
                 code="database_not_migrated",
                 details={"expected": expected, "current": current},
             )
-        engine.dispose()
-        engine, db_url, db_type = connection, str(connection.url), name
+        if engine is not None:
+            engine.dispose()
+        engine = connection
         status = DatabaseStatus(ready=True, revision=current)
         config.selected_sql_database = name
         config.sql_databases[name] = DatabaseEntry(settings=validated)
@@ -272,6 +309,7 @@ def adapter_catalog():
             }
         return catalog
 
+    config = current_config()
     return {
         "sql": describe("sql", SQL_ADAPTERS, config.selected_sql_database, config.sql_databases),
         "vector": describe("vector", VECTOR_ADAPTERS, config.selected_vector_database, config.vector_databases),
@@ -280,10 +318,11 @@ def adapter_catalog():
 
 def disconnect_database(kind: str, name: str, drop: bool = False):
     """Disconnect a database (``drop`` also deletes its data) and fall back to the default one."""
-    global engine, db_url, db_type, status
+    global engine, status
     from lazy_bird.errors import ConflictError
 
     module = _adapter(kind, name)
+    config = current_config()
     if kind == "sql":
         if name != config.selected_sql_database:
             raise ConflictError("Only the selected SQL database can be disconnected.", code="database_not_selected")
@@ -292,7 +331,6 @@ def disconnect_database(kind: str, name: str, drop: bool = False):
         module.disconnect(engine, drop)
         config.selected_sql_database = "sqlite"
         engine = SQL_ADAPTERS["sqlite"].initialize(**_validated(SQL_ADAPTERS["sqlite"], config.sql_databases["sqlite"].settings))
-        db_url, db_type = str(engine.url), "sqlite"
         status = DatabaseStatus(ready=True, revision=_current_revision(engine))
     else:
         module.disconnect(drop)

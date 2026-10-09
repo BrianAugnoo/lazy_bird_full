@@ -15,11 +15,8 @@ def _tables(engine) -> set[str]:
     return set(inspect(engine).get_table_names())
 
 
-def _upgrade_fresh(tmp_path, monkeypatch, name: str, revision: str = "head"):
-    import lazy_bird.database as database_module
-
+def _upgrade_fresh(tmp_path, name: str, revision: str = "head"):
     db_url = f"sqlite:///{tmp_path / name}"
-    monkeypatch.setattr(database_module, "db_url", db_url)
     config = alembic_config(db_url)
     command.upgrade(config, revision)
     return db_url, config
@@ -52,8 +49,8 @@ def test_migrations_downgrade_to_base_and_upgrade_again(migrated_database):
     assert _tables(migrated_database.engine) == head_tables
 
 
-def test_vector_migration_removes_relational_chunks(tmp_path, monkeypatch):
-    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "chunks.db", "c82ad12db6f1")
+def test_vector_migration_removes_relational_chunks(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "chunks.db", "c82ad12db6f1")
     engine = create_engine(db_url)
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO file (name, path, extension, size, status) VALUES ('notes', '/tmp/notes.md', '.md', 10, 'pending')"))
@@ -67,8 +64,8 @@ def test_vector_migration_removes_relational_chunks(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_migrations_upgrade_a_populated_file_table(tmp_path, monkeypatch):
-    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "populated.db", "364a345aff9f")
+def test_migrations_upgrade_a_populated_file_table(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "populated.db", "364a345aff9f")
     engine = create_engine(db_url)
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO file (name, path, format) VALUES ('report', '/tmp/report.pdf', 'pdf')"))
@@ -83,8 +80,8 @@ def test_migrations_upgrade_a_populated_file_table(tmp_path, monkeypatch):
     assert tuple(row) == ("report", ".pdf", 0)
 
 
-def test_engine_preset_migration_keeps_engine_configuration(tmp_path, monkeypatch):
-    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "presets.db", "d16202b6ed97")
+def test_engine_preset_migration_keeps_engine_configuration(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "presets.db", "d16202b6ed97")
     engine = create_engine(db_url)
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO llmmodel (id, name, hf_path, local_path, dimension, formats, selected_format) VALUES (7, 'm', 'org/m', '/tmp/m', 8, '[\"safetensors\"]', 'safetensors')"))
@@ -117,8 +114,8 @@ def test_engine_preset_migration_keeps_engine_configuration(tmp_path, monkeypatc
     engine.dispose()
 
 
-def test_chunk_migration_requeues_embedded_files(tmp_path, monkeypatch):
-    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "chunk-table.db", "39c55806b344")
+def test_chunk_migration_requeues_embedded_files(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "chunk-table.db", "39c55806b344")
     engine = create_engine(db_url)
     with engine.begin() as connection:
         for name, status in [("done", "done"), ("broken", "format-error"), ("failed", "embedding-error")]:
@@ -136,8 +133,8 @@ def test_chunk_migration_requeues_embedded_files(tmp_path, monkeypatch):
     assert "chunk" in tables and not {"embedded", "embeddedvectordatabase", "vectordatabase"} & tables
 
 
-def test_priority_migration_mirrors_priorities_around_the_new_default(tmp_path, monkeypatch):
-    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "priorities.db", "c3e5a7b9d1f2")
+def test_priority_migration_mirrors_priorities_around_the_new_default(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "priorities.db", "c3e5a7b9d1f2")
     engine = create_engine(db_url)
     with engine.begin() as connection:
         for priority in (0, 10, -10):
@@ -163,8 +160,8 @@ def test_priority_migration_mirrors_priorities_around_the_new_default(tmp_path, 
     assert restored == [0, 10, -10]
 
 
-def test_engine_migration_removes_the_unloading_setting_from_saved_presets(tmp_path, monkeypatch):
-    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "unloading.db", "d4a6b8c0e2f4")
+def test_engine_migration_removes_the_unloading_setting_from_saved_presets(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "unloading.db", "d4a6b8c0e2f4")
     engine = create_engine(db_url)
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO embeddingengine (name, file_path, formats, kwargs_key) VALUES ('st', 'st.py', '[]', '{}')"))

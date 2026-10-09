@@ -62,19 +62,18 @@ def make_upload_file(
     )
 
 
+@pytest.fixture(autouse=True)
+def isolated_database_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Database choices start from the defaults and are saved in a temporary file, never the developer's."""
+    monkeypatch.setattr(database_module, "CONFIG_FILE", tmp_path / "database-config.json")
+    monkeypatch.setattr(database_module, "_config", None)
+
+
 @pytest.fixture(scope="session")
 def migrated_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """One database migrated to head per test session; tests get a copy of it."""
-    import lazy_bird.database as database
-
     path = tmp_path_factory.mktemp("template") / "template.db"
-    url = f"sqlite:///{path}"
-    previous = database.db_url
-    database.db_url = url
-    try:
-        command.upgrade(alembic_config(url), "head")
-    finally:
-        database.db_url = previous
+    command.upgrade(alembic_config(f"sqlite:///{path}"), "head")
     return path
 
 
@@ -87,10 +86,9 @@ def migrated_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, migrated_
     db_url = f"sqlite:///{db_path}"
     shutil.copyfile(migrated_template, db_path)
 
-    # env.py imports this value when Alembic starts.
-    monkeypatch.setattr(database_module, "db_url", db_url)
-    monkeypatch.setitem(database_module.config.sql_databases["sqlite"].settings, "url", db_url)
-    monkeypatch.setitem(database_module.config.vector_databases["lancedb"].settings, "path", str(tmp_path / "lance"))
+    config = database_module.current_config()  # a fresh one (isolated_database_config)
+    config.sql_databases["sqlite"].settings["url"] = db_url
+    config.vector_databases["lancedb"].settings["path"] = str(tmp_path / "lance")
     monkeypatch.setattr(lancedb_adapter, "_connection", None)
     monkeypatch.setattr(database_module, "_vector_initialized", None)
     engine = initialize(url=f"sqlite:///{db_path}")

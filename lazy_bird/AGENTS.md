@@ -118,7 +118,7 @@ suite never calls it (it uses the `fake_inference` fixture).
 | `migration/` | Alembic environment and revisions |
 | `errors.py` | typed errors (§4) |
 | `extension/` | discovery conventions (`discovery.py`) and the settings contract (`settings.py`) |
-| `database/` | SQL and vector adapters, selection, connection, vector operations (`contracts.py`) |
+| `database/` | SQL and vector adapters, selection (`current_config()`, read from `config.json` on first use and written only when it changes), connection (at startup, or `attach()` in a task process), vector operations (`contracts.py`). Importing it reads, writes and connects nothing |
 | `storages/` | files on disk: uploads in `storages/uploads/` (git-ignored), safe paths, hashes |
 | `chunker/` | splits files into chunks, one extension per file type |
 | `embedding/` | embedding engine family, `embed_texts`, `embed_query`, vector spaces |
@@ -677,7 +677,7 @@ schema with unknown ids / invalid bodies and checks the uniform error format.
   - `storage_root`, `upload_file_factory`, `model_cache` (temporary HF cache);
   - `fake_embedding`, `fake_local_embedding` (a local engine recording its `loads` / `unloads`, with `gpu_mb` / `cpu_mb` placements), `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
   - `running_scheduler`, `wait_until`, `process_inline`;
-  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `unknown_system_memory`;
+  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `isolated_database_config` (database choices saved in a temporary file), `unknown_system_memory`;
   - `tests/hosting/`: an engine (`engine.py`) and task kinds (`tasks.py`) importable by name, for tests that need a child process (model hosts, isolated tasks).
 - Tests must be deterministic; never weaken or skip a failing test to get green.
 - Frontend tests: `cd web && npm test` (see `web/AGENTS.md` §17).

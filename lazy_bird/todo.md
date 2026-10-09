@@ -5,17 +5,7 @@ isolated tasks). Each item says what is wrong today, where to look, and what "do
 means. Read `AGENTS.md` §5.3 (local engines) and §7.5 (smart memory) first. Remove an
 item in the commit that finishes it.
 
-## 1. Importing `lazy_bird.database` has side effects
-
-- **Today**: on import, `database/__init__.py` reads and **rewrites**
-  `database/config.json` and creates a SQL engine for the configured database. Every
-  process pays for it (model hosts and task processes included), and tests have to
-  monkeypatch module globals afterwards.
-- **Done when**: the configuration is read and the engine created on first use (or at
-  startup), importing the module writes nothing, and `attach()` (task processes) and the
-  test fixtures still work.
-
-## 2. `ensure_all` resolves the default preset once per file
+## 1. `ensure_all` resolves the default preset once per file
 
 - **Today**: `crud/file_processing.ensure_all()` calls `ensure()` per file, and each
   call runs `automatic_targets()` -> `engine_family.resolve()` (several database
@@ -25,7 +15,7 @@ item in the commit that finishes it.
   without breaking the `_queueing` lock (a restart must still never miss a queued
   task, see the comment above `_queueing`).
 
-## 3. Streaming in the engine host protocol
+## 2. Streaming in the engine host protocol
 
 - **Today**: operations of a hosted engine must take and return picklable values
   (`engine_host.py`). A local inference engine needs `chat(..., emit)`: tokens streamed
@@ -35,7 +25,7 @@ item in the commit that finishes it.
   `ResolvedEngine.call` under `acting_as(..., priority.INFERENCE)`, and `_hold` in
   `inference/__init__.py` remains only for engines that are not local.
 
-## 4. Tests that start processes are slow
+## 3. Tests that start processes are slow
 
 - **Today**: the tests starting child processes (`tests/test_engine_host.py`,
   `tests/tasks/test_isolated_tasks.py`, parts of `tests/tasks/test_preemption.py`) take
@@ -45,7 +35,7 @@ item in the commit that finishes it.
   engine families and their modules).
 - **Constraint**: tests must stay isolated and deterministic (`AGENTS.md` §11).
 
-## 5. Reservations forget what a model was measured to take
+## 4. Reservations forget what a model was measured to take
 
 - **Today**: a hosted model holds what its process really takes once it is read (after it
   loads, after every call: `Residency._account`), but the next time the same model is

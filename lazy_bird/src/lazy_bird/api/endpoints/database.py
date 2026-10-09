@@ -9,16 +9,16 @@ router = APIRouter(prefix="/databases", tags=["databases"])
 def list_databases():
     return {
         "available": database.adapter_catalog(),
-        "selected_sql": database.config.selected_sql_database,
-        "selected_vector": database.config.selected_vector_database,
+        "selected_sql": database.current_config().selected_sql_database,
+        "selected_vector": database.current_config().selected_vector_database,
     }
 
 
 @router.get("/selected_db", response_model=SelectedDatabaseOut)
 def get_selected_database():
     return {
-        "sql": database.config.selected_sql_database,
-        "vector": database.config.selected_vector_database,
+        "sql": database.current_config().selected_sql_database,
+        "vector": database.current_config().selected_vector_database,
     }
 
 @router.put("/select")

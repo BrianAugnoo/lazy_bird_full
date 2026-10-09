@@ -8,7 +8,7 @@ import lazy_bird.models # noqa: F401
 
 from alembic import context
 
-from lazy_bird.database import db_url as default_db_url, selected_sql_url
+from lazy_bird.database import selected_sql_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -24,10 +24,7 @@ def _resolve_url() -> str:
     """
     if config.attributes.get("url_from_code"):
         return config.get_main_option("sqlalchemy.url")
-    url = selected_sql_url()
-    if url:
-        return url
-    return default_db_url
+    return selected_sql_url() or config.get_main_option("sqlalchemy.url")
 
 # Configure logging from alembic.ini only for the Alembic CLI: inside the application,
 # fileConfig would replace the loguru bridge installed by lazy_bird.logging_config.
