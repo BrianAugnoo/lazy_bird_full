@@ -290,3 +290,28 @@ def test_a_model_in_use_stays_even_above_a_lowered_capacity(fake_local_embedding
         assert fake_local_embedding.unloads == []
     residency().fit_to_capacity()  # once idle, it goes
     assert len(fake_local_embedding.unloads) == 1
+
+
+def test_a_slow_unload_does_not_hold_up_the_other_models(fake_local_embedding, machine):
+    preferences.update_preferences({"smart-memory": {"enable": False}})  # every call unloads its model at the end
+    unloading, unloaded, seen = threading.Event(), threading.Event(), []
+    real_load = fake_local_embedding.load
+
+    def slow_unload(instance):
+        unloading.set()
+        time.sleep(0.5)  # e.g. a host process taking its time to end
+        unloaded.set()
+
+    def load(settings, model):
+        seen.append(unloaded.is_set())
+        return real_load(settings, model)
+
+    fake_local_embedding.unload, fake_local_embedding.load = slow_unload, load
+    first = threading.Thread(target=embed_texts, args=(["a"], model(fake_local_embedding, dimension=3)))
+    first.start()
+    assert unloading.wait(5)
+
+    embed_texts(["a"], model(fake_local_embedding, dimension=5))  # another model, while the first one unloads
+    first.join(5)
+
+    assert seen == [False, False]  # the second model was loaded before the first one was gone

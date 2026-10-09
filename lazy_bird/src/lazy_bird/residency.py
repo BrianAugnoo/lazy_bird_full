@@ -173,9 +173,10 @@ def _preempt(deficit: Resources, priority: int) -> bool:
 
 class Residency:
     def __init__(self) -> None:
-        # Every change of the entries and of their leases happens under this lock,
-        # unloading included: while a model is being freed nobody can load a second
-        # copy of it next to the first one. It is never held while waiting for memory.
+        # Every change of the entries and of their leases happens under this lock. It is
+        # never held while waiting for memory nor while a model unloads (a hosted model
+        # waits for its process to end): a model being freed keeps its memory in the pool
+        # until it is gone, so a second copy can never be accounted next to it.
         self._lock = threading.RLock()
         self._entries: dict[Hashable, Loaded] = {}
         self._reservations: dict[str, list[Loaded]] = {}
@@ -259,8 +260,10 @@ class Residency:
             if entry.leases > 0:
                 return
             entry.last_used = time.monotonic()
-            if not (entry.needs and entry.instance is not None and smart_memory().enable):
-                self._remove(entry)  # unsupervised, nothing accounted, or never loaded: no reason to keep it
+            if entry.needs and entry.instance is not None and smart_memory().enable:
+                return  # kept while idle, until its memory is needed
+            detached = self._detach(entry)  # unsupervised, nothing accounted, or never loaded
+        self._free([detached])
 
     # --------------------------------------------------------------- reservation
     def _acquire(self, resolved: ResolvedEngine, lessee: str | None, priority: int, preempt: Preempt | None) -> Loaded:
@@ -363,15 +366,7 @@ class Residency:
     def evict_idle(self, needs: Resources) -> bool:
         """Unload idle models, least recently used first, until ``needs`` fit in the pool; whether they do."""
         pool = _pool()
-        while True:
-            missing = pool.blocked_by(needs, real=True)
-            if not missing:
-                return True
-            with self._lock:
-                idle = [entry for entry in self._entries.values() if entry.leases == 0 and entry.needs.keys() & missing]
-                if not idle:
-                    return False
-                self._remove(min(idle, key=lambda entry: entry.last_used))
+        return self._evict_idle_while(lambda: pool.blocked_by(needs, real=True))
 
     def fit_to_capacity(self) -> None:
         """Unload idle models, least recently used first, while the pool holds more than its capacity.
@@ -380,20 +375,30 @@ class Residency:
         programs is given back as soon as nobody uses the models in it.
         """
         pool = _pool()
-        while True:
+
+        def over_capacity() -> set[str]:
             snapshot = pool.snapshot()
-            over = {name for name, used in snapshot["used"].items() if used > snapshot["capacity"].get(name, 0)}
+            return {name for name, used in snapshot["used"].items() if used > snapshot["capacity"].get(name, 0)}
+
+        self._evict_idle_while(over_capacity)
+
+    def _evict_idle_while(self, missing: Callable[[], set[str]]) -> bool:
+        """Unload idle models holding one of the ``missing()`` resources, least recently used
+        first, until nothing is missing; whether that happened."""
+        while names := missing():
             with self._lock:
-                idle = [entry for entry in self._entries.values() if entry.leases == 0 and entry.needs.keys() & over]
+                idle = [entry for entry in self._entries.values() if entry.leases == 0 and entry.needs.keys() & names]
                 if not idle:
-                    return
-                self._remove(min(idle, key=lambda entry: entry.last_used))
+                    return False
+                detached = self._detach(min(idle, key=lambda entry: entry.last_used))
+            self._free([detached])
+        return True
 
     def release_idle(self) -> None:
         """Unload every model nobody holds (``smart-memory`` turned off, shutdown)."""
         with self._lock:
-            for entry in [entry for entry in self._entries.values() if entry.leases == 0]:
-                self._remove(entry)
+            detached = [self._detach(entry) for entry in list(self._entries.values()) if entry.leases == 0]
+        self._free(detached)
 
     def shutdown(self) -> None:
         """Server stopping: unload idle models, and end the host processes of the ones still in use.
@@ -401,28 +406,7 @@ class Residency:
         Users of those models get ``ModelEvicted`` on their next call (a task goes back to the queue).
         """
         self.release_idle()
-        with self._lock:
-            for entry in [entry for entry in self._entries.values() if entry.hosted]:
-                entry.evicted = True
-                if entry.instance is not None:
-                    entry.instance.kill()
-                self._remove(entry)
-
-    def _remove(self, entry: Loaded) -> None:
-        """Forget a model and give back its memory (lock held)."""
-        if entry.removed:
-            return
-        entry.removed = True
-        if self._entries.get(entry.key) is entry:
-            del self._entries[entry.key]
-        instance, entry.instance = entry.instance, None
-        if instance is not None:
-            try:
-                entry.module.unload(instance)
-            except Exception:
-                logger.exception("Unloading the model of engine '{}' failed", entry.key[0])
-        if entry.needs:
-            _pool().release(entry.holder)
+        self._take_away(lambda entry: True)
 
     def force_release(self, lessee: str) -> list[str]:
         """Take away from ``lessee`` the hosted models only it holds, ending their processes.
@@ -431,15 +415,44 @@ class Residency:
         though its thread cannot be stopped, and its next call on those models raises
         ``ModelEvicted``. Models living in the server itself cannot be taken back this way.
         """
-        released = []
+        return self._take_away(lambda entry: entry.leases > 0 and set(entry.lessees) <= {lessee})
+
+    def _take_away(self, chosen: Callable[[Loaded], bool]) -> list[str]:
+        """End the processes of the hosted models ``chosen`` picks, even in use; their names."""
         with self._lock:
-            for entry in [e for e in self._entries.values() if e.hosted and e.leases > 0 and set(e.lessees) <= {lessee}]:
+            entries = [entry for entry in self._entries.values() if entry.hosted and chosen(entry)]
+            detached = []
+            for entry in entries:
                 entry.evicted = True
                 if entry.instance is not None:
                     entry.instance.kill()
-                self._remove(entry)
-                released.append(entry.label)
-        return released
+                detached.append(self._detach(entry))
+        self._free(detached)
+        return [entry.label for entry in entries]
+
+    def _detach(self, entry: Loaded) -> tuple[Loaded, Any] | None:
+        """Forget a model (lock held); returns what ``_free`` must release, None if already forgotten."""
+        if entry.removed:
+            return None
+        entry.removed = True
+        if self._entries.get(entry.key) is entry:
+            del self._entries[entry.key]
+        instance, entry.instance = entry.instance, None
+        return entry, instance
+
+    def _free(self, detached: list[tuple[Loaded, Any] | None]) -> None:
+        """Unload forgotten models, then give their memory back to the pool (lock not held)."""
+        for item in detached:
+            if item is None:
+                continue
+            entry, instance = item
+            if instance is not None:
+                try:
+                    entry.module.unload(instance)
+                except Exception:
+                    logger.exception("Unloading the model of engine '{}' failed", entry.key[0])
+            if entry.needs:
+                _pool().release(entry.holder)
 
     def describe(self) -> list[dict[str, Any]]:
         """The models in memory: where they live, what they take, who uses them (for the interface)."""
