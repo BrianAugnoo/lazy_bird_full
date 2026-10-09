@@ -58,7 +58,7 @@ def test_the_form_describes_every_section():
 
 
 def test_smart_memory_is_on_by_default_and_can_be_configured(preference_file):
-    assert preferences.smart_memory().model_dump() == {"enable": True, "fallback": "wait", "interrupt_timeout_seconds": 60}
+    assert preferences.smart_memory().model_dump() == {"enable": True, "fallback": "wait", "isolate_models": True, "interrupt_timeout_seconds": 60}
 
     preferences.update_preferences({"smart-memory": {"enable": False, "fallback": "cpu"}})
 

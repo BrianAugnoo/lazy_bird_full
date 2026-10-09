@@ -30,7 +30,7 @@ from lazy_bird.crud import task as task_crud
 from lazy_bird import priority as priorities
 from lazy_bird.errors import AppError, InsufficientResourcesError
 from lazy_bird.preferences import smart_memory
-from lazy_bird.residency import MemoryPending, acting_as, residency
+from lazy_bird.residency import MemoryPending, ModelEvicted, acting_as, residency
 from lazy_bird.schemas.task import TaskOut
 from lazy_bird.tasks.context import TaskContext
 from lazy_bird.tasks.events import EventHub
@@ -271,8 +271,15 @@ class Scheduler:
             late = [task_id for task_id, since in self._yielding.items() if task_id in self._running and task_id not in self._unresponsive and now - since > timeout]
             self._unresponsive.update(late)
         for task_id in late:
-            logger.warning("Task {} did not yield within {} s: it keeps its resources until it reaches a checkpoint", task_id, timeout)
-            self.events.publish({"type": "task_unresponsive", "task_id": task_id})
+            forced = residency().force_release(f"task:{task_id}")
+            if forced:
+                logger.warning("Task {} did not yield within {} s: its models {} were taken away, it goes back to the queue when it next uses one", task_id, timeout, forced)
+            else:
+                logger.warning("Task {} did not yield within {} s: it keeps its resources until it reaches a checkpoint", task_id, timeout)
+            self.events.publish({"type": "task_unresponsive", "task_id": task_id, "released": forced})
+            if forced:
+                self._publish_resources()
+                self.wake()
 
     def _update_waiting(self, waiting: dict[int, list[str]]) -> None:
         with self._lock:
@@ -301,7 +308,7 @@ class Scheduler:
             return task_crud.finish(task.id, "paused", state=context.state)
         except TaskCancelled:
             return task_crud.finish(task.id, "cancelled", state=context.state)
-        except TaskInterrupted:
+        except (TaskInterrupted, ModelEvicted):
             return task_crud.finish(task.id, "queued", state=context.state, refund_attempt=True)
         except Exception as error:
             logger.opt(exception=error).error("Task {} ({}) failed", task.id, task.kind)
@@ -359,7 +366,11 @@ class Scheduler:
         return described
 
     def _publish_resources(self) -> None:
-        self.events.publish({"type": "resources", "resources": self.pool.snapshot()})
+        self.events.publish({"type": "resources", "resources": self.resources()})
+
+    def resources(self) -> dict:
+        """The pool (capacity, used, holders) and the models in memory."""
+        return {**self.pool.snapshot(), "models": residency().describe()}
 
     # ------------------------------------------------------------------- commands
     def submit(self, task_definition: TaskDefinition, params: dict[str, Any], *, title=None, priority=None, run_at=None, dedupe_key=None, resources=None) -> TaskOut:

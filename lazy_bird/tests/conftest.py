@@ -378,6 +378,8 @@ def isolated_residency():
 
     residency_module._residency = None
     yield
+    if residency_module._residency is not None:
+        residency_module._residency.shutdown()  # no host process outlives its test
     residency_module._residency = None
 
 

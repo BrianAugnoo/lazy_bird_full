@@ -76,4 +76,24 @@ describe('TasksPage', () => {
 
     expect(screen.getAllByText('not responding')).toHaveLength(1);
   });
+
+  it('lists the models in memory, in use or idle, with what they really take', () => {
+    show({
+      resources: {
+        capacity: {},
+        used: {},
+        holders: {},
+        models: [
+          { model: 'Qwen3-Embedding-0.6B', engine: 'sentence-transformers', device: 'cuda', needs: { vram_mb: 1648 }, idle: true, users: [], pid: 42, memory: { rss_mb: 2300, vram_mb: 1160 } },
+          { model: 'MiniLM', engine: 'sentence-transformers', device: 'cpu', needs: { ram_mb: 400 }, idle: false, users: ['task:3'], pid: null, memory: null },
+        ],
+      },
+    });
+
+    expect(screen.getByText('Qwen3-Embedding-0.6B')).toBeTruthy();
+    expect(screen.getByText('idle')).toBeTruthy();
+    expect(screen.getByText('in use')).toBeTruthy();
+    expect(screen.getByText(/1\.6 GB of GPU memory \(really using 2\.2 GB memory, 1\.1 GB GPU\)/)).toBeTruthy();
+    expect(screen.getAllByText('own process')).toHaveLength(1); // only the model with a process of its own
+  });
 });

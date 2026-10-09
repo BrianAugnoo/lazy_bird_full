@@ -9,6 +9,9 @@ receive the loaded instance as first argument. This module owns those instances:
   shared instance run one at a time;
 - a caller that knows it will make many calls (a task embedding batch after batch)
   wraps them in one lease, so the model is loaded once instead of once per call;
+- the model lives in a host process of its own (``engine_host.py``) when the
+  ``smart-memory.isolate_models`` preference is on and the engine module can be
+  imported by name; otherwise it lives in the server;
 - with ``smart-memory`` off the last lease to leave unloads the model and nothing is
   accounted (unsupervised);
 - with ``smart-memory`` on every model holds the memory it takes in the shared resource
@@ -34,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Callable, Hashable, Iterator
 from loguru import logger
 
 from lazy_bird import priority as priorities
+from lazy_bird.engine_host import EngineHost, EngineProcessError, importable
 from lazy_bird.errors import InsufficientResourcesError, UnavailableError
 from lazy_bird.preferences import smart_memory
 
@@ -66,6 +70,30 @@ def acting_as(lessee: str | None, priority: int) -> Iterator[None]:
         _priority.reset(tokens[1])
 
 
+class ModelEvicted(Exception):
+    """The model of a task was taken away because the task did not make room when asked.
+
+    The scheduler puts the task back in the queue, as if it had yielded."""
+
+
+class HostedModule:
+    """Stands in for an engine module whose model lives in a host process."""
+
+    def __init__(self, module: Any) -> None:
+        self._module = module
+        self.__name__ = module.__name__
+
+    def load(self, settings: Any, model: Any) -> EngineHost:
+        return EngineHost.start(self._module.__name__, settings, model)
+
+    @staticmethod
+    def unload(host: EngineHost) -> None:
+        host.stop()
+
+    def __getattr__(self, operation: str) -> Callable[..., Any]:
+        return lambda host, *args: host.call(operation, args)
+
+
 class MemoryPending(Exception):
     """The memory a model needs is not free yet; it will be when ``missing`` is released."""
 
@@ -77,9 +105,13 @@ class MemoryPending(Exception):
 class Loaded:
     """A model held in memory, shared by every lease that has the same key."""
 
-    def __init__(self, key: Hashable, module: Any, overrides: dict[str, Any], needs: Resources, holder: str) -> None:
+    def __init__(self, key: Hashable, module: Any, overrides: dict[str, Any], needs: Resources, holder: str, label: str) -> None:
         self.key = key
         self.module = module
+        self.hosted = isinstance(module, HostedModule)
+        self.label = label
+        self.evicted = False  # taken away from its users by force
+        self.removed = False
         self.overrides = overrides  # settings the placement changes (e.g. the device)
         self.needs = needs  # memory it takes in the pool
         self.holder = holder
@@ -96,7 +128,19 @@ class Loaded:
 
     def run(self, operation: str, *args: Any) -> Any:
         with self._calls:
-            return getattr(self.module, operation)(self.instance, *args)
+            if self.evicted:
+                raise ModelEvicted("The model was taken away to make room for more urgent work.")
+            instance = self.instance
+            try:
+                return getattr(self.module, operation)(instance, *args)
+            except EngineProcessError:
+                if self.evicted:
+                    raise ModelEvicted("The model was taken away to make room for more urgent work.") from None
+                if self.hosted and not instance.alive:
+                    instance.kill()  # reap it
+                    if self.instance is instance:
+                        self.instance = None  # the process is gone: the next use loads the model again
+                raise
 
 
 def _placements(resolved: ResolvedEngine) -> list[tuple[dict[str, Any], Resources]]:
@@ -253,7 +297,9 @@ class Residency:
                     _pool().release(holder)
                 self._join(entry, lessee)
                 return entry
-            entry = Loaded(key, resolved.module, overrides, needs, holder or self._new_holder(resolved))
+            module = HostedModule(resolved.module) if smart_memory().isolate_models and importable(resolved.module) else resolved.module
+            label = getattr(resolved.model, "name", None) or resolved.engine.name
+            entry = Loaded(key, module, overrides, needs, holder or self._new_holder(resolved), label)
             self._entries[key] = entry
             self._join(entry, lessee)
             return entry
@@ -290,6 +336,8 @@ class Residency:
     @staticmethod
     def _ensure_loaded(entry: Loaded, resolved: ResolvedEngine) -> None:
         with entry._loading:
+            if entry.evicted:
+                raise ModelEvicted("The model was taken away to make room for more urgent work.")
             if entry.instance is None:
                 entry.instance = entry.module.load(entry.placed(resolved.settings), resolved.model)
 
@@ -314,11 +362,25 @@ class Residency:
                 self._remove(entry)
 
     def shutdown(self) -> None:
+        """Server stopping: unload idle models, and end the host processes of the ones still in use.
+
+        Users of those models get ``ModelEvicted`` on their next call (a task goes back to the queue).
+        """
         self.release_idle()
+        with self._lock:
+            for entry in [entry for entry in self._entries.values() if entry.hosted]:
+                entry.evicted = True
+                if entry.instance is not None:
+                    entry.instance.kill()
+                self._remove(entry)
 
     def _remove(self, entry: Loaded) -> None:
         """Forget a model and give back its memory (lock held)."""
-        self._entries.pop(entry.key, None)
+        if entry.removed:
+            return
+        entry.removed = True
+        if self._entries.get(entry.key) is entry:
+            del self._entries[entry.key]
         instance, entry.instance = entry.instance, None
         if instance is not None:
             try:
@@ -327,6 +389,41 @@ class Residency:
                 logger.exception("Unloading the model of engine '{}' failed", entry.key[0])
         if entry.needs:
             _pool().release(entry.holder)
+
+    def force_release(self, lessee: str) -> list[str]:
+        """Take away from ``lessee`` the hosted models only it holds, ending their processes.
+
+        For a lessee that does not step aside when asked: the memory comes back at once even
+        though its thread cannot be stopped, and its next call on those models raises
+        ``ModelEvicted``. Models living in the server itself cannot be taken back this way.
+        """
+        released = []
+        with self._lock:
+            for entry in [e for e in self._entries.values() if e.hosted and e.leases > 0 and set(e.lessees) <= {lessee}]:
+                entry.evicted = True
+                if entry.instance is not None:
+                    entry.instance.kill()
+                self._remove(entry)
+                released.append(entry.label)
+        return released
+
+    def describe(self) -> list[dict[str, Any]]:
+        """The models in memory: where they live, what they take, who uses them (for the interface)."""
+        with self._lock:
+            entries = list(self._entries.values())
+        return [
+            {
+                "model": entry.label,
+                "engine": entry.key[0],
+                "device": entry.overrides.get("device"),
+                "needs": dict(entry.needs),
+                "idle": entry.leases == 0,
+                "users": sorted(entry.lessees),
+                "pid": entry.instance.pid if entry.hosted and entry.instance is not None else None,
+                "memory": entry.instance.stats() if entry.hosted and entry.instance is not None else None,
+            }
+            for entry in entries
+        ]
 
     def exclusive_to(self, lessee: str) -> Resources:
         """The memory of the models only ``lessee`` holds: what freeing it would let go of."""

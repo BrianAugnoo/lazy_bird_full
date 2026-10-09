@@ -103,11 +103,25 @@ export interface TaskKind {
   retries: number;
 }
 
+/** A local model in memory. `memory` is what its own process really uses, when it has one. */
+export interface LoadedModel {
+  model: string;
+  engine: string;
+  device: string | null;
+  needs: Record<string, number>;
+  idle: boolean;
+  users: string[];
+  pid: number | null;
+  memory: { rss_mb: number; vram_mb?: number } | null;
+}
+
 /** Capacity and use of each resource (`cpu`, `vram_mb`, ...); `holders` maps a task or run to what it holds. */
 export interface ResourceSnapshot {
   capacity: Record<string, number>;
   used: Record<string, number>;
   holders: Record<string, Record<string, number>>;
+  /** The local models in memory (absent from older servers). */
+  models?: LoadedModel[];
 }
 
 // ----------------------------------------------------- engines and presets

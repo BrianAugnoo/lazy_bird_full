@@ -58,6 +58,11 @@ class SmartMemory(BaseModel):
         title="Fallback policy",
         description="When a model does not fit in GPU memory right now: 'cpu' loads it in RAM instead, 'wait' waits until GPU memory is free. Only applies to engines whose device is left empty.",
     )
+    isolate_models: bool = Field(
+        default=True,
+        title="Run models in separate processes",
+        description="Each local model lives in a process of its own: its memory is certainly given back when it is unloaded, a crash or an out-of-memory kill does not take the server down, and a task that does not step aside can be forced out by ending its model's process. The first use of a model takes a few seconds longer.",
+    )
     interrupt_timeout_seconds: int = Field(
         default=60,
         ge=1,

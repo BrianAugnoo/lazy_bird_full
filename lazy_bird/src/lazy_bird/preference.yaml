@@ -10,4 +10,5 @@ tasks:
 smart-memory:
   enable: true
   fallback: wait
+  isolate_models: true
   interrupt_timeout_seconds: 60

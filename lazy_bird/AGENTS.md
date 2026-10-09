@@ -125,6 +125,7 @@ suite never calls it (it uses the `fake_inference` fixture).
 | `agents/` | tools, hooks, skills, instructions, agent and session presets, agent runtime |
 | `tasks/` | background task system: registry, scheduler, resources, events, task kinds |
 | `residency.py` | models of local engines in memory: who holds them, where they live, when they are loaded and freed (§5.3, §7.5) |
+| `engine_host.py` | the host process of a local model (`python -m lazy_bird.engine_host`) and its server-side handle (§7.5) |
 | `priority.py` | the priority ranks: `NOW` 0, `SEARCH` 1, `INFERENCE` 2, `BACKGROUND` 5 (lower = more urgent) |
 | `tools/` | utilities: Hugging Face cache and auth, model inspection, GGUF reader, schema diagram |
 | `preferences.py` + `preference.yaml` | runtime preferences (§8) |
@@ -269,6 +270,13 @@ loaded for every call inside the block, so a caller that knows its workload load
 model once (the `files.embed` task wraps all the batches of a file in one). The first
 lease loads; leases on the same engine and `load_key` share one instance, and calls on
 a shared instance run one at a time. No engine decides alone, inside a call, to unload.
+With `smart-memory.isolate_models` on (default) and an engine module that can be
+imported by name (engine files are; modules built on the fly are not), the model lives in
+a host process of its own: `load`, the operations and `unload` run there, so unloading
+gives back all the memory (the CUDA context included), a crash or out-of-memory kill of
+the host raises `EngineProcessError` (`engine_crashed`) instead of taking the server
+down (the next call starts a new host), and the process can be killed. Operations of a
+hosted engine must take and return picklable values (no streaming callbacks yet).
 What happens when the last lease leaves, and how memory is shared, depends on the
 `smart-memory` preference (§7.5): off, the model is freed right away and nothing is
 accounted; on, it stays loaded, holding its memory in the pool, until that memory is
@@ -426,9 +434,9 @@ limits what runs (§7.5).
 
 ### 7.3 Live control
 
-`WS /ws/tasks` sends `{"type": "snapshot", "tasks", "resources", "kinds"}`, then
+`WS /ws/tasks` sends `{"type": "snapshot", "tasks", "resources" (pool + `models` in memory), "kinds"}`, then
 `task`, `task_deleted`, `resources`, `waiting` (why queued tasks wait), `reordered`,
-`task_unresponsive` (`task_id` asked to yield that did not stop in time, §7.5)
+`task_unresponsive` (`task_id` asked to yield that did not stop in time, `released` models, §7.5)
 and `file` (`file_id` whose processing changed) events. Commands:
 `{"action": "pause"|"resume"|"cancel"|"retry"|"delete", "task_id", "request_id"}`,
 `{"action": "move", "task_id", "before_id"|"after_id"}`,
@@ -490,6 +498,8 @@ The `smart-memory` preference section decides how much the machine is supervised
   engines whose `device` is left empty; a device chosen in the preset is respected.
 - `interrupt_timeout_seconds` (T_max, default 60) — how long a task asked to yield may
   take to reach a checkpoint.
+- `isolate_models` (default on, independent of `enable`) — local models run in host
+  processes (§5.3).
 
 With it on, a loaded model holds its memory in the pool (`engine:*` holders). A model
 nobody uses stays loaded until its memory is needed: it is then evicted, least recently
@@ -509,9 +519,13 @@ number the more urgent; only strictly less urgent running tasks are asked):
    their saved state once the urgent work is done. What a task releases is its own
    resources plus the models only it uses;
 3. a task that has not stopped after `interrupt_timeout_seconds` is reported with a
-   `task_unresponsive` event and no longer counted on: the urgent request keeps waiting.
-   Tasks run in threads, so they cannot be killed; forcing them out needs processes
-   (planned: an engine host process, and isolated tasks).
+   `task_unresponsive` event (`released` lists the models taken away) and no longer
+   counted on. Tasks run in threads, which cannot be killed, but the hosted models only
+   it uses are taken away: their processes are ended, the memory is back at once, and its
+   next call on them raises `ModelEvicted`, which sends the task back to the queue (as if
+   it had yielded). Models living in the server, or shared with other tasks, cannot be
+   taken: the urgent request keeps waiting. Forcing out any task needs tasks in processes
+   too (not done yet).
 
 A model that cannot fit in the machine even if everything else gave way is refused with
 `InsufficientResourcesError` (code `insufficient_memory`, 422): "Cannot process with
@@ -554,7 +568,7 @@ fallback to `cpu`.
   `/preferences/form`): `auto-embedding.enable`, `chunking.max_tokens` (chunk budget,
   independent of models), `files.scan_every_minutes` (0 = startup only),
   `tasks.workers` (restart required), `tasks.resources` (capacity overrides) and the
-  `smart-memory` section (`enable`, `fallback`, `interrupt_timeout_seconds`, §7.5).
+  `smart-memory` section (`enable`, `fallback`, `isolate_models`, `interrupt_timeout_seconds`, §7.5).
 - **API keys** (`apikey`): secrets for extensions, never returned by the API. The
   `HuggingFace` key logs in to the Hub (again when replaced, out when deleted).
 - **Logs**: loguru to the console and `logs.txt` (in the server's working directory); `/logs/` searches entries (BM25 or

@@ -1,7 +1,7 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { tasks as tasksApi } from '@/api/endpoints/tasks';
 import { DEFAULT_PRIORITY, PRIORITY_NOW, isScheduled, moveTask, taskAction, useTaskStore, type TaskAction } from '@/core/tasks/store';
-import type { ResourceSnapshot, Task } from '@/core/types/api';
+import type { LoadedModel, ResourceSnapshot, Task } from '@/core/types/api';
 import { Icon } from '@/ui/Icon';
 import { PageHeader } from '@/ui/PageHeader';
 import { useToast } from '@/ui/toastContext';
@@ -26,6 +26,47 @@ function amount(name: string, value: number): string {
   const spec = RESOURCE_LABELS[name];
   if (spec?.scale) return `${(value / spec.scale).toFixed(1)} ${spec.unit}`;
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function modelMemory(model: LoadedModel): string {
+  const reserved = Object.entries(model.needs)
+    .map(([name, value]) => `${amount(name, value)} ${name === 'vram_mb' ? 'of GPU memory' : 'of memory'}`)
+    .join(', ');
+  const really = model.memory ? ` (really using ${(model.memory.rss_mb / 1024).toFixed(1)} GB memory${model.memory.vram_mb ? `, ${(model.memory.vram_mb / 1024).toFixed(1)} GB GPU` : ''})` : '';
+  return reserved + really;
+}
+
+function LoadedModels({ models }: { models: LoadedModel[] }) {
+  if (models.length === 0) return null;
+  return (
+    <section>
+      <h2 className="section-title">
+        Models in memory <span className="muted">{models.length}</span>
+      </h2>
+      <div className="task-list">
+        {models.map((model) => (
+          <div key={`${model.engine}:${model.model}:${model.device}`} className="task-row">
+            <div className="task-main">
+              <div className="task-title">
+                <span className="task-title-text">{model.model}</span>
+                <span className={`chip ${model.idle ? 'chip-outline' : 'chip-live'}`}>{model.idle ? 'idle' : 'in use'}</span>
+                {model.device && <span className="chip chip-outline">{model.device}</span>}
+                {model.pid !== null && (
+                  <span className="chip chip-outline" title="It runs in a process of its own: unloading it gives all its memory back">
+                    own process
+                  </span>
+                )}
+              </div>
+              <div className="task-meta">
+                <span>{modelMemory(model) || 'no memory declared'}</span>
+                {model.idle && <span>Unloaded when its memory is needed.</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function Resources({ resources }: { resources: ResourceSnapshot }) {
@@ -250,6 +291,7 @@ export function TasksPage() {
       />
       {status !== 'open' && <div className="alert alert-warning">{status === 'connecting' ? 'Connecting to the task queue…' : 'Disconnected from the task queue, reconnecting…'}</div>}
       <Resources resources={resources} />
+      <LoadedModels models={resources.models ?? []} />
 
       <section>
         <h2 className="section-title">

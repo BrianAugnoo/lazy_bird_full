@@ -2,7 +2,8 @@
 
 ``/ws/tasks`` first sends ``{"type": "snapshot", "tasks", "resources", "kinds"}``,
 then every change: ``{"type": "task", "task"}``, ``{"type": "task_deleted", "id"}``,
-``{"type": "resources", "resources"}``, ``{"type": "waiting", "waiting"}`` and
+``{"type": "resources", "resources"}`` (capacity, used, holders and the models in memory),
+``{"type": "task_unresponsive", "task_id"}``, ``{"type": "waiting", "waiting"}`` and
 ``{"type": "reordered"}`` (refetch the order). Clients send commands:
 
     {"action": "pause" | "resume" | "cancel" | "retry" | "delete", "task_id": 1, "request_id": "a"}
@@ -46,7 +47,7 @@ def list_task_kinds():
 
 @router.get("/tasks/resources")
 def get_resources() -> dict[str, Any]:
-    return scheduler().pool.snapshot()
+    return scheduler().resources()
 
 
 @router.delete("/tasks/finished")
@@ -146,7 +147,7 @@ async def tasks_socket(websocket: WebSocket):
             {
                 "type": "snapshot",
                 "tasks": [task.model_dump(mode="json") for task in tasks],
-                "resources": current.pool.snapshot(),
+                "resources": current.resources(),
                 "kinds": [kind.model_dump() for kind in _kinds()],
             }
         )

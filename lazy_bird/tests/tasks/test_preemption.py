@@ -5,11 +5,13 @@ import threading
 import time
 from types import SimpleNamespace
 
+import psutil
 import pytest
 
 import lazy_bird.tasks as tasks_module
 from lazy_bird import preferences
 from lazy_bird.embedding import engine_family
+from lazy_bird.residency import residency
 from lazy_bird.errors import InsufficientResourcesError
 from lazy_bird.tasks import TaskContext, task
 from lazy_bird.tasks.resources import ResourcePool
@@ -59,8 +61,17 @@ def machine(fake_local_embedding, monkeypatch):
     yield scheduler
     for event in GATES.values():
         event.set()
+    residency().shutdown()
     scheduler.stop(timeout=3)
     ENGINES.clear()
+
+
+@pytest.fixture
+def hosted_engine(machine, monkeypatch):
+    import tests.hosting.engine as module
+
+    monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
+    return engine_family.register(module)
 
 
 def wait_until(predicate, timeout: float = 5.0, message: str = "condition not reached"):
@@ -166,7 +177,7 @@ def test_a_task_that_does_not_yield_is_reported_and_waited_for(machine, monkeypa
 
     urgent = work.submit(name="urgent", model="B", priority=1)
 
-    wait_until(lambda: {"type": "task_unresponsive", "task_id": stuck.id} in events, message="the stuck task was not reported")
+    wait_until(lambda: {"type": "task_unresponsive", "task_id": stuck.id, "released": []} in events, message="the stuck task was not reported")
     assert status(machine, urgent.id) == "queued" and running(machine, stuck.id)  # nothing can take its place by force
     gate("stuck").set()
     wait_until(lambda: running(machine, urgent.id), message="the urgent task did not start once the stuck one ended")
@@ -205,3 +216,33 @@ def test_the_models_of_a_finished_task_stay_loaded_but_give_way(machine, fake_lo
 
     wait_until(lambda: running(machine, second.id))
     assert [m.dimension for m in fake_local_embedding.unloads] == [3]
+
+
+@task("test.hosted_stubborn", title="Stubborn {name}", resources={"cpu": 1}, engines=lambda name, model: [ENGINES[model]])
+def hosted_stubborn(ctx: TaskContext, name: str, model: str) -> str:
+    """Sits in one long model call: it never reaches a checkpoint."""
+    LOG.append(f"start:{name}")
+    ENGINES[model].call("sleep", 30)
+    LOG.append(f"end:{name}")
+    return name
+
+
+def test_a_stuck_task_is_forced_out_by_taking_its_hosted_model_away(machine, hosted_engine, monkeypatch):
+    monkeypatch.setattr(
+        sys.modules[Scheduler.__module__],
+        "smart_memory",
+        lambda: SimpleNamespace(enable=True, fallback="wait", interrupt_timeout_seconds=0.5),
+    )
+    ENGINES["H1"] = engine_family.resolve_settings(hosted_engine.id, {"dimension": 3, "gpu_mb": 600})
+    ENGINES["H2"] = engine_family.resolve_settings(hosted_engine.id, {"dimension": 5, "gpu_mb": 600})
+    stuck = hosted_stubborn.submit(name="stuck", model="H1", priority=5)
+    wait_until(lambda: LOG == ["start:stuck"] and machine.resources()["models"] and machine.resources()["models"][0]["pid"], message="the model never loaded")
+    pid = machine.resources()["models"][0]["pid"]
+
+    urgent = work.submit(name="urgent", model="H2", priority=1)
+
+    wait_until(lambda: running(machine, urgent.id), timeout=10, message="the urgent task never got the memory")
+    assert not psutil.pid_exists(pid)  # the model's process was ended
+    assert status(machine, stuck.id) == "queued" and machine.task(stuck.id).attempts == 0  # sent back to the queue, nothing lost
+    gate("urgent").set()
+    wait_until(lambda: status(machine, urgent.id) == "completed")
