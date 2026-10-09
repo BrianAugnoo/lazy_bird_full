@@ -23,6 +23,8 @@ Read §2 (how to work) and §3 (architecture) first, then jump to what you need:
 | change a table | §9 | `models/`, `migration/versions/`, `tests/test_migrations.py` |
 | add or change an endpoint | §10, §4 | `tests/test_api_contract.py`, then the screen in `web/` |
 | write tests | §11 | `tests/conftest.py` fixtures |
+| understand where models live, memory limits, preemption | §5.3 (local engines), §7.5 | `residency.py`, `tasks/scheduler.py`, `engine_host.py`, `task_host.py` |
+| pick up planned work | `todo.md` (next to this file) | |
 
 To see it running: `uv run uvicorn lazy_bird.main:app --reload`, then `cd ../web &&
 npm run dev` (http://localhost:5173); `/docs` lists every route and `/schemas`
