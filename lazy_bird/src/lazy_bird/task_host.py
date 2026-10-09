@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -238,3 +240,9 @@ def serve() -> None:
 
 if __name__ == "__main__":
     serve()
+    # The run is over and reported. Threads it left behind (a download it stopped waiting for,
+    # see TaskContext.run_blocking) must not keep the process alive: end it now, logs written.
+    logger.remove()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

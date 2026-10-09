@@ -5,19 +5,7 @@ isolated tasks). Each item says what is wrong today, where to look, and what "do
 means. Read `AGENTS.md` §5.3 (local engines) and §7.5 (smart memory) first. Remove an
 item in the commit that finishes it.
 
-## 1. Cancelling a model download does not stop it
-
-- **Today**: `models.download` (`tasks/default/models.py`) only reports progress and
-  never reaches a checkpoint, so pause and cancel wait for the whole download.
-- **Fix**: declare it `isolated=True`: after `smart-memory.interrupt_timeout_seconds`
-  its process is ended and the task finishes as asked. `models.import` is a candidate
-  too.
-- **Watch out**: `tests/tasks/test_model_tasks.py` monkeypatches `download_model` in the
-  server process, which a task process does not see. Those tests have to use a module
-  importable by name (like `tests/hosting/tasks.py`), or the network call has to be
-  replaced another way.
-
-## 2. Importing `lazy_bird.database` has side effects
+## 1. Importing `lazy_bird.database` has side effects
 
 - **Today**: on import, `database/__init__.py` reads and **rewrites**
   `database/config.json` and creates a SQL engine for the configured database. Every
@@ -27,7 +15,7 @@ item in the commit that finishes it.
   startup), importing the module writes nothing, and `attach()` (task processes) and the
   test fixtures still work.
 
-## 3. `ensure_all` resolves the default preset once per file
+## 2. `ensure_all` resolves the default preset once per file
 
 - **Today**: `crud/file_processing.ensure_all()` calls `ensure()` per file, and each
   call runs `automatic_targets()` -> `engine_family.resolve()` (several database
@@ -37,7 +25,7 @@ item in the commit that finishes it.
   without breaking the `_queueing` lock (a restart must still never miss a queued
   task, see the comment above `_queueing`).
 
-## 4. Streaming in the engine host protocol
+## 3. Streaming in the engine host protocol
 
 - **Today**: operations of a hosted engine must take and return picklable values
   (`engine_host.py`). A local inference engine needs `chat(..., emit)`: tokens streamed
@@ -47,7 +35,7 @@ item in the commit that finishes it.
   `ResolvedEngine.call` under `acting_as(..., priority.INFERENCE)`, and `_hold` in
   `inference/__init__.py` remains only for engines that are not local.
 
-## 5. Tests that start processes are slow
+## 4. Tests that start processes are slow
 
 - **Today**: the tests starting child processes (`tests/test_engine_host.py`,
   `tests/tasks/test_isolated_tasks.py`, parts of `tests/tasks/test_preemption.py`) take
@@ -57,7 +45,7 @@ item in the commit that finishes it.
   engine families and their modules).
 - **Constraint**: tests must stay isolated and deterministic (`AGENTS.md` §11).
 
-## 6. Reservations forget what a model was measured to take
+## 5. Reservations forget what a model was measured to take
 
 - **Today**: a hosted model holds what its process really takes once it is read (after it
   loads, after every call: `Residency._account`), but the next time the same model is

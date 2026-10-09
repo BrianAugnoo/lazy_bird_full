@@ -15,7 +15,7 @@ from lazy_bird.embedding import engine_family
 from lazy_bird.residency import residency
 from lazy_bird.tasks.resources import ResourcePool
 from lazy_bird.tasks.scheduler import Scheduler
-from tests.hosting.tasks import crash, embed, refuse, steps, stuck, where
+from tests.hosting.tasks import blocking, crash, embed, refuse, steps, stuck, where
 
 
 @pytest.fixture
@@ -112,6 +112,20 @@ def test_a_stuck_isolated_task_is_ended_when_it_is_cancelled(sched, gates):
 
     cancelled = wait_for(sched, submitted.id, "cancelled", timeout=10)
     assert cancelled.status == "cancelled" and not psutil.pid_exists(pid)
+
+
+def test_an_isolated_task_waiting_for_a_blocking_call_stops_at_once_when_it_is_cancelled(sched, gates, monkeypatch):
+    patient = SimpleNamespace(enable=True, fallback="wait", isolate_models=True, interrupt_timeout_seconds=60)
+    monkeypatch.setattr(sys.modules[Scheduler.__module__], "smart_memory", lambda: patient)  # it is not ended for being late
+    submitted = blocking.submit(name="b", gate_dir=str(gates))
+    pid = int(wait_until(lambda: (gates / "b.pid").exists() and (gates / "b.pid").read_text()))
+
+    asked = time.monotonic()
+    sched.cancel(submitted.id)
+
+    assert wait_for(sched, submitted.id, "cancelled", timeout=10)
+    assert time.monotonic() - asked < 4  # neither the 60 s wait nor its own threads hold it
+    wait_until(lambda: not psutil.pid_exists(pid), timeout=5, message="the task process is still running")
 
 
 def test_a_stuck_isolated_task_that_must_make_room_is_ended_and_goes_back_to_the_queue(sched, gates):

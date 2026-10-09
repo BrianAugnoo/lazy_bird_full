@@ -415,10 +415,16 @@ reindex.submit(folder="notes", priority=1)          # -> TaskOut
   reach a checkpoint within `smart-memory.interrupt_timeout_seconds` after being asked
   to pause, cancel or make room is **ended** and finishes as asked. The function must be
   declared at module level (the process imports it by name). Use it for heavy or
-  long work; the shipped kinds run in threads (a process start costs a few seconds);
+  long work, or work that cannot reach checkpoints; the shipped kinds run in threads (a
+  process start costs a few seconds), except `models.download`. The process ends as soon
+  as its run is reported, even if threads the task started are still running;
 - `ctx.checkpoint(progress, message, state)` is the **only** place where pause,
   cancel and shutdown stop a task; resuming runs the function again with
-  `ctx.state` = last saved state. `ctx.report(progress, message)` only reports;
+  `ctx.state` = last saved state. `ctx.report(progress, message)` only reports.
+  `ctx.run_blocking(function, *args)` runs a call that cannot reach a checkpoint (a
+  download) in a thread and, while waiting for it, stops the task as a checkpoint would
+  (within half a second); the call itself goes on, so it belongs in isolated kinds, whose
+  process takes it down;
 - `submit(..., dedupe_key=…)` returns the active task with the same key instead of
   queueing a duplicate; `run_at` schedules it; `priority` orders it: **the lower the
   number, the sooner it runs** (default 5, background work; search is 1 and inference
@@ -427,7 +433,10 @@ reindex.submit(folder="notes", priority=1)          # -> TaskOut
 - failures are retried up to the kind's `retries` (typed permanent failures are not).
 
 Shipped kinds: `files.chunk`, `files.embed`, `files.scan` (periodic, every
-`files.scan_every_minutes`), `models.download`, `models.import` (uploaded models).
+`files.scan_every_minutes`), `models.download` (isolated: pausing or cancelling it ends
+its process, and Hugging Face resumes the files from the cache), `models.import` (uploaded
+models; not stoppable midway, since files already moved out of the staging folder would be
+missing from a resumed import).
 
 ### 7.2 Scheduling
 

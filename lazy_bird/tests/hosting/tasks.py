@@ -5,6 +5,7 @@ Gates are files (threading events do not cross processes): a step waits until ``
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from lazy_bird.crud import task as task_crud
@@ -66,3 +67,10 @@ def embed(ctx: TaskContext, engine_id: int, settings: dict) -> dict:
     with resolved.loaded():
         [[model_pid, length]] = resolved.call("embed", ["abc"])
     return {"pid": os.getpid(), "model_pid": model_pid, "length": length}
+
+
+@task("test.isolated.blocking", title="Blocking {name}", isolated=True)
+def blocking(ctx: TaskContext, name: str, gate_dir: str) -> None:
+    """Waits for a call that never reaches a checkpoint, run by a thread pool (like a Hugging Face download)."""
+    (Path(gate_dir) / f"{name}.pid").write_text(str(os.getpid()))
+    ctx.run_blocking(ThreadPoolExecutor(1).submit(time.sleep, 60).result)

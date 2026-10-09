@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from lazy_bird.tasks.registry import TaskCancelled, TaskInterrupted, TaskPaused
 
@@ -11,6 +12,9 @@ if TYPE_CHECKING:
     from lazy_bird.tasks.scheduler import Scheduler
 
 REPORT_INTERVAL_SECONDS = 0.25
+BLOCKING_POLL_SECONDS = 0.5
+
+T = TypeVar("T")
 
 
 class TaskContext:
@@ -20,7 +24,9 @@ class TaskContext:
     - ``ctx.state``: the state saved by the last checkpoint, ``{}`` on a fresh run;
     - ``ctx.report(progress, message)``: show progress (0..1), never stops the task;
     - ``ctx.checkpoint(progress, message, state)``: show progress, save ``state``, and
-      stop here (raising) if a pause, cancellation or shutdown was requested.
+      stop here (raising) if a pause, cancellation or shutdown was requested;
+    - ``ctx.run_blocking(function, *args)``: a call that cannot reach a checkpoint (a
+      download), during which the task can still be stopped.
 
     Contract: when a paused or interrupted task resumes, its function is called again
     from the start with ``ctx.state`` set to the last saved state. Work done before
@@ -53,6 +59,36 @@ class TaskContext:
             return
         self._last_report = time.monotonic()
         self._scheduler.record_progress(self.task_id, progress, message, self.state if state is not None else None)
+        self._stop_if_asked()
+
+    def run_blocking(self, function: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """Run ``function`` in a thread and wait for it, stopping (raising) as soon as a pause,
+        cancellation or shutdown is requested, like a checkpoint would.
+
+        The call itself cannot be stopped: it goes on in its thread. Only an isolated task
+        really ends it, since its process ends with its run; so use it in isolated kinds.
+        """
+        if self._scheduler is None:
+            return function(*args, **kwargs)
+        outcome: dict[str, Any] = {}
+
+        def target() -> None:
+            try:
+                outcome["value"] = function(*args, **kwargs)
+            except BaseException as error:
+                outcome["error"] = error
+
+        thread = threading.Thread(target=target, name=f"task-{self.task_id}-blocking", daemon=True)
+        thread.start()
+        while thread.is_alive():
+            thread.join(BLOCKING_POLL_SECONDS)
+            if thread.is_alive():
+                self._stop_if_asked()
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["value"]
+
+    def _stop_if_asked(self) -> None:
         control = self._scheduler.control_of(self.task_id)
         if control == "pause":
             raise TaskPaused()
