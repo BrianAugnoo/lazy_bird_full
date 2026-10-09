@@ -113,11 +113,16 @@ def effective_state(row: FileProcessing, file: File) -> str:
     return "outdated" if row.state == "done" and not is_current(row, file) else row.state
 
 
-def summarize(file: File, rows: list[FileProcessing]) -> str:
+def summarize(file: File, rows: list[FileProcessing], embedding_targets: set[str] | None = None) -> str:
+    """The one state of a file. With ``embedding_targets`` (the model being embedded automatically),
+    embeddings made with another model do not count, unless they are being computed: they
+    are extras, listed in the file's processings but not what makes the file ready."""
     if file.missing:
         return "missing"
     if not rows:
         return "new"
+    if embedding_targets is not None:
+        rows = [row for row in rows if row.processor != "embedding" or row.target in embedding_targets or row.state in ACTIVE_STATES]
     states = {effective_state(row, file) for row in rows}
     for group, summary in (
         (ACTIVE_STATES, "processing"),
@@ -186,6 +191,11 @@ def automatic_targets() -> list[tuple[str, str]]:
     except AppError:
         pass
     return wanted
+
+
+def embedding_targets() -> set[str]:
+    """The embedding models files are automatically embedded with (the default preset's)."""
+    return {target for processor, target in automatic_targets() if processor == "embedding"}
 
 
 def ensure(file_id: int, *, automatic: bool = True, wanted: list[tuple[str, str]] | None = None) -> list[TaskOut]:
@@ -270,6 +280,25 @@ def ensure_all(*, automatic: bool = True) -> int:
     with db() as session:
         file_ids = list(session.exec(select(File.id).where(File.missing == False)).all())  # noqa: E712
     return sum(len(ensure(file_id, automatic=automatic)) for file_id in file_ids)
+
+
+def restart_embedding() -> None:
+    """The default embedding model changed: stop computing vectors for the other models.
+
+    Their queued and running tasks are cancelled and their results marked outdated, so
+    the new model is not made to wait behind their backlog. If one of them becomes the
+    default again, ``ensure`` computes it again.
+    """
+    wanted = embedding_targets()
+    with db() as session:
+        rows = session.exec(select(FileProcessing).where(FileProcessing.processor == "embedding", FileProcessing.state.in_(ACTIVE_STATES))).all()
+        stale = [row for row in rows if row.target not in wanted]
+        file_ids = {row.file_id for row in stale}
+        to_cancel = _outdate(session, stale, "The default embedding model changed.")
+        session.commit()
+    _cancel_tasks(to_cancel)
+    for file_id in file_ids:
+        _publish_file(file_id)
 
 
 def request(file_id: int, processor: str, target: str = "") -> list[TaskOut]:

@@ -1,5 +1,7 @@
 import os
+import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -150,6 +152,48 @@ async def test_files_embedded_by_another_model_are_embedded_again_for_the_new_de
     for file_id in done_with_old:
         wait_until(lambda: states(file_id).get(("embedding", "fake/space-8")) == "done", message=f"file {file_id} was not embedded with the new model")
     assert database.vector_count("fake/space-8") == database.vector_count("fake/space-4") > 0  # every chunk, in its own table
+
+
+def test_embeddings_of_other_models_do_not_decide_the_state_of_a_file():
+    file = SimpleNamespace(missing=False, content_hash="h")
+
+    def row(processor, target, state):
+        return FileProcessing(file_id=1, processor=processor, target=target, state=state, content_hash="h")
+
+    ready = [row("chunking", "", "done"), row("embedding", "new", "done")]
+
+    assert file_processing.summarize(file, ready + [row("embedding", "old", "outdated")], {"new"}) == "ready"
+    assert file_processing.summarize(file, ready + [row("embedding", "old", "failed")], {"new"}) == "ready"
+    assert file_processing.summarize(file, ready + [row("embedding", "old", "outdated")]) == "outdated"  # all models count by default
+    assert file_processing.summarize(file, ready + [row("embedding", "old", "running")], {"new"}) == "processing"  # work in progress is shown
+    assert file_processing.summarize(file, ready + [row("embedding", "new", "failed")], {"new"}) == "error"
+
+
+@pytest.mark.anyio
+async def test_a_new_default_stops_the_work_for_the_previous_model(pipeline, upload_file_factory, monkeypatch):
+    from lazy_bird.embedding import engine_family
+
+    gate = threading.Event()
+    module = engine_family._loaded["fake-embedding"].module
+    real_embed = module.embed
+    monkeypatch.setattr(module, "embed", lambda texts, settings, model: (settings.dimension != 4 or gate.wait(5)) and real_embed(texts, settings, model))
+    files = [await upload(upload_file_factory, f"{name}.md", b"Text.") for name in "abc"]
+    old, new = ("embedding", "fake/space-4"), ("embedding", "fake/space-8")
+    wait_until(lambda: all(states(file_id).get(old) in ("queued", "running") for file_id in files), message="the old model never started")
+    original = next(preset for preset in engine_family.presets() if preset.name == "fake")
+    engine = next(engine for engine in engine_family.engines() if engine.name == "fake-embedding")
+
+    engine_family.create_preset("wide", engine.id, {"dimension": 8}, default=True)
+    gate.set()  # the old model's calls in progress end now
+
+    for file_id in files:
+        wait_until(lambda: states(file_id).get(new) == "done", message=f"file {file_id} was not embedded with the new model")
+        assert states(file_id)[old] == "outdated"  # stopped, not failed
+        assert file_crud.find(file_id).state == "ready"  # what is left of the old model does not make the file look unfinished
+    engine_family.update_preset(original.id, {"default": True})  # back to the old model: it picks up where it was stopped
+    for file_id in files:
+        wait_until(lambda: states(file_id).get(old) == "done", message=f"file {file_id} was not embedded again with the old model")
+        assert states(file_id)[new] == "done"
 
 
 @pytest.mark.anyio

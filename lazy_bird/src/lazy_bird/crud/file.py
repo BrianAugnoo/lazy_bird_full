@@ -36,13 +36,14 @@ def _outputs(files: list[FileORM]) -> list[FileOut]:
     file_ids = [file.id for file in files]
     chunk_counts = chunk_crud.counts(file_ids)
     rows = file_processing.rows_for(file_ids)
+    targets = file_processing.embedding_targets()
     return [
         FileOut.model_validate(file).model_copy(
             update={
                 "relative_path": relative_path(file.path),
                 "directory": _directory(relative_path(file.path)),
                 "chunk_count": chunk_counts.get(file.id, 0),
-                "state": file_processing.summarize(file, rows.get(file.id, [])),
+                "state": file_processing.summarize(file, rows.get(file.id, []), targets),
                 "processing": [file_processing.to_out(row, file) for row in rows.get(file.id, [])],
             }
         )

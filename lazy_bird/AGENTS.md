@@ -456,8 +456,13 @@ states: `on_task_change` maps task status changes onto rows. Triggers:
 - upload, edit, or a change detected by the scan (content hash differs) → results
   from the old content become `outdated`, then `ensure()` queues what is wanted;
 - new chunks → embeddings of the old chunks are deleted and become `outdated`;
-- a new default embedding preset → every file gets that model's embedding (vectors
-  of other models are kept);
+- a new default embedding preset → the automatic embedding restarts with it: every file
+  gets that model's embedding, even if another model already embedded it (vectors of
+  different models cannot be compared; each model keeps its own table, and search only
+  reads the table of the model it embeds the query with). Work in progress for the
+  previous model is cancelled and marked `outdated` (it is computed again if that model
+  becomes the default again); embeddings of other models do not count in the file's
+  `state`, they only appear in its `processing` list unless they are being computed;
 - switching the vector database → every embedding is `outdated` and redone;
 - dropping a model's vector table → its rows are forgotten (and redone when it is
   the default preset's model and automatic processing is on);

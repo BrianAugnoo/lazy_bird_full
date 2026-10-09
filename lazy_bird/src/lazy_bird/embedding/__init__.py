@@ -35,11 +35,17 @@ engine_family = EngineFamily(
 
 
 def _queue_default_embeddings() -> None:
-    """A new default preset may embed with another model: queue it for every file."""
+    """A new default preset may embed with another model: restart the automatic embedding with it.
+
+    Files are embedded again with the new model even if another one embedded them (vectors
+    of different models cannot be compared, so each model keeps its own table); work still
+    in progress for the previous model is stopped.
+    """
     from lazy_bird.crud import file_processing
     from lazy_bird.preferences import auto_embedding_enabled
 
     if auto_embedding_enabled():
+        file_processing.restart_embedding()
         file_processing.ensure_all()
 
 
