@@ -7,12 +7,17 @@ item in the commit that finishes it.
 
 ## 1. Tests that start processes are slow
 
-- **Today**: the tests starting child processes (`tests/test_engine_host.py`,
-  `tests/tasks/test_isolated_tasks.py`, parts of `tests/tasks/test_preemption.py`) take
-  about 35 s of the ~80 s suite.
+- **Today** (Windows, 2026-10-09): the suite takes about 86 s, of which the tests starting
+  child processes (`tests/test_engine_host.py`, `tests/tasks/test_isolated_tasks.py`,
+  `tests/inference/test_local_engine.py`, parts of `tests/tasks/test_preemption.py`) take
+  about 25 s. A model host starts in about 0.3 s (0.6 s when its module imports
+  `lazy_bird.inference`); an isolated task's process in about 1.2 s, 0.55 s of which is
+  importing `lazy_bird.task_host` (`lazy_bird.tasks` → `scheduler` → `crud.task` →
+  SQLAlchemy/SQLModel and every model). Already done: the OpenAI SDK is imported on first
+  use (it cost 0.8 s in every task process), and models left at the end of a test are
+  freed into the test's own pool (a default scheduler was built for them, importing torch).
 - **Ideas**: share one model host per module where the tests do not depend on a fresh
-  process; shorten child start further (the child imports `lazy_bird.tasks`, the
-  engine families and their modules).
+  process; make `lazy_bird.task_host` import less before the task module needs it.
 - **Constraint**: tests must stay isolated and deterministic (`AGENTS.md` §11).
 
 ## 2. Reservations forget what a model was measured to take

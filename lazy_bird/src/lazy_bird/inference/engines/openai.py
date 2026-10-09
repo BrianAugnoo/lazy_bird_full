@@ -1,12 +1,17 @@
 """Inference through any OpenAI-compatible chat completions API (OpenAI, vLLM, Ollama, proxies...)."""
 
-import json
+from __future__ import annotations
 
-from openai import OpenAI
+import json
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from lazy_bird.crud.api_key import find_key
 from lazy_bird.inference.types import ChatMessage, ChatResult, Emitter, EngineError, ToolCall
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 name = "openai-client"
 local = False  # the model runs on a server, not on this machine
@@ -33,6 +38,8 @@ fields = {
 
 
 def _client(settings: EngineSettings) -> OpenAI:
+    from openai import OpenAI  # imported on first use: almost a second, paid by every process loading the engines
+
     api_key = "no-key"
     if settings.api_key_name:
         api_key = find_key(settings.api_key_name)

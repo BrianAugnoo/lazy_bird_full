@@ -370,8 +370,13 @@ def unknown_system_memory(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def isolated_residency():
-    """Every test starts without loaded models and leaves none behind."""
+def isolated_residency(monkeypatch, isolated_scheduler):
+    """Every test starts without loaded models and leaves none behind.
+
+    Its models are freed while the test's scheduler is still in place (``monkeypatch`` and
+    ``isolated_scheduler`` are torn down after it): their memory goes back to that pool,
+    instead of a default scheduler being built for it (which reads the GPU through torch).
+    """
     import lazy_bird.residency as residency_module
 
     residency_module._residency = None
