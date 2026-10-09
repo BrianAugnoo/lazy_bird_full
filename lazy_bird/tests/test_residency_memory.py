@@ -269,3 +269,24 @@ def test_the_memory_only_a_task_holds_is_what_stopping_it_would_release(fake_loc
 
     assert residency().exclusive_to("task:1") == {"vram_mb": 600}  # the shared one would stay in use
     assert residency().exclusive_to("task:2") == {}
+
+
+def test_lowering_the_capacity_unloads_the_idle_models_that_no_longer_fit(fake_local_embedding, machine):
+    embed_texts(["a"], model(fake_local_embedding, dimension=3, gpu_mb=400))
+    embed_texts(["a"], model(fake_local_embedding, dimension=4, gpu_mb=500))  # used last
+    machine.capacity["vram_mb"] = 600  # e.g. tasks.resources now keeps GPU memory for another program
+
+    residency().fit_to_capacity()
+
+    assert [m.dimension for m in fake_local_embedding.unloads] == [3]  # one was enough, the least recently used
+    assert machine.snapshot()["used"] == {"vram_mb": 500}
+
+
+def test_a_model_in_use_stays_even_above_a_lowered_capacity(fake_local_embedding, machine):
+    busy = model(fake_local_embedding, gpu_mb=800)
+    with busy.loaded():
+        machine.capacity["vram_mb"] = 600
+        residency().fit_to_capacity()
+        assert fake_local_embedding.unloads == []
+    residency().fit_to_capacity()  # once idle, it goes
+    assert len(fake_local_embedding.unloads) == 1

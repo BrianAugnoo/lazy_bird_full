@@ -373,6 +373,22 @@ class Residency:
                     return False
                 self._remove(min(idle, key=lambda entry: entry.last_used))
 
+    def fit_to_capacity(self) -> None:
+        """Unload idle models, least recently used first, while the pool holds more than its capacity.
+
+        After the capacity was lowered (``tasks.resources``): the memory set aside for other
+        programs is given back as soon as nobody uses the models in it.
+        """
+        pool = _pool()
+        while True:
+            snapshot = pool.snapshot()
+            over = {name for name, used in snapshot["used"].items() if used > snapshot["capacity"].get(name, 0)}
+            with self._lock:
+                idle = [entry for entry in self._entries.values() if entry.leases == 0 and entry.needs.keys() & over]
+                if not idle:
+                    return
+                self._remove(min(idle, key=lambda entry: entry.last_used))
+
     def release_idle(self) -> None:
         """Unload every model nobody holds (``smart-memory`` turned off, shutdown)."""
         with self._lock:

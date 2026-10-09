@@ -167,7 +167,8 @@ def apply_preferences() -> int:
     - auto-embedding: every file gets its chunks and the vectors of the default
       embedding preset;
     - files.scan_every_minutes: a periodic scan detects files changed on disk;
-    - tasks.resources: capacity overrides of the running scheduler;
+    - tasks.resources: capacity overrides of the running scheduler (idle models that no
+      longer fit are unloaded);
     - smart-memory: models kept loaded while idle are released when it is turned off.
     """
     from lazy_bird import tasks
@@ -180,6 +181,7 @@ def apply_preferences() -> int:
     schedule_scan(scan_every_minutes())
     if tasks._scheduler is not None:
         tasks._scheduler.pool.capacity.update({**detect_capacity(), **task_preferences()["resources"]})
+        residency().fit_to_capacity()
     if not smart_memory().enable:
         residency().release_idle()
     return queued

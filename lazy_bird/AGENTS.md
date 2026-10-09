@@ -435,7 +435,8 @@ number first), then position (manual order), then age. A task starts when a work
 (`tasks.workers`) and its resources fit the pool. A task that does not fit **blocks
 every later task needing one of the missing resources** (a big GPU job is not
 starved by small ones) while tasks needing other resources still start. Capacities
-are detected at startup and overridden by `tasks.resources`. Local inference holds
+are detected at startup and overridden by `tasks.resources` (lowering a capacity unloads
+the idle models that no longer fit). Local inference holds
 resources from the same pool. Pausing or cancelling a running task sets `control`,
 applied at its next checkpoint; queued/paused tasks change immediately. Moving a
 task places it before/after another and gives it that task's priority. At shutdown,
