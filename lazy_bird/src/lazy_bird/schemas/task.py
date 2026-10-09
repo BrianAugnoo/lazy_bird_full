@@ -12,7 +12,8 @@ class TaskOut(BaseModel):
 
     ``control`` is a pending request on a running task ("pause" or "cancel"), applied
     at its next checkpoint. ``waiting_for`` lists what keeps a queued task from
-    starting (resource names, "worker" or "schedule").
+    starting (resource names, "worker" or "schedule"). ``priority``: the lower the
+    number, the sooner the task runs (5 by default, 0 = run now).
     """
 
     id: int

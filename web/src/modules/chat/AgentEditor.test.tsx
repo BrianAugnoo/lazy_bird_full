@@ -25,7 +25,7 @@ const agent: Agent = {
   errors: {},
 };
 
-const engine = { id: 3, name: 'openai-client', file_path: 'openai.py', formats: [], available: true, kwargs_key: {} };
+const engine = { id: 3, name: 'openai-client', file_path: 'openai.py', formats: [], local: false, available: true, kwargs_key: {} };
 
 function routes(extra: Record<string, unknown> = {}) {
   return mockApi({

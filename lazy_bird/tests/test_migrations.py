@@ -1,3 +1,5 @@
+import json
+
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
@@ -132,3 +134,53 @@ def test_chunk_migration_requeues_embedded_files(tmp_path, monkeypatch):
     engine.dispose()
     assert statuses == {"done": "pending", "broken": "format-error", "failed": "pending"}
     assert "chunk" in tables and not {"embedded", "embeddedvectordatabase", "vectordatabase"} & tables
+
+
+def test_priority_migration_mirrors_priorities_around_the_new_default(tmp_path, monkeypatch):
+    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "priorities.db", "c3e5a7b9d1f2")
+    engine = create_engine(db_url)
+    with engine.begin() as connection:
+        for priority in (0, 10, -10):
+            connection.execute(
+                text("INSERT INTO task (kind, title, params, status, priority, position, resources, state, attempts, max_attempts, created_at, updated_at) "
+                     "VALUES ('k', 't', '{}', 'queued', :priority, 1, '{}', '{}', 0, 1, '2026-01-01', '2026-01-01')"),
+                {"priority": priority},
+            )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        upgraded = [row[0] for row in connection.execute(text("SELECT priority FROM task ORDER BY id"))]
+    engine.dispose()
+    command.downgrade(config, "c3e5a7b9d1f2")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        restored = [row[0] for row in connection.execute(text("SELECT priority FROM task ORDER BY id"))]
+    engine.dispose()
+
+    assert upgraded == [5, -5, 15]  # the default stays average, the old "high" runs sooner, the old "low" later
+    assert restored == [0, 10, -10]
+
+
+def test_engine_migration_removes_the_unloading_setting_from_saved_presets(tmp_path, monkeypatch):
+    db_url, config = _upgrade_fresh(tmp_path, monkeypatch, "unloading.db", "d4a6b8c0e2f4")
+    engine = create_engine(db_url)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO embeddingengine (name, file_path, formats, kwargs_key) VALUES ('st', 'st.py', '[]', '{}')"))
+        for name, kwargs in (("old", '{"model_id": 1, "unloading": false, "batch_size": 8}'), ("new", '{"model_id": 2}')):
+            connection.execute(
+                text('INSERT INTO presetembedding (name, embedding_engine_id, kwargs, "default") VALUES (:name, 1, :kwargs, 0)'),
+                {"name": name, "kwargs": kwargs},
+            )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        kwargs = {name: json.loads(value) for name, value in connection.execute(text("SELECT name, kwargs FROM presetembedding"))}
+        local = connection.execute(text("SELECT local FROM embeddingengine")).scalar_one()
+    engine.dispose()
+    assert kwargs == {"old": {"model_id": 1, "batch_size": 8}, "new": {"model_id": 2}}
+    assert local == 0  # engines learn whether they are local when they are discovered at startup

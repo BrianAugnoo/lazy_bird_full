@@ -12,6 +12,10 @@ from lazy_bird.errors import InvalidInputError
 
 Resources = dict[str, float]
 
+# Lower numbers run first. 0 is reserved for "run this now", asked by the user; the program
+# itself never creates it. Search is 1, inference 2, background work (embedding...) 5.
+DEFAULT_PRIORITY = 5
+
 
 class TaskStop(BaseException):
     """Raised by ``ctx.checkpoint()`` to stop a task. Derives from BaseException so
@@ -94,13 +98,14 @@ def task(
     *,
     title: str | None = None,
     resources: Resources | Callable[..., Resources] | None = None,
-    priority: int = 0,
+    priority: int = DEFAULT_PRIORITY,
     retries: int = 0,
 ) -> Callable[[Callable[..., Any]], TaskDefinition]:
     """Declare a task kind.
 
     ``title`` may use the task parameters (``"Process file {file_id}"``).
     ``resources`` is a dict or a function of the parameters returning one.
+    ``priority`` is how urgent the task is: the lower the number, the sooner it runs.
     ``retries`` is how many times a failed run is retried automatically.
     """
 

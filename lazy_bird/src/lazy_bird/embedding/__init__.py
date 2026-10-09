@@ -9,6 +9,10 @@ returning one vector per text, in order. ``model`` is the ``LLMModel`` reference
 by ``settings.model_id`` (``None`` when the engine declares no ``model_id``). An
 engine without ``model_id`` must define ``vector_space(settings) -> str`` naming
 the embedding space its vectors belong to (for instance the remote model name).
+
+A local engine (``local = True``) receives its loaded model first,
+``embed(encoder, texts, settings, model)``, from ``load(settings, model)``; wrap many
+calls in ``with resolved.loaded():`` to load the model once for all of them.
 """
 
 from __future__ import annotations
@@ -60,7 +64,7 @@ def vector_space(resolved: ResolvedEngine) -> str:
 def embed_texts(texts: list[str], resolved: ResolvedEngine) -> list[list[float]]:
     if not texts:
         return []
-    vectors = resolved.module.embed(list(texts), resolved.settings, resolved.model)
+    vectors = resolved.call("embed", list(texts))
     if len(vectors) != len(texts):
         raise EmbeddingEngineError(
             f"Engine '{resolved.engine.name}' returned {len(vectors)} vectors for {len(texts)} texts"

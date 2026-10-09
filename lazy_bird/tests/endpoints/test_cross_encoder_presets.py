@@ -22,7 +22,9 @@ def test_cross_encoder_engines_expose_their_settings_form(client):
 
     assert engine["available"] is True
     assert engine["kwargs_key"]["model_id"]["content"] == "default.basic.reference"
-    assert engine["kwargs_key"]["unloading"]["default"] is True
+    assert engine["local"] is True
+    assert engine["kwargs_key"]["cache_optimization"]["default"] is False
+    assert "unloading" not in engine["kwargs_key"]
 
 
 def test_cross_encoder_presets_are_independent_from_embedding_presets(client, crud_database):

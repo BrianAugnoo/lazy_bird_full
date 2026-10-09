@@ -124,6 +124,7 @@ suite never calls it (it uses the `fake_inference` fixture).
 | `inference/` | inference engine family, agentic loop, streaming types |
 | `agents/` | tools, hooks, skills, instructions, agent and session presets, agent runtime |
 | `tasks/` | background task system: registry, scheduler, resources, events, task kinds |
+| `residency.py` | models of local engines in memory: who holds them, when they are loaded and freed (§5.3) |
 | `tools/` | utilities: Hugging Face cache and auth, model inspection, GGUF reader, schema diagram |
 | `preferences.py` + `preference.yaml` | runtime preferences (§8) |
 | `logging_config.py`, `log_*.py` | loguru setup, call tracing, log search and call trees |
@@ -223,9 +224,9 @@ The frontend builds every settings form from `kwargs_key` (see `web/AGENTS.md` �
 | --- | --- | --- |
 | SQL database | `database/sql_db/<name>.py` | `name`, `messages = {"initialize", "disconnect"}`, optional `Settings`; `initialize(**settings) -> Engine`, `disconnect(engine, drop=False)` (`database/contracts.py`) |
 | Vector database | `database/vector_db/<name>.py` | same metadata; `initialize`, `disconnect(drop)`, `tables()`, `create(model_name, rows)`, `delete(model_name, chunk_ids)`, `count(model_name, chunk_ids=None)`, `retrieve(model_name, top_k, vector, chunk_ids=None)`, `drop(model_name)`. One table per model with `chunk_id` + `vector` only; chunk content lives in SQL |
-| Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; optional `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}` |
-| Cross-encoder engine | `cross_encoder/engines/<name>.py` | same as an embedding engine (`name`, `EngineSettings`, `fields`, `formats`); `rerank(query, documents, settings, model) -> list[float]`: one relevance score per document, in order, higher = more relevant. No vector space |
-| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`resources`; `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
+| Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; optional `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}`; `local` engines: see below |
+| Cross-encoder engine | `cross_encoder/engines/<name>.py` | same as an embedding engine (`name`, `EngineSettings`, `fields`, `formats`); `rerank(query, documents, settings, model) -> list[float]`: one relevance score per document, in order, higher = more relevant. No vector space; `local` engines: see below |
+| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`resources`/`local`; `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
 | Chunker | `chunker/extensions/<ext>.py` (`md.py` for `.md`) | `async def chunk(file, max_token) -> list[dict]`; each dict has `content`, `start_line`, `end_line` and optionally `start_row`, `end_row`, `token_count`, `meta` |
 | Task kind | `tasks/{extension}/*.py` | functions decorated with `@task(...)` (§7) |
 | Tool | `agents/tools/{extension}/<module>.py` | `tools = [...]` functions and/or classes; optional `ToolSettings` + `fields` (§6.1) |
@@ -245,11 +246,31 @@ unsetting the default without choosing another is a conflict). Settings with
 `model_id` reference an `LLMModel`: the family checks it exists and that the engine
 supports its selected format, then hands the resolved model to the engine.
 
-The shipped `sentence-transformers` embedding and cross-encoder engines cache their
-model in memory (`_load`); with their `unloading` setting (default on) they release
-the model, and the GPU cache, at the end of every `embed` / `rerank` call, even when
-the call fails. Turn it off to keep the model loaded between calls. The
-cross-encoder family is separate from the embedding one (own tables and presets,
+**Local engines** run a model on this machine (`local = True`; the default is `False`,
+an API called directly; the flag is stored in the `local` column of the engine tables
+and shown on the engine page). Besides the family functions they define
+`load(settings, model) -> instance`, `unload(instance)` and, optionally,
+`load_key(settings, model)`: the settings that change what is loaded (without it, all
+of them), so presets differing only by e.g. `batch_size` share one model. Their
+operations receive the loaded instance first: `embed(encoder, texts, settings, model)`,
+`rerank(scorer, query, documents, settings, model)`. A local engine without `load` and
+`unload` fails to load like any broken extension.
+
+`residency.py` owns the loaded models. `resolved.call("embed", texts)` (what
+`embed_texts` / `rerank_scores` do) loads the model for that call and frees it right
+after, even when the call fails; `with resolved.loaded():` is a lease that keeps it
+loaded for every call inside the block, so a caller that knows its workload loads the
+model once (the `files.embed` task wraps all the batches of a file in one). The first
+lease loads, the last one frees; leases on the same engine and `load_key` share one
+instance, and calls on a shared instance run one at a time. No engine decides alone,
+inside a call, to unload.
+
+The shipped `sentence-transformers` embedding and cross-encoder engines are local. Their
+`cache_optimization` setting (default off) runs the model in inference mode and clears
+the Python and CUDA memory caches after every batch: slower, but memory use stays
+close to the size of the model. Their `unload` moves the weights to the CPU first, which
+frees the GPU copy even if something still references the model. The cross-encoder
+family is separate from the embedding one (own tables and presets,
 `/cross-encoder-engines`, `/cross-encoder-presets`); it only scores query/document
 pairs. `sentence-transformers` loads `CrossEncoder` models (e.g.
 `cross-encoder/ms-marco-MiniLM-L6-v2`); listwise rerankers with custom code such as
@@ -356,7 +377,7 @@ def reindex(ctx: TaskContext, folder: str) -> dict:
         ctx.checkpoint(progress=(index + 1) / len(items), state={"done": index + 1})
     return {"count": len(items)}                    # JSON-serializable result
 
-reindex.submit(folder="notes", priority=10)         # -> TaskOut
+reindex.submit(folder="notes", priority=1)          # -> TaskOut
 ```
 
 - parameters are keyword arguments, JSON-serializable;
@@ -365,7 +386,10 @@ reindex.submit(folder="notes", priority=10)         # -> TaskOut
   cancel and shutdown stop a task; resuming runs the function again with
   `ctx.state` = last saved state. `ctx.report(progress, message)` only reports;
 - `submit(..., dedupe_key=…)` returns the active task with the same key instead of
-  queueing a duplicate; `run_at` schedules it; `priority` orders it;
+  queueing a duplicate; `run_at` schedules it; `priority` orders it: **the lower the
+  number, the sooner it runs** (default 5, background work; search is 1 and inference
+  2 where they take part; 0 means "run now" and only comes from the user, the program
+  never creates it; the periodic file scan is 10);
 - failures are retried up to the kind's `retries` (typed permanent failures are not).
 
 Shipped kinds: `files.chunk`, `files.embed`, `files.scan` (periodic, every
@@ -374,8 +398,8 @@ Shipped kinds: `files.chunk`, `files.embed`, `files.scan` (periodic, every
 ### 7.2 Scheduling
 
 Statuses: `queued`, `running`, `paused`, `completed`, `failed`, `cancelled`. Queued
-tasks whose `run_at` has come run in order: running first, then priority (high
-first), then position (manual order), then age. A task starts when a worker is free
+tasks whose `run_at` has come run in order: running first, then priority (lowest
+number first), then position (manual order), then age. A task starts when a worker is free
 (`tasks.workers`) and its resources fit the pool. A task that does not fit **blocks
 every later task needing one of the missing resources** (a big GPU job is not
 starved by small ones) while tasks needing other resources still start. Capacities
@@ -475,9 +499,9 @@ Tables (see the live diagram at `/schemas`):
 | `file` | path, name, extension, size, `content_hash`, `modified_at`, `missing` | → `chunk`, `fileprocessing` |
 | `chunk` | content, line/row ranges, `token_count`, `meta`, position | `file_id` |
 | `fileprocessing` | processor, target, state, `content_hash`, error | `file_id`, `task_id` |
-| `task` | kind, title, params, status, control, priority, position, `run_at`, resources, progress, state, result, error, attempts, `dedupe_key` | |
+| `task` | kind, title, params, status, control, priority (lowest number first), position, `run_at`, resources, progress, state, result, error, attempts, `dedupe_key` | |
 | `llmmodel` | name, `hf_path`, `local_path`, source, formats, files, selections, dimensions, context | |
-| `embeddingengine`, `crossencoderengine`, `inferenceengine` | discovered engines: name, file, formats, `kwargs_key` | → presets |
+| `embeddingengine`, `crossencoderengine`, `inferenceengine` | discovered engines: name, file, formats, `local`, `kwargs_key` | → presets |
 | `presetembedding`, `presetcrossencoder`, `presetinference` | name, kwargs, `default` (one per table) | engine id |
 | `toolsettings`, `hooksettings` | saved settings per module file | |
 | `session` | title, meta | → `agent` |

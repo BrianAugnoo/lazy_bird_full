@@ -9,6 +9,7 @@ const engine = {
   name: 'openai-client',
   file_path: 'openai.py',
   formats: [],
+  local: false,
   available: true,
   kwargs_key: {
     base_url: {
@@ -67,6 +68,25 @@ describe('EnginePresets', () => {
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Field required'));
     expect(calls('POST /inference-presets/')[0]).toEqual({ name: 'remote', inference_engine_id: 1, kwargs: {} });
+  });
+
+  it('tells when an engine runs its model on this computer', async () => {
+    mockApi({ 'GET /inference-engines/': [{ ...engine, local: true }], 'GET /inference-presets/': [] });
+
+    page();
+    fireEvent.click((await screen.findAllByText('New preset'))[0]);
+
+    expect(await screen.findByText(/Runs the model on this computer/)).toBeTruthy();
+  });
+
+  it('says nothing about memory for engines that call a server', async () => {
+    mockApi({ 'GET /inference-engines/': [engine], 'GET /inference-presets/': [] });
+
+    page();
+    fireEvent.click((await screen.findAllByText('New preset'))[0]);
+    await screen.findByLabelText('Name');
+
+    expect(screen.queryByText(/Runs the model on this computer/)).toBeNull();
   });
 
   it('manages cross-encoder presets through their own routes', async () => {

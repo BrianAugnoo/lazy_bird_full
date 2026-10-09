@@ -9,6 +9,7 @@ from lazy_bird.crud.api_key import find_key
 from lazy_bird.inference.types import ChatMessage, ChatResult, Emitter, EngineError, ToolCall
 
 name = "openai-client"
+local = False  # the model runs on a server, not on this machine
 
 
 class EngineSettings(BaseModel):

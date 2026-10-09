@@ -9,7 +9,7 @@ const task = (id: number, changes: Partial<Task> = {}): Task => ({
   params: {},
   status: 'queued',
   control: null,
-  priority: 0,
+  priority: 5,
   position: id,
   run_at: null,
   resources: {},
@@ -31,14 +31,14 @@ const task = (id: number, changes: Partial<Task> = {}): Task => ({
 const empty: TaskState = { tasks: [], kinds: [], resources: { capacity: {}, used: {}, holders: {} }, waiting: {}, status: 'open' };
 
 describe('task queue order', () => {
-  it('puts running tasks first, then waiting ones by priority and position, then finished ones', () => {
+  it('puts running tasks first, then waiting ones by priority (lowest number first) and position, then finished ones', () => {
     const list = [
       task(1, { status: 'completed', finished_at: '2026-01-01T00:00:01Z' }),
-      task(2, { priority: 0, position: 2 }),
+      task(2, { priority: 5, position: 2 }),
       task(3, { status: 'running' }),
-      task(4, { priority: 5, position: 9 }),
+      task(4, { priority: 1, position: 9 }),
       task(5, { status: 'failed', finished_at: '2026-01-01T00:00:09Z' }),
-      task(6, { priority: 0, position: 1 }),
+      task(6, { priority: 5, position: 1 }),
     ];
     expect(sortTasks(list).map((item) => item.id)).toEqual([3, 4, 6, 2, 5, 1]);
   });

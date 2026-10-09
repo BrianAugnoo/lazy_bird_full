@@ -51,6 +51,32 @@ ENGINES = {
         def embed(texts, settings, model):
             return []
     ''',
+    "local": '''
+        from pydantic import BaseModel
+        name = "local-engine"
+        local = True
+        class EngineSettings(BaseModel):
+            size: int = 2
+        def load(settings, model):
+            return object()
+        def unload(instance):
+            pass
+        def embed(instance, texts, settings, model):
+            return [[1.0] for _ in texts]
+        def vector_space(settings):
+            return "local"
+    ''',
+    "local_without_unload": '''
+        from pydantic import BaseModel
+        name = "local-without-unload"
+        local = True
+        class EngineSettings(BaseModel):
+            size: int = 2
+        def load(settings, model):
+            return object()
+        def embed(instance, texts, settings, model):
+            return []
+    ''',
     "model_without_formats": '''
         from pydantic import BaseModel
         name = "model-without-formats"
@@ -101,14 +127,23 @@ def add_model(crud_database, selected_format: str = "safetensors") -> int:
 def test_discover_registers_valid_engines_and_records_broken_ones(family):
     names = {engine.name: engine for engine in family.engines()}
 
-    assert set(names) == {"good", "plain"}
+    assert set(names) == {"good", "plain", "local-engine"}
     assert names["good"].formats == ["safetensors"]
     assert names["good"].file_path == "good.py"
     assert names["good"].kwargs_key["model_id"]["content"] == "default.basic.reference"
     assert names["good"].kwargs_key["size"]["default"] == 2
     failed = {failure.source.rsplit(".", 1)[-1]: failure.error for failure in load_failures() if family.package in failure.source}
-    assert set(failed) == {"broken", "bad_fields", "model_without_formats"}
+    assert set(failed) == {"broken", "bad_fields", "model_without_formats", "local_without_unload"}
     assert "embed" in failed["broken"]
+
+
+def test_engines_say_whether_they_run_a_model_on_this_machine(family):
+    names = {engine.name: engine for engine in family.engines()}
+    failed = {failure.source.rsplit(".", 1)[-1]: failure.error for failure in load_failures() if family.package in failure.source}
+
+    assert names["local-engine"].local is True
+    assert names["good"].local is False and names["plain"].local is False
+    assert "unload" in failed["local_without_unload"]  # a local engine must be able to free its model
 
 
 def test_first_preset_becomes_the_default(family, crud_database):

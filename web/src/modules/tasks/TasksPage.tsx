@@ -1,6 +1,6 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { tasks as tasksApi } from '@/api/endpoints/tasks';
-import { isScheduled, moveTask, taskAction, useTaskStore, type TaskAction } from '@/core/tasks/store';
+import { DEFAULT_PRIORITY, isScheduled, moveTask, taskAction, useTaskStore, type TaskAction } from '@/core/tasks/store';
 import type { ResourceSnapshot, Task } from '@/core/types/api';
 import { Icon } from '@/ui/Icon';
 import { PageHeader } from '@/ui/PageHeader';
@@ -95,8 +95,8 @@ function TaskRow({ task, waiting, onAction, drag }: RowProps) {
           </button>
           <span className={`chip ${isScheduled(task) ? 'chip-outline' : STATUS_CHIPS[task.status]}`}>{isScheduled(task) ? 'scheduled' : task.status}</span>
           {task.control && <span className="chip chip-warning">{task.control === 'pause' ? 'pausing…' : 'cancelling…'}</span>}
-          {task.priority !== 0 && !finished && (
-            <span className="chip chip-outline" title="Higher priorities run first">
+          {task.priority !== DEFAULT_PRIORITY && !finished && (
+            <span className="chip chip-outline" title="Lower numbers run first">
               priority {task.priority}
             </span>
           )}

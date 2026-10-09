@@ -118,6 +118,8 @@ export interface EngineOut {
   name: string;
   file_path: string;
   formats: string[];
+  /** The engine runs its model on this machine (and uses its memory) instead of calling a server. */
+  local: boolean;
   /** Settings form descriptors, see `core/fields/types.ts`. */
   kwargs_key: KwargsKey;
   available: boolean;

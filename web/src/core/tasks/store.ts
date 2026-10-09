@@ -23,16 +23,19 @@ export interface TaskState {
 
 export const ACTIVE: Task['status'][] = ['running', 'queued', 'paused'];
 
+/** Priority of a task that asked for nothing special: the lower the number, the sooner it runs (0 = run now). */
+export const DEFAULT_PRIORITY = 5;
+
 /** A queued task whose start time is still to come (e.g. the next periodic scan). */
 export const isScheduled = (task: Task, now = Date.now()) => task.status === 'queued' && task.run_at !== null && new Date(task.run_at).getTime() > now;
 
-/** Same order as the backend: running, then waiting by priority and position, then finished (newest first). */
+/** Same order as the backend: running, then waiting by priority (lowest number first) and position, then finished (newest first). */
 export function sortTasks(list: Task[]): Task[] {
   const active = list.filter((task) => ACTIVE.includes(task.status));
   const finished = list.filter((task) => !ACTIVE.includes(task.status));
   active.sort(
     (a, b) =>
-      Number(b.status === 'running') - Number(a.status === 'running') || b.priority - a.priority || a.position - b.position || a.id - b.id,
+      Number(b.status === 'running') - Number(a.status === 'running') || a.priority - b.priority || a.position - b.position || a.id - b.id,
   );
   finished.sort((a, b) => (b.finished_at ?? b.updated_at).localeCompare(a.finished_at ?? a.updated_at));
   return [...active, ...finished];

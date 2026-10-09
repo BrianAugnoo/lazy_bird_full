@@ -27,7 +27,7 @@ class Task(SQLModel, table=True):
     params: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     status: str = Field(default="queued")
     control: str | None = Field(default=None)
-    priority: int = Field(default=0)
+    priority: int = Field(default=5)
     position: int = Field(default=0)
     run_at: datetime | None = Field(default=None)
     resources: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))

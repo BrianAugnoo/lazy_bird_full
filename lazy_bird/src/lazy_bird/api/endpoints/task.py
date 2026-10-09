@@ -7,7 +7,7 @@ then every change: ``{"type": "task", "task"}``, ``{"type": "task_deleted", "id"
 
     {"action": "pause" | "resume" | "cancel" | "retry" | "delete", "task_id": 1, "request_id": "a"}
     {"action": "move", "task_id": 1, "before_id": 2}            # or "after_id"
-    {"action": "update", "task_id": 1, "priority": 10}           # and/or "run_at"
+    {"action": "update", "task_id": 1, "priority": 1}            # and/or "run_at"
 
 and receive ``{"type": "ack", "request_id", "task"}`` or ``{"type": "error", "request_id", "error"}``.
 """

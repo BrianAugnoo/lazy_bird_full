@@ -2,7 +2,7 @@
 
 Scheduling pass (on every wake-up, at least once per ``poll_interval``):
 
-1. queued tasks whose ``run_at`` has come are taken in order: priority (high first),
+1. queued tasks whose ``run_at`` has come are taken in order: priority (lowest number first),
    then position (manual order), then age;
 2. a task starts when a worker is free and its resources fit in the pool;
 3. a task that does not fit blocks every later task needing one of the missing

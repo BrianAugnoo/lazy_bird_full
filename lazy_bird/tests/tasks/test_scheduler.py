@@ -100,9 +100,9 @@ def test_a_task_runs_and_keeps_its_result(sched):
     assert done.result == "A" and done.attempts == 1 and LOG == ["a"]
 
 
-def test_higher_priority_runs_first(sched):
+def test_lower_priority_number_runs_first(sched):
     sched.workers = 1
-    low, high = record.submit(name="low"), record.submit(name="high", priority=10)
+    low, high = record.submit(name="low"), record.submit(name="high", priority=1)
 
     sched.start()
 
@@ -224,13 +224,13 @@ def test_dedupe_key_returns_the_active_task(sched):
 
 def test_waiting_tasks_can_be_reordered(sched):
     a, b, c = (record.submit(name=name) for name in "abc")
-    urgent = record.submit(name="urgent", priority=5)
+    urgent = record.submit(name="urgent", priority=1)
 
     sched.move(c.id, before_id=a.id)
     moved = sched.move(b.id, before_id=urgent.id)
 
     assert [item.id for item in sched.tasks()] == [b.id, urgent.id, c.id, a.id]
-    assert moved.priority == 5
+    assert moved.priority == 1
 
 
 def test_unknown_kinds_fail_clearly(sched):

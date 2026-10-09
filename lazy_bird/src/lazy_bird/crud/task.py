@@ -109,7 +109,7 @@ def list_tasks(statuses: list[str] | None = None, kind: str | None = None, limit
 
 
 def _queue_key(row: Task):
-    return (0 if row.status == "running" else 1, -row.priority, row.position, row.id)
+    return (0 if row.status == "running" else 1, row.priority, row.position, row.id)
 
 
 def ready(now: datetime) -> list[Task]:

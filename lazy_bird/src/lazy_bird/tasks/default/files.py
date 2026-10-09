@@ -44,12 +44,13 @@ def embed_file(ctx: TaskContext, file_id: int, target: str, preset_id: int) -> d
         raise ConflictError(f"Preset {preset_id} no longer embeds with {target}.", code="preset_target_changed")
     chunks = chunk_crud.for_file(file_id)
     done = ctx.state.get("done", 0)
-    for start in range(done, len(chunks), EMBEDDING_BATCH):
-        batch = chunks[start:start + EMBEDDING_BATCH]
-        vectors = embed_texts([chunk.content for chunk in batch], resolved)
-        database.vector_create(target, [{"chunk_id": chunk.id, "vector": vector} for chunk, vector in zip(batch, vectors, strict=True)])
-        finished = start + len(batch)
-        ctx.checkpoint(finished / len(chunks), f"Embedded {finished}/{len(chunks)} chunks", {"done": finished})
+    with resolved.loaded():  # the model is loaded once for every batch of this file
+        for start in range(done, len(chunks), EMBEDDING_BATCH):
+            batch = chunks[start:start + EMBEDDING_BATCH]
+            vectors = embed_texts([chunk.content for chunk in batch], resolved)
+            database.vector_create(target, [{"chunk_id": chunk.id, "vector": vector} for chunk, vector in zip(batch, vectors, strict=True)])
+            finished = start + len(batch)
+            ctx.checkpoint(finished / len(chunks), f"Embedded {finished}/{len(chunks)} chunks", {"done": finished})
     return {"file_id": file_id, "chunks": len(chunks), "model": target}
 
 
@@ -70,11 +71,11 @@ def scan_files(ctx: TaskContext, every_minutes: int = 0, slot: int = 0) -> dict:
 def schedule_scan(every_minutes: int, slot: int = 0, delay_minutes: int = 0):
     """Queue a periodic scan (every ``every_minutes``), or a single one when it is 0."""
     if every_minutes <= 0:
-        return scan_files.submit(dedupe_key="files.scan:now", priority=-10)
+        return scan_files.submit(dedupe_key="files.scan:now", priority=10)
     return scan_files.submit(
         every_minutes=every_minutes,
         slot=slot,
         run_at=datetime.now(timezone.utc) + timedelta(minutes=delay_minutes) if delay_minutes else None,
         dedupe_key=f"files.scan:{slot}",
-        priority=-10,
+        priority=10,
     )

@@ -13,7 +13,7 @@ Writing a task (the whole contract)::
             ctx.checkpoint(progress=(index + 1) / len(items), state={"done": index + 1})
         return {"count": len(items)}                 # JSON-serializable result
 
-    reindex.submit(folder="notes", priority=10)      # -> TaskOut
+    reindex.submit(folder="notes", priority=1)       # -> TaskOut (lower number = sooner)
 
 - parameters are keyword arguments and must be JSON-serializable;
 - ``resources`` (dict or function of the parameters) is what the run holds in the

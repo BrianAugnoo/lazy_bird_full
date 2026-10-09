@@ -9,6 +9,7 @@ class EmbeddingEngine(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     file_path: str
     formats: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    local: bool = Field(default=False)
     kwargs_key: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 
 

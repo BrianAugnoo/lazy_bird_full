@@ -8,6 +8,8 @@ contract). A cross-encoder engine additionally defines::
 returning one relevance score per document, in order (higher is more relevant).
 ``model`` is the ``LLMModel`` referenced by ``settings.model_id``. Unlike an
 embedding engine, a cross-encoder has no vector space: it only scores pairs.
+A local engine receives its loaded model first, ``rerank(scorer, query, documents,
+settings, model)``, like an embedding engine (see ``embedding``).
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ def rerank_scores(query: str, documents: list[str], resolved: ResolvedEngine) ->
     """Score every document against the query with a resolved engine."""
     if not documents:
         return []
-    scores = resolved.module.rerank(query, list(documents), resolved.settings, resolved.model)
+    scores = resolved.call("rerank", query, list(documents))
     if len(scores) != len(documents):
         raise CrossEncoderEngineError(
             f"Engine '{resolved.engine.name}' returned {len(scores)} scores for {len(documents)} documents"

@@ -9,7 +9,13 @@ number of presets (named kwargs) per engine. Each module must define:
 - ``fields`` (optional): widget overrides for some ``EngineSettings`` attributes;
 - ``formats`` (required when ``EngineSettings`` has ``model_id``): model formats the
   engine can load, compared case-insensitively with ``LLMModel.selected_format``;
-- the family-specific functions listed in ``EngineFamily.required``.
+- the family-specific functions listed in ``EngineFamily.required``;
+- ``local`` (optional, ``False``): the engine runs a model on this machine. A local
+  engine also defines ``load(settings, model) -> instance`` and ``unload(instance)``
+  (and optionally ``load_key(settings, model)``: the settings that change what is
+  loaded, so presets that differ only by e.g. ``batch_size`` share one model). Its
+  family functions receive that instance first, ``embed(instance, texts, settings,
+  model)``, and ``lazy_bird.residency`` decides when the model is loaded and freed.
 
 When ``EngineSettings`` declares ``model_id``, the attribute references an
 ``LLMModel``: the family checks it exists and that the engine supports its format,
@@ -21,10 +27,11 @@ The database forbids two defaults; this module makes sure one always exists.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable
+from typing import Any, Callable, ContextManager
 
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -42,6 +49,7 @@ from lazy_bird.extension.discovery import (
     require_attributes,
 )
 from lazy_bird.extension.settings import ROOT_ERROR_KEY, SettingsContract, settings_contract
+from lazy_bird.residency import residency
 from lazy_bird.schemas.engine import EngineOut
 from lazy_bird.schemas.llm_model import LLMModelOut
 
@@ -57,6 +65,10 @@ class LoadedEngine:
     def formats(self) -> list[str]:
         return list(getattr(self.module, "formats", []) or [])
 
+    @property
+    def local(self) -> bool:
+        return bool(getattr(self.module, "local", False))
+
 
 @dataclass(frozen=True)
 class ResolvedEngine:
@@ -67,6 +79,29 @@ class ResolvedEngine:
     settings: BaseModel
     model: LLMModelOut | None
     preset_id: int | None = None
+
+    @property
+    def local(self) -> bool:
+        return bool(getattr(self.module, "local", False))
+
+    def loaded(self) -> ContextManager:
+        """Keep the model of a local engine loaded inside a ``with`` block (a no-op for API engines).
+
+        Calls made inside share one load instead of loading the model each time.
+        """
+        return residency().use(self) if self.local else nullcontext()
+
+    def call(self, operation: str, *args: Any) -> Any:
+        """Run an engine operation: ``operation(*args, settings, model)`` on its module.
+
+        A local engine gets its loaded model first, ``operation(instance, *args, settings,
+        model)``. The model is loaded for the call and freed right after it, unless a
+        ``loaded()`` block holds it.
+        """
+        if not self.local:
+            return getattr(self.module, operation)(*args, self.settings, self.model)
+        with residency().use(self) as loaded:
+            return loaded.run(operation, *args, self.settings, self.model)
 
 
 class EngineFamily:
@@ -105,6 +140,8 @@ class EngineFamily:
         loaded = LoadedEngine(module, contract)
         if contract.has(MODEL_ATTRIBUTE) and not loaded.formats:
             raise ExtensionContractError(f"EngineSettings declares '{MODEL_ATTRIBUTE}' but 'formats' is empty")
+        if loaded.local:
+            require_attributes(module, ("load", "unload"))
         return loaded
 
     def discover(self) -> list[EngineOut]:
@@ -139,6 +176,7 @@ class EngineFamily:
                 row = self.engine_table(name=loaded.module.name)
             row.file_path = file_path
             row.formats = loaded.formats
+            row.local = loaded.local
             row.kwargs_key = loaded.contract.kwargs_key()
             session.add(row)
             session.commit()

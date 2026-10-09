@@ -116,6 +116,7 @@ function PresetEditor({
           ))}
         </select>
         {engine && engine.formats.length > 0 && <div className="form-hint">Works with models in {engine.formats.join(', ')} format.</div>}
+        {engine?.local && <div className="form-hint">Runs the model on this computer: it is loaded into memory while it is used.</div>}
       </div>
       {engine && (
         <section className="form-section">

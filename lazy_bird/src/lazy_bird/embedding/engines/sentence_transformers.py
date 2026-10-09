@@ -1,12 +1,11 @@
-import gc
-from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import detect_device
+from . import detect_device, inference_mode, release_memory, release_model
 
 name = "sentence-transformers"
+local = True
 formats = ["safetensors", "bin", "onnx"]
 
 
@@ -16,8 +15,11 @@ class EngineSettings(BaseModel):
         default=None, description="Torch device; empty selects the best available one."
     )
     batch_size: int = Field(default=32, ge=1, description="Number of texts encoded at once.")
+    cache_optimization: bool = Field(
+        default=False,
+        description="Run the model in inference mode and clear the memory caches after every batch: slower, but memory use stays close to the size of the model.",
+    )
     model_config = ConfigDict(extra="forbid")
-    unloading: bool = Field(default=True, description="Unload the model from memory after each embedding call.")
 
 
 fields = {
@@ -41,47 +43,46 @@ def resources(settings, model):
     return {"cpu": 1, "vram_mb": round(weights_size_mb(model.local_path, model.selected_format, model.selected_file) + CUDA_OVERHEAD_MB)}
 
 
-@lru_cache(maxsize=1)
-def _load(path: str, device: str, backend: str):
+def _backend(model) -> str:
+    return "onnx" if (model.selected_format or "").lower() == "onnx" else "torch"
+
+
+def load_key(settings, model):
+    """What changes the loaded model: presets differing only by batch size share it."""
+    return model.local_path, settings.device or detect_device(), _backend(model)
+
+
+def load(settings, model):
     try:
         from sentence_transformers import SentenceTransformer
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "The sentence-transformers dependency is missing. Install the project dependencies with 'uv sync'."
         ) from exc
+    device, backend = settings.device or detect_device(), _backend(model)
     model_kwargs = {}
     if backend == "torch" and device == "cuda":
         import torch
 
         model_kwargs["torch_dtype"] = torch.float16
-    return SentenceTransformer(path, device=device, backend=backend, model_kwargs=model_kwargs)
+    return SentenceTransformer(model.local_path, device=device, backend=backend, model_kwargs=model_kwargs)
 
 
-def unload() -> None:
-    """Drop the cached model and give its memory back (GPU memory included)."""
-    _load.cache_clear()
-    gc.collect()
-    try:
-        import torch
-    except ModuleNotFoundError:
-        return
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+def unload(encoder) -> None:
+    release_model(encoder)
 
 
-def _encode(texts, settings, model):
-    backend = "onnx" if (model.selected_format or "").lower() == "onnx" else "torch"
-    encoder = _load(model.local_path, settings.device or detect_device(), backend)
-    vectors = encoder.encode(
-        list(texts), batch_size=settings.batch_size, convert_to_numpy=True, show_progress_bar=False
-    )
-    return vectors.tolist()
+def _encode(encoder, texts, settings):
+    return encoder.encode(texts, batch_size=settings.batch_size, convert_to_numpy=True, show_progress_bar=False).tolist()
 
 
-def embed(texts, settings, model):
-    # The encoder lives only inside _encode, so nothing but the cache keeps it alive when unload() runs.
-    try:
-        return _encode(texts, settings, model)
-    finally:
-        if settings.unloading:
-            unload()
+def embed(encoder, texts, settings, model):
+    texts = list(texts)
+    if not settings.cache_optimization:
+        return _encode(encoder, texts, settings)
+    vectors = []
+    with inference_mode():
+        for start in range(0, len(texts), settings.batch_size):
+            vectors.extend(_encode(encoder, texts[start : start + settings.batch_size], settings))
+            release_memory()
+    return vectors

@@ -208,6 +208,66 @@ def fake_embedding(crud_database, monkeypatch):
     return engine_family.create_preset("fake", engine.id, {}, default=True)
 
 
+class FakeLocalEmbeddingSettings(BaseModel):
+    dimension: int = 4
+    batch_size: int = 8  # does not change what is loaded (see load_key)
+
+
+class FakeModel:
+    """The "loaded model" of the fake local engine."""
+
+    def __init__(self, dimension: int) -> None:
+        self.dimension = dimension
+
+
+@pytest.fixture
+def fake_local_embedding(crud_database, monkeypatch):
+    """A local embedding engine whose model loads and frees are recorded.
+
+    The module keeps ``loads`` (one entry per load), ``unloads`` (the freed models),
+    ``peak`` (most operations running at once on one model) and ``delay`` (seconds each
+    operation lasts); ``module.preset`` is its default preset.
+    """
+    import threading
+    import time
+
+    from lazy_bird.embedding import engine_family
+
+    module = ModuleType("fake_local_embedding_engine")
+    module.name = "fake-local-embedding"
+    module.local = True
+    module.EngineSettings = FakeLocalEmbeddingSettings
+    module.loads, module.unloads, module.peak, module.delay = [], [], 0, 0.0
+    running = {"now": 0}
+    guard = threading.Lock()
+
+    def load(settings, model):
+        module.loads.append(settings.dimension)
+        return FakeModel(settings.dimension)
+
+    def embed(instance, texts, settings, model):
+        with guard:
+            running["now"] += 1
+            module.peak = max(module.peak, running["now"])
+        try:
+            time.sleep(module.delay)
+            return _fake_embed(texts, instance, model)
+        finally:
+            with guard:
+                running["now"] -= 1
+
+    module.load = load
+    module.unload = lambda instance: module.unloads.append(instance)
+    module.load_key = lambda settings, model: settings.dimension
+    module.embed = embed
+    module.vector_space = lambda settings: f"fake/local-{settings.dimension}"
+    monkeypatch.setattr(engine_family, "_loaded", dict(engine_family._loaded))
+    engine = engine_family.register(module)
+    module.engine = engine
+    module.preset = engine_family.create_preset("fake-local", engine.id, {}, default=True)
+    return module
+
+
 class FakeCrossEncoderSettings(BaseModel):
     pass
 
@@ -276,6 +336,16 @@ def isolated_hf_cache(tmp_path_factory, monkeypatch):
     from lazy_bird.tools import hf_cache
 
     monkeypatch.setattr(hf_cache, "HF_HUB_CACHE", str(tmp_path_factory.mktemp("hf-cache-isolated")))
+
+
+@pytest.fixture(autouse=True)
+def isolated_residency():
+    """Every test starts without loaded models and leaves none behind."""
+    import lazy_bird.residency as residency_module
+
+    residency_module._residency = None
+    yield
+    residency_module._residency = None
 
 
 @pytest.fixture(autouse=True)
