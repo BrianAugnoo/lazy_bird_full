@@ -11,7 +11,7 @@ one at a time:
 
 - ``("load", settings, model)``    -> the module's ``load`` builds the model, kept in the process;
 - ``("call", operation, args)``    -> ``module.<operation>(instance, *args)``;
-- ``("stats",)``                   -> memory the process uses;
+- ``("stats",)``                   -> GPU memory the process uses (its RAM is read by the server);
 - ``("stop",)``                    -> the module's ``unload`` runs, then the process exits.
 
 Every answer is ``("ok", value)`` or ``("error", {type, message, traceback})``. Operations
@@ -81,7 +81,8 @@ class EngineHost:
         return self._ask(("call", operation, args))
 
     def stats(self) -> dict[str, float] | None:
-        """Memory the process uses (``rss_mb``, ``vram_mb`` when it uses the GPU), or None when it is gone.
+        """Memory the process uses, or None when it is gone: ``rss_mb`` and, when it uses the
+        GPU, ``vram_mb`` (now) and ``vram_peak_mb`` (the most it took, e.g. during a batch).
 
         GPU memory is asked to the process, only when it is not busy with a call.
         """
@@ -136,10 +137,19 @@ class EngineHost:
 
 
 # ------------------------------------------------------------------ child side
+# The CUDA context of the process, which torch's allocator does not count: measured at
+# 110-150 MB (CUDA 12.8, lazy module loading), growing as kernels are loaded.
+CUDA_CONTEXT_MB = 200
+
+
 def _gpu_memory_used() -> dict[str, float]:
+    """GPU memory of this process: now (``vram_mb``) and the most it took (``vram_peak_mb``), context included."""
     torch = sys.modules.get("torch")
     if torch is not None and torch.cuda.is_available() and torch.cuda.is_initialized():
-        return {"vram_mb": torch.cuda.memory_reserved() / 1024**2}
+        return {
+            "vram_mb": torch.cuda.memory_reserved() / 1024**2 + CUDA_CONTEXT_MB,
+            "vram_peak_mb": torch.cuda.max_memory_reserved() / 1024**2 + CUDA_CONTEXT_MB,
+        }
     return {}
 
 

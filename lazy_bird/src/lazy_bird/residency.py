@@ -15,7 +15,9 @@ receive the loaded instance as first argument. This module owns those instances:
 - with ``smart-memory`` off the last lease to leave unloads the model and nothing is
   accounted (unsupervised);
 - with ``smart-memory`` on every model holds the memory it takes in the shared resource
-  pool (``engine:*`` holders) and an idle model stays loaded until that memory is needed:
+  pool (``engine:*`` holders): what its engine estimates (``placements``) until it is
+  loaded; for a hosted model, then what its process really takes, read after it loads and
+  after every call. An idle model stays loaded until that memory is needed:
   it is then evicted, least recently used first. A model that does not fit in GPU memory
   goes to the CPU when the ``fallback`` preference says so (engines tell where they can
   live with ``placements``); a model that cannot fit in the machine at all is refused
@@ -116,7 +118,11 @@ class Loaded:
         self.evicted = False  # taken away from its users by force
         self.removed = False
         self.overrides = overrides  # settings the placement changes (e.g. the device)
-        self.needs = needs  # memory it takes in the pool
+        self.estimate = dict(needs)  # the memory its engine said it takes
+        self.needs = needs  # memory it takes in the pool: the estimate, then what a hosted model really takes
+        self.usage: Resources = {}  # what its host process took at the last reading
+        self.served = False  # it ran a call: its working memory is in the readings
+        self.estimate_checked = False
         self.holder = holder
         self.instance: Any = None
         self.leases = 0
@@ -135,7 +141,7 @@ class Loaded:
                 raise ModelEvicted("The model was taken away to make room for more urgent work.")
             instance = self.instance
             try:
-                return getattr(self.module, operation)(instance, *args)
+                result = getattr(self.module, operation)(instance, *args)
             except EngineProcessError:
                 if self.evicted:
                     raise ModelEvicted("The model was taken away to make room for more urgent work.") from None
@@ -144,6 +150,30 @@ class Loaded:
                     if self.instance is instance:
                         self.instance = None  # the process is gone: the next use loads the model again
                 raise
+            if self.hosted:
+                self.served = True
+                self.usage = _usage(instance)  # read while no other call runs in the process
+            return result
+
+
+def _usage(host: EngineHost) -> Resources:
+    """What a host process really takes, as pool resources (only what could be read)."""
+    stats = host.stats() or {}
+    usage = {}
+    if stats.get("rss_mb"):
+        usage["ram_mb"] = stats["rss_mb"]
+    if stats.get("vram_peak_mb"):
+        usage["vram_mb"] = stats["vram_peak_mb"]  # the peak: a batch needs that much again
+    return usage
+
+
+def _misestimated(estimate: Resources, usage: Resources) -> dict[str, tuple[float, float]]:
+    """The resources an engine estimated badly (by more than a quarter and more than 256 MB): (estimated, used)."""
+    return {
+        name: (amount, usage[name])
+        for name, amount in estimate.items()
+        if name in usage and abs(usage[name] - amount) > max(256.0, amount / 4)
+    }
 
 
 def _placements(resolved: ResolvedEngine) -> list[tuple[dict[str, Any], Resources]]:
@@ -205,7 +235,9 @@ class Residency:
         ``settings`` are the caller's, as they apply where the model was placed.
         """
         with self.use(resolved) as loaded:
-            return loaded.run(operation, *args, loaded.placed(resolved.settings), resolved.model)
+            result = loaded.run(operation, *args, loaded.placed(resolved.settings), resolved.model)
+            self._account(loaded)
+            return result
 
     def reserve(self, resolved: ResolvedEngine, *, lessee: str, priority: int, preempt: Preempt | None = None) -> Loaded:
         """Make the memory of a model ready for ``lessee`` (a task about to start) without loading it.
@@ -354,9 +386,12 @@ class Residency:
             if entry.instance is not None:
                 return
             instance = entry.module.load(entry.placed(resolved.settings), resolved.model)
+            if entry.hosted:
+                entry.usage = _usage(instance)
             with self._lock:
                 if not entry.removed:
                     entry.instance = instance
+                    self._account(entry)
                     return
             # Taken away (shutdown, eviction) while it was loading: nobody would ever free it.
             try:
@@ -364,6 +399,35 @@ class Residency:
             except Exception:
                 logger.exception("Unloading the model of engine '{}' failed", entry.key[0])
             raise ModelEvicted("The model was taken away while it was loading.")
+
+    def _account(self, entry: Loaded) -> None:
+        """Make the pool hold what a hosted model really takes (its last reading) instead of its estimate.
+
+        Until it has served a call a model has not used its working memory yet (the
+        activations of a batch): the reading taken after it loads can raise the estimate
+        (the RAM of its process, for a model on the GPU) but not lower it.
+        """
+        usage = entry.usage
+        if not usage or not entry.needs:  # not hosted, not read, or not accounted at all
+            return
+        with self._lock:
+            if entry.removed:
+                return
+            needs = dict(entry.needs)
+            for name, amount in usage.items():
+                needs[name] = amount if entry.served else max(needs.get(name, 0.0), amount)
+            entry.needs = needs
+            _pool().resize(entry.holder, needs)
+            if not entry.served or entry.estimate_checked:
+                return
+            entry.estimate_checked = True
+        if off := _misestimated(entry.estimate, usage):
+            logger.warning(
+                "Engine '{}' misestimates the memory of '{}': {}",
+                entry.key[0],
+                entry.label,
+                ", ".join(f"{name} estimated {estimated:,.0f} MB, really {used:,.0f} MB" for name, (estimated, used) in off.items()),
+            )
 
     # ------------------------------------------------------------------ eviction
     def evict_idle(self, needs: Resources) -> bool:

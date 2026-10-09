@@ -168,6 +168,20 @@ class ResourcePool:
                 self._used[name] = max(0.0, self._used.get(name, 0) - amount)
             self._condition.notify_all()
 
+    def resize(self, holder: str, needs: Resources) -> None:
+        """Make ``holder`` hold ``needs`` instead of what it took (a measurement replacing an estimate).
+
+        It may go above the capacity: that is what the holder really takes. A holder that
+        was released stays released.
+        """
+        with self._condition:
+            if holder not in self._holders:
+                return
+            for name, amount in self._holders.pop(holder).items():
+                self._used[name] = max(0.0, self._used.get(name, 0) - amount)
+            self._take(holder, needs)
+            self._condition.notify_all()
+
     @contextmanager
     def hold(self, holder: str, needs: Resources, timeout: float | None = None) -> Iterator[None]:
         """Hold resources for the duration of a ``with`` block (waiting for them if needed)."""

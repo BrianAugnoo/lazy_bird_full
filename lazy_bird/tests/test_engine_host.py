@@ -6,11 +6,12 @@ import time
 
 import psutil
 import pytest
+from loguru import logger
 
 import lazy_bird.tasks as tasks_module
 from lazy_bird import preferences
 from lazy_bird.embedding import engine_family
-from lazy_bird.engine_host import EngineProcessError
+from lazy_bird.engine_host import CUDA_CONTEXT_MB, EngineProcessError
 from lazy_bird.errors import InsufficientResourcesError
 from lazy_bird.residency import ModelEvicted, acting_as, residency
 from lazy_bird.tasks.resources import ResourcePool
@@ -124,7 +125,7 @@ def test_loaded_models_are_described_with_their_process_and_memory(hosted_engine
         model.call("embed", ["a"])
         [described] = residency().describe()
 
-    assert described["engine"] == "hosted-fake" and described["needs"] == {"vram_mb": 300} and described["idle"] is False
+    assert described["engine"] == "hosted-fake" and described["needs"]["vram_mb"] == 300 and described["idle"] is False
     assert described["pid"] != os.getpid() and described["memory"]["rss_mb"] > 10
     [idle] = residency().describe()  # kept while idle, accounted
     assert idle["idle"] is True and idle["pid"] == described["pid"]
@@ -147,7 +148,7 @@ def test_a_user_that_does_not_step_aside_is_forced_out_by_ending_its_models_proc
     thread.start()
     wait_until(lambda: residency().describe() and residency().describe()[0]["pid"], message="the model never loaded")
     pid = residency().describe()[0]["pid"]
-    assert machine.snapshot()["used"] == {"vram_mb": 600}
+    assert machine.snapshot()["used"]["vram_mb"] == 600
 
     released = residency().force_release("task:9")
 
@@ -158,7 +159,7 @@ def test_a_user_that_does_not_step_aside_is_forced_out_by_ending_its_models_proc
     with acting_as("task:9", 5), pytest.raises(ModelEvicted):
         stuck.call("embed", ["a"])  # it cannot get the model back behind the scheduler's back
     residency().release_lessee("task:9")
-    assert urgent.call("embed", ["a"]) and machine.snapshot()["used"] == {"vram_mb": 600}  # the urgent one has the room
+    assert urgent.call("embed", ["a"]) and machine.snapshot()["used"]["vram_mb"] == 600  # the urgent one has the room
 
 
 def test_models_shared_with_others_are_not_taken_away(hosted_engine, machine):
@@ -203,3 +204,56 @@ def test_a_model_taken_away_while_it_loads_is_freed_as_soon_as_it_is_loaded(host
     assert isinstance(outcome[0], ModelEvicted)
     wait_until(lambda: children() == [], message="the model loaded during shutdown was left running")
     assert machine.snapshot()["used"] == {}
+
+
+# -------------------------------------------------------------- measured memory
+def host_ram_mb():
+    return psutil.Process(residency().describe()[0]["pid"]).memory_info().rss / 1024**2
+
+
+def test_a_hosted_model_on_the_gpu_also_holds_the_ram_of_its_process(hosted_engine, machine):
+    with resolved(hosted_engine, gpu_mb=300).loaded():
+        [held] = machine.snapshot()["holders"].values()
+        ram = host_ram_mb()
+
+    assert held["vram_mb"] == 300  # this process reads no GPU memory: the estimate stays
+    assert held["ram_mb"] == pytest.approx(ram, rel=0.25)
+
+
+def test_after_a_call_a_hosted_model_holds_what_its_process_really_takes_even_below_its_estimate(hosted_engine, machine):
+    model = resolved(hosted_engine, cpu_mb=3000)  # far more than this small process takes
+
+    with model.loaded():
+        loaded = machine.snapshot()["used"]["ram_mb"]
+        model.call("embed", ["a"])
+        served = machine.snapshot()["used"]["ram_mb"]
+        ram = host_ram_mb()
+
+    assert loaded == 3000  # before its first call the working memory of a model is unknown: not lowered
+    assert served == pytest.approx(ram, rel=0.25) and served < 1000
+
+
+def test_a_hosted_model_holds_the_gpu_memory_its_process_took_at_its_peak(hosted_engine, machine):
+    model = resolved(hosted_engine, gpu_mb=300, gpu_peak_mb=500)
+
+    with model.loaded():
+        loaded = machine.snapshot()["used"]["vram_mb"]
+        model.call("embed", ["a"])
+        served = machine.snapshot()["used"]["vram_mb"]
+
+    assert loaded == served == 500 + CUDA_CONTEXT_MB  # above the estimate: raised as soon as it is read
+    assert residency().describe()[0]["needs"]["vram_mb"] == 500 + CUDA_CONTEXT_MB
+
+
+def test_an_engine_that_misestimates_the_memory_of_its_model_is_logged(hosted_engine, machine):
+    warnings = []
+    sink = logger.add(lambda message: warnings.append(message.record["message"]), level="WARNING")
+    try:
+        resolved(hosted_engine, dimension=3, cpu_mb=3000).call("embed", ["a"])
+        ram = round(host_ram_mb())
+        resolved(hosted_engine, dimension=5, cpu_mb=ram).call("embed", ["a"])  # a close estimate
+    finally:
+        logger.remove(sink)
+
+    [warning] = warnings
+    assert "'hosted-fake' misestimates" in warning and "ram_mb estimated 3,000 MB" in warning

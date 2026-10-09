@@ -135,7 +135,7 @@ def test_an_isolated_task_uses_the_models_of_the_server(sched, crud_database, mo
 
     [model] = residency().describe()  # the model was loaded by the server, for the task, and stays there idle
     assert done.result["model_pid"] == model["pid"] != done.result["pid"]
-    assert model["idle"] is True and model["needs"] == {"vram_mb": 300}
+    assert model["idle"] is True and model["needs"]["vram_mb"] == 300
     assert done.result["length"] == 3
 
 

@@ -4,8 +4,10 @@ Its "model" is the pid of the process holding it, which tells where it lives.
 """
 
 import os
+import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +24,7 @@ class EngineSettings(BaseModel):
     cpu_mb: float = 0
     marker: str | None = None  # file written by unload(): proves where it ran
     fail_load: bool = False
+    gpu_peak_mb: float = 0  # the process pretends torch took this much GPU memory at its peak
 
 
 def vector_space(settings):
@@ -44,6 +47,10 @@ def placements(settings, model):
 def load(settings, model):
     if settings.fail_load:
         raise MemoryError("CUDA out of memory (pretend)")
+    if settings.gpu_peak_mb:
+        peak = settings.gpu_peak_mb * 1024**2
+        cuda = SimpleNamespace(is_available=lambda: True, is_initialized=lambda: True, memory_reserved=lambda: 0, max_memory_reserved=lambda: peak)
+        sys.modules["torch"] = SimpleNamespace(cuda=cuda)  # what engine_host reads GPU memory from
     return {"pid": os.getpid(), "marker": settings.marker}
 
 

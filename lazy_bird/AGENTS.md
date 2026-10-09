@@ -516,7 +516,15 @@ The `smart-memory` preference section decides how much the machine is supervised
 - `isolate_models` (default on, independent of `enable`) — local models run in host
   processes (§5.3).
 
-With it on, a loaded model holds its memory in the pool (`engine:*` holders). A model
+With it on, a loaded model holds its memory in the pool (`engine:*` holders): what its
+engine estimates (`placements`) until it is loaded, then, for a hosted model, what its
+process really takes. The host is read after the model loads and after every call
+(`EngineHost.stats`: RAM of the process, peak GPU memory of torch's allocator + a
+`CUDA_CONTEXT_MB` allowance, since the driver gives no per-process figure on Windows or
+WSL). Until its first call a model's working memory (a batch's activations) is unknown, so
+the reading taken after loading can raise the estimate (the 2–3 GB of RAM the process of a
+GPU model takes) but not lower it; after a call the reading replaces it. The first time an
+estimate is off by more than a quarter and 256 MB, a warning names the engine. A model
 nobody uses stays loaded until its memory is needed: it is then evicted, least recently
 used first, and only if it holds the missing resource. A task that declares `engines`
 reserves their models (in the best place that fits, the CPU being the fallback) before

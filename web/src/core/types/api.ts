@@ -114,7 +114,8 @@ export interface LoadedModel {
   idle: boolean;
   users: string[];
   pid: number | null;
-  memory: { rss_mb: number; vram_mb?: number } | null;
+  /** What its process really takes, read now; `vram_peak_mb` is the most GPU memory it took. */
+  memory: { rss_mb: number; vram_mb?: number; vram_peak_mb?: number } | null;
 }
 
 /** Capacity and use of each resource (`cpu`, `vram_mb`, ...); `holders` maps a task or run to what it holds. */

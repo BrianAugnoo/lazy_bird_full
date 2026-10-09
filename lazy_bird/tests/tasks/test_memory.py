@@ -109,6 +109,26 @@ def test_the_ceiling_counts_what_the_pool_holds_as_releasable():
     assert ResourcePool({"vram_mb": 1000}).ceiling() == {"vram_mb": 1000}
 
 
+def test_a_holder_can_be_resized_to_what_it_really_takes():
+    pool = ResourcePool({"vram_mb": 1000, "ram_mb": 4000})
+    pool.try_acquire("model", {"vram_mb": 800})
+
+    pool.resize("model", {"vram_mb": 300, "ram_mb": 2000})  # measured: less GPU memory, and RAM too
+
+    assert pool.held("model") == {"vram_mb": 300, "ram_mb": 2000}
+    assert pool.fits({"vram_mb": 700}) and not pool.fits({"ram_mb": 2500})
+
+
+def test_a_released_holder_stays_released_when_a_late_measurement_comes():
+    pool = ResourcePool({"vram_mb": 1000})
+    pool.try_acquire("model", {"vram_mb": 800})
+    pool.release("model")
+
+    pool.resize("model", {"vram_mb": 300})
+
+    assert pool.snapshot()["used"] == {} and pool.held("model") == {}
+
+
 def test_waiting_for_a_release_wakes_up_when_something_is_released():
     pool = ResourcePool({"cpu": 1})
     pool.try_acquire("a", {"cpu": 1})
