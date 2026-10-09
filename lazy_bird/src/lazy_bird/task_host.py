@@ -191,7 +191,9 @@ class ServerResidency:
     def use(self, resolved: ResolvedEngine) -> Iterator[None]:
         yield None  # the server holds the task's models for its whole run
 
-    def call(self, resolved: ResolvedEngine, operation: str, args: tuple) -> Any:
+    def call(self, resolved: ResolvedEngine, operation: str, args: tuple, emit: Any = None) -> Any:
+        if emit is not None:
+            raise NotImplementedError("An isolated task cannot stream from a local model yet.")
         return self._link.engine(resolved, operation, args)
 
 

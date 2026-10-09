@@ -14,9 +14,13 @@ one at a time:
 - ``("stats",)``                   -> GPU memory the process uses (its RAM is read by the server);
 - ``("stop",)``                    -> the module's ``unload`` runs, then the process exits.
 
-Every answer is ``("ok", value)`` or ``("error", {type, message, traceback})``. Operations
-must take and return values that can be pickled (no streaming callbacks yet). The
-connection closing (the server died) ends the process.
+Every answer is ``("ok", value)`` or ``("error", {type, message, traceback, ...})``.
+Operations take and return values that can be pickled, except an ``Emitter`` (the chat
+of an inference engine): it is replaced by a relay in the process, so while the call runs
+the process sends ``("token", text)``, ``("reasoning", text)`` and ``("event", payload)``,
+which the server hands to the real emitter, and the server sends ``("stop_call",)`` once
+the emitter is stopped, which turns the relay's ``stopped`` on. The connection closing
+(the server died) ends the process.
 """
 
 from __future__ import annotations
@@ -32,11 +36,28 @@ from loguru import logger
 
 from lazy_bird.processes import END_TIMEOUT_SECONDS, START_TIMEOUT_SECONDS, ChildProcess, ProcessFailed, connect_to_parent, error_payload
 
+STREAMED = ("token", "reasoning", "event")  # what an operation sends through its emitter while it runs
+STOP_POLL_SECONDS = 0.1  # how often a streaming call checks whether its emitter was stopped
+
 
 class EngineProcessError(ProcessFailed):
     """The host process of an engine failed: an operation raised in it, or the process is gone."""
 
     code = "engine_failed"
+
+
+class EmitterSlot:
+    """Where an operation's emitter goes in the arguments sent to a host (the process puts its relay there)."""
+
+
+def _remote_error(payload: dict[str, Any]) -> Exception:
+    """The error an operation raised in its process, as the server raises it."""
+    details = {**payload.get("details", {}), "type": payload["type"], "traceback": payload["traceback"]}
+    if payload.get("retryable") is not None:  # an engine's own EngineError: retried by the agentic loop as it says
+        from lazy_bird.inference.types import EngineError
+
+        return EngineError(payload["message"], code=payload.get("code"), retryable=payload["retryable"], details=details)
+    return EngineProcessError(payload["message"], code=payload.get("code", EngineProcessError.code), details=details)
 
 
 def importable(module: ModuleType) -> bool:
@@ -77,8 +98,18 @@ class EngineHost:
         return self._child.alive
 
     def call(self, operation: str, args: tuple) -> Any:
-        """Run ``module.<operation>(instance, *args)`` in the process and return its result."""
-        return self._ask(("call", operation, args))
+        """Run ``module.<operation>(instance, *args)`` in the process and return its result.
+
+        An ``Emitter`` among ``args`` receives what the operation streams, and stopping it
+        asks the operation to stop (it sees its emitter's ``stopped`` turn on).
+        """
+        from lazy_bird.inference.types import Emitter
+
+        emit = next((arg for arg in args if isinstance(arg, Emitter)), None)
+        if emit is None:
+            return self._ask(("call", operation, args))
+        sent = tuple(EmitterSlot() if arg is emit else arg for arg in args)
+        return self._ask(("call", operation, sent), emit=emit)
 
     def stats(self) -> dict[str, float] | None:
         """Memory the process uses, or None when it is gone: ``rss_mb`` and, when it uses the
@@ -114,15 +145,33 @@ class EngineHost:
         """End the process now. A call in progress fails; the memory of the process is returned to the system."""
         self._child.kill()
 
-    def _ask(self, request: tuple, timeout: float | None = None) -> Any:
+    def _ask(self, request: tuple, timeout: float | None = None, emit: Any = None) -> Any:
         connection = self._child.connection
         with self._exchange:
             try:
                 connection.send(request)
-                if timeout is not None and not connection.poll(timeout):
-                    self.kill()  # a late answer would be taken for the next one: the process cannot be reused
-                    raise EngineProcessError(f"The engine process did not answer within {timeout:g} s and was ended.", code="engine_timeout")
-                status, value = connection.recv()
+                stop_sent = False
+                while True:
+                    if emit is not None:  # stream: relay what comes, and the stop when it is asked
+                        if emit.stopped and not stop_sent:
+                            connection.send(("stop_call",))
+                            stop_sent = True
+                        if not connection.poll(STOP_POLL_SECONDS):
+                            continue
+                    elif timeout is not None and not connection.poll(timeout):
+                        self.kill()  # a late answer would be taken for the next one: the process cannot be reused
+                        raise EngineProcessError(f"The engine process did not answer within {timeout:g} s and was ended.", code="engine_timeout")
+                    status, value = connection.recv()
+                    if status not in STREAMED:
+                        break
+                    try:
+                        getattr(emit, status)(value)
+                    except Exception:
+                        # Leaving now would leave the rest of the stream to be read as the next answer.
+                        logger.exception("The emitter of a call to engine host {} failed: the call is stopped", self.pid)
+                        if not stop_sent:
+                            connection.send(("stop_call",))
+                            stop_sent = True
             except (EOFError, OSError):
                 self._child.wait(1)
                 code = self._child.exit_code
@@ -132,7 +181,7 @@ class EngineHost:
                     details={"exit_code": code},
                 ) from None
         if status == "error":
-            raise EngineProcessError(value["message"], details={"type": value["type"], "traceback": value["traceback"]})
+            raise _remote_error(value)
         return value
 
 
@@ -153,6 +202,46 @@ def _gpu_memory_used() -> dict[str, float]:
     return {}
 
 
+class _RelayedEmitter:
+    """In the host: the emitter of the server's call (the ``Emitter`` interface), reached over the connection.
+
+    During a call the server sends nothing but ``("stop_call",)``, so ``stopped`` can read it.
+    """
+
+    def __init__(self, connection) -> None:
+        self._connection = connection
+        self._lock = threading.Lock()  # an engine may stream from threads of its own
+        self._stopped = False
+
+    def token(self, text: str) -> None:
+        self._send("token", text)
+
+    def reasoning(self, text: str) -> None:
+        self._send("reasoning", text)
+
+    def event(self, payload: dict[str, Any]) -> None:
+        self._send("event", payload)
+
+    def _send(self, kind: str, value: Any) -> None:
+        with self._lock:
+            self._connection.send((kind, value))
+
+    @property
+    def stopped(self) -> bool:
+        with self._lock:
+            while not self._stopped and self._connection.poll():
+                self._stopped = self._connection.recv()[0] == "stop_call"
+        return self._stopped
+
+
+def _with_relay(args: tuple, connection) -> tuple:
+    """The arguments of a call, with the server's emitter (``EmitterSlot``) replaced by a relay to it."""
+    if not any(isinstance(arg, EmitterSlot) for arg in args):
+        return args
+    relay = _RelayedEmitter(connection)
+    return tuple(relay if isinstance(arg, EmitterSlot) else arg for arg in args)
+
+
 def serve() -> None:
     """Child process entry point: import the engine module and serve the server's requests."""
     connection, (module_name,) = connect_to_parent()
@@ -166,12 +255,14 @@ def serve() -> None:
             except (EOFError, OSError):
                 return  # the server is gone
             kind = request[0]
+            if kind == "stop_call":
+                continue  # asked as the last call was ending: nothing left to stop
             try:
                 if kind == "load":
                     instance, loaded = module.load(request[1], request[2]), True
                     answer = None
                 elif kind == "call":
-                    answer = getattr(module, request[1])(instance, *request[2])
+                    answer = getattr(module, request[1])(instance, *_with_relay(request[2], connection))
                 elif kind == "stats":
                     answer = _gpu_memory_used()
                 else:  # stop
@@ -189,4 +280,8 @@ def serve() -> None:
 
 
 if __name__ == "__main__":
-    serve()
+    # Serve from the module under its own name: what the server pickles (an EmitterSlot)
+    # comes back as lazy_bird.engine_host's classes, not this __main__ copy's.
+    from lazy_bird.engine_host import serve as serve_by_name
+
+    serve_by_name()

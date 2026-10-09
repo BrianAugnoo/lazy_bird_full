@@ -142,4 +142,6 @@ def error_payload(error: BaseException) -> dict[str, Any]:
     payload = {"type": type(error).__name__, "message": str(error) or type(error).__name__, "traceback": traceback.format_exc()}
     if isinstance(error, AppError):
         payload.update(code=error.code, details=error.details)
+    if isinstance(getattr(error, "retryable", None), bool):  # an engine's EngineError: whether trying again may work
+        payload["retryable"] = error.retryable
     return payload

@@ -257,3 +257,32 @@ def test_an_engine_that_misestimates_the_memory_of_its_model_is_logged(hosted_en
 
     [warning] = warnings
     assert "'hosted-fake' misestimates" in warning and "ram_mb estimated 3,000 MB" in warning
+
+
+# -------------------------------------------------------------------- streaming
+def test_a_failing_emitter_stops_the_call_and_leaves_the_host_usable():
+    from lazy_bird.engine_host import EngineHost
+    from lazy_bird.inference.types import Emitter
+    from tests.hosting.inference import EngineSettings
+
+    class Closed(Emitter):  # e.g. the client went away
+        def token(self, text):
+            raise RuntimeError("socket closed")
+
+    class Listening(Emitter):
+        def __init__(self):
+            self.tokens = []
+
+        def token(self, text):
+            self.tokens.append(text)
+
+    settings, listening = EngineSettings(), Listening()
+    host = EngineHost.start("tests.hosting.inference", settings, None)
+    try:
+        first = host.call("chat", ([], [], settings, None, Closed()))
+        second = host.call("chat", ([], [], settings, None, listening))
+    finally:
+        host.stop()
+
+    assert first.content == second.content == "hello from the host"  # each call got its own answer
+    assert listening.tokens == ["hello ", "from ", "the ", "host "]

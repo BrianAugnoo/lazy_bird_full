@@ -45,6 +45,7 @@ from lazy_bird.preferences import smart_memory
 
 if TYPE_CHECKING:
     from lazy_bird.crud.engine import ResolvedEngine
+    from lazy_bird.inference.types import Emitter
 
 Resources = dict[str, float]
 Preempt = Callable[[Resources, int], bool]
@@ -54,25 +55,28 @@ WAIT_TIMEOUT_SECONDS = 600  # how long a caller that cannot go on without a mode
 
 _lessee: ContextVar[str | None] = ContextVar("lessee", default=None)
 _priority: ContextVar[int] = ContextVar("priority", default=priorities.SEARCH)
+_on_wait: ContextVar[Callable[[Resources], None] | None] = ContextVar("on_wait", default=None)
 # Orders the uses of models, for "least recently used first". A counter, not a clock:
 # time.monotonic() only moves every 15.6 ms on Windows, so close uses would tie.
 _uses = itertools.count()
 
 
 @contextmanager
-def acting_as(lessee: str | None, priority: int) -> Iterator[None]:
+def acting_as(lessee: str | None, priority: int, on_wait: Callable[[Resources], None] | None = None) -> Iterator[None]:
     """Say who the model calls made inside the block are for.
 
     The scheduler wraps a task's run (``lessee`` = its holder name, ``priority`` = its own),
     so the task finds the models reserved for it and is only displaced by more urgent work.
-    Outside any block a call counts as a search (the most urgent kind).
+    Outside any block a call counts as a search (the most urgent kind). ``on_wait`` is told
+    what memory is missing when a call has to wait for it (to show it, e.g. in a chat).
     """
-    tokens = _lessee.set(lessee), _priority.set(priority)
+    tokens = _lessee.set(lessee), _priority.set(priority), _on_wait.set(on_wait)
     try:
         yield
     finally:
         _lessee.reset(tokens[0])
         _priority.reset(tokens[1])
+        _on_wait.reset(tokens[2])
 
 
 class ModelEvicted(Exception):
@@ -100,11 +104,12 @@ class HostedModule:
 
 
 class MemoryPending(Exception):
-    """The memory a model needs is not free yet; it will be when ``missing`` is released."""
+    """The memory a model needs is not free yet; it will be when ``deficit`` (missing amount per resource) is released."""
 
-    def __init__(self, missing: set[str]) -> None:
-        super().__init__(f"Waiting for {', '.join(sorted(missing))}")
-        self.missing = frozenset(missing)
+    def __init__(self, deficit: Resources) -> None:
+        super().__init__(f"Waiting for {', '.join(sorted(deficit))}")
+        self.deficit = dict(deficit)
+        self.missing = frozenset(deficit)
 
 
 class Loaded:
@@ -229,13 +234,15 @@ class Residency:
         finally:
             self._leave(entry, lessee)
 
-    def call(self, resolved: ResolvedEngine, operation: str, args: tuple) -> Any:
-        """Run an operation on the model of a local engine: ``operation(instance, *args, settings, model)``.
+    def call(self, resolved: ResolvedEngine, operation: str, args: tuple, emit: Emitter | None = None) -> Any:
+        """Run an operation on the model of a local engine: ``operation(instance, *args, settings, model[, emit])``.
 
-        ``settings`` are the caller's, as they apply where the model was placed.
+        ``settings`` are the caller's, as they apply where the model was placed. ``emit``
+        receives what the operation streams (a hosted model relays it from its process).
         """
+        extra = () if emit is None else (emit,)
         with self.use(resolved) as loaded:
-            result = loaded.run(operation, *args, loaded.placed(resolved.settings), resolved.model)
+            result = loaded.run(operation, *args, loaded.placed(resolved.settings), resolved.model, *extra)
             self._account(loaded)
             return result
 
@@ -270,12 +277,15 @@ class Residency:
 
     def _wait_for(self, resolved: ResolvedEngine, lessee: str | None) -> Loaded:
         """A lease for a caller that cannot go on without the model: wait until its memory is free."""
-        priority = _priority.get()
+        priority, on_wait = _priority.get(), _on_wait.get()
         deadline = time.monotonic() + WAIT_TIMEOUT_SECONDS
         while True:
             try:
                 return self._acquire(resolved, lessee, priority, _preempt)
-            except MemoryPending:
+            except MemoryPending as pending:
+                if on_wait is not None:
+                    on_wait, notify = None, on_wait  # once
+                    notify(pending.deficit)
                 if time.monotonic() > deadline:
                     raise UnavailableError("The memory this model needs stayed busy for too long.", code="resources_busy") from None
                 _pool().wait_for_release(WAIT_STEP_SECONDS)
@@ -322,7 +332,7 @@ class Residency:
         deficit = _pool().deficit(allowed[-1][1], real=True)
         if preempt is not None:
             preempt(deficit, priority)
-        raise MemoryPending(set(deficit))
+        raise MemoryPending(deficit)
 
     def _try_create(self, resolved: ResolvedEngine, overrides: dict[str, Any], needs: Resources, lessee: str | None) -> Loaded | None:
         if needs:

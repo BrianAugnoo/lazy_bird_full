@@ -96,8 +96,9 @@ class ResolvedEngine:
         """
         return residency().use(self) if self.local else nullcontext()
 
-    def call(self, operation: str, *args: Any) -> Any:
-        """Run an engine operation: ``operation(*args, settings, model)`` on its module.
+    def call(self, operation: str, *args: Any, emit: Any = None) -> Any:
+        """Run an engine operation: ``operation(*args, settings, model)`` on its module, and
+        ``emit`` last when given (what the operation streams, e.g. the tokens of ``chat``).
 
         A local engine gets its loaded model first, ``operation(instance, *args, settings,
         model)``, with ``settings`` as they apply where the model was placed (e.g. the CPU
@@ -105,8 +106,8 @@ class ResolvedEngine:
         or a task holds it; otherwise it is released after the call.
         """
         if not self.local:
-            return getattr(self.module, operation)(*args, self.settings, self.model)
-        return residency().call(self, operation, args)
+            return getattr(self.module, operation)(*args, self.settings, self.model, *(() if emit is None else (emit,)))
+        return residency().call(self, operation, args, emit)
 
 
 class EngineFamily:

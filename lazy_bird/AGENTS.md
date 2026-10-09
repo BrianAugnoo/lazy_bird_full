@@ -232,7 +232,7 @@ The frontend builds every settings form from `kwargs_key` (see `web/AGENTS.md` �
 | Vector database | `database/vector_db/<name>.py` | same metadata; `initialize`, `disconnect(drop)`, `tables()`, `create(model_name, rows)`, `delete(model_name, chunk_ids)`, `count(model_name, chunk_ids=None)`, `retrieve(model_name, top_k, vector, chunk_ids=None)`, `drop(model_name)`. One table per model with `chunk_id` + `vector` only; chunk content lives in SQL |
 | Embedding engine | `embedding/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`; `formats` when settings have `model_id`; `embed(texts, settings, model) -> list[list[float]]`; `vector_space(settings) -> str` when there is no `model_id`; `local` engines: see below |
 | Cross-encoder engine | `cross_encoder/engines/<name>.py` | same as an embedding engine (`name`, `EngineSettings`, `fields`, `formats`); `rerank(query, documents, settings, model) -> list[float]`: one relevance score per document, in order, higher = more relevant. No vector space; `local` engines: see below |
-| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`local`, and `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}` for engines that are not local (held in the pool during each call); `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3) |
+| Inference engine | `inference/engines/<name>.py` | `name`, `EngineSettings`, optional `fields`/`formats`/`local`, and `resources(settings, model) -> {"cpu", "vram_mb", "ram_mb"}` for engines that are not local (held in the pool during each call); `chat(messages, tools, settings, model, emit) -> ChatResult` (§6.3); a `local` engine gets its loaded model first, `chat(instance, messages, tools, settings, model, emit)`, and may live in a host process like any local engine |
 | Chunker | `chunker/extensions/<ext>.py` (`md.py` for `.md`) | `async def chunk(file, max_token) -> list[dict]`; each dict has `content`, `start_line`, `end_line` and optionally `start_row`, `end_row`, `token_count`, `meta` |
 | Task kind | `tasks/{extension}/*.py` | functions decorated with `@task(...)` (§7) |
 | Tool | `agents/tools/{extension}/<module>.py` | `tools = [...]` functions and/or classes; optional `ToolSettings` + `fields` (§6.1) |
@@ -280,7 +280,10 @@ a host process of its own: `load`, the operations and `unload` run there, so unl
 gives back all the memory (the CUDA context included), a crash or out-of-memory kill of
 the host raises `EngineProcessError` (`engine_crashed`) instead of taking the server
 down (the next call starts a new host), and the process can be killed. Operations of a
-hosted engine must take and return picklable values (no streaming callbacks yet).
+hosted engine must take and return picklable values, except an `Emitter` (the `emit` of
+`resolved.call(operation, *args, emit=...)`, passed last): the host gets a relay to it, so
+tokens stream to the server during the call and stopping the server's emitter turns the
+relay's `stopped` on. An `EngineError` raised in the host keeps its `code` and `retryable`.
 What happens when the last lease leaves, and how memory is shared, depends on the
 `smart-memory` preference (§7.5): off, the model is freed right away and nothing is
 accounted; on, it stays loaded, holding its memory in the pool, until that memory is
@@ -354,9 +357,12 @@ max_iter=20)` (one run per conversation at a time, `conversation_busy` otherwise
 1. build the agent runtime (system prompt, tools, hooks) and resolve its engine;
 2. for each step: run pending tool calls if any; else run the hooks, read the
    conversation, call the engine (`status: generating`), retrying retryable
-   `EngineError`s with exponential backoff (`status: retrying`, delay ≤ 8 s), holding
-   the engine's declared `resources` from the shared pool when it is not a local engine
-   (`status: waiting_resources`);
+   `EngineError`s with exponential backoff (`status: retrying`, delay ≤ 8 s). An API
+   engine holds its declared `resources` from the shared pool during the call; a local
+   engine is called through the residency (`resolved.call("chat", ..., emit=...)`) under
+   `acting_as("inference:<conversation id>", priority.INFERENCE)`, so its model is leased
+   for the conversation and only less urgent work gives way to it. Either way, waiting for
+   memory shows `status: waiting_resources` with what is missing (`needs`);
 3. tool calls → store a `tool-calling` message, run each tool, store
    `tool-response` messages (`meta.status` ok/error), continue;
 4. an answer → store an `assistant` message and finish (`done: completed`);

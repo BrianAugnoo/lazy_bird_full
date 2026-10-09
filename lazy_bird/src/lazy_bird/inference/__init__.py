@@ -5,8 +5,12 @@ shared part): ``chat(messages, tools, settings, model, emit) -> ChatResult``.
 ``messages`` are ``ChatMessage`` objects, ``tools`` OpenAI-style function
 definitions, ``emit`` an ``Emitter`` receiving tokens while they are generated
 (``emit.stopped`` asks the engine to stop). Engines raise ``EngineError`` with
-``retryable`` set. An engine may define ``resources(settings, model)`` (e.g. VRAM
-of a local model), held in the shared resource pool during each call.
+``retryable`` set. An API engine may define ``resources(settings, model)``, held in the
+shared resource pool during each call. A local engine (``local = True``) gets its loaded
+model first, ``chat(instance, messages, tools, settings, model, emit)``, through the
+residency like any local engine (``placements``, host process, see ``residency.py``); in a
+host process ``emit`` is a relay to the server's emitter (tokens and stop requests cross
+the process boundary).
 
 Agent configuration: ``Agent.meta`` holds either ``preset_inference_engine_id`` or
 ``inference_engine_id`` + ``inference_settings`` (validated by ``agent_meta``).
@@ -30,11 +34,13 @@ from typing import Any, Iterator, Literal
 from loguru import logger
 from pydantic import BaseModel, ValidationError, model_validator
 
+from lazy_bird import priority as priorities
 from lazy_bird.crud.engine import EngineFamily, ResolvedEngine
 from lazy_bird.errors import AppError, ConflictError, InvalidInputError, InvalidSettingsError, NotFoundError
 from lazy_bird.extension.settings import validation_messages
 from lazy_bird.inference.types import CallbackEmitter, ChatMessage, ChatResult, Emitter, EngineError, ToolCall, ToolOutput
 from lazy_bird.models.inference_engine import InferenceEngine, PresetInference
+from lazy_bird.residency import acting_as
 from lazy_bird.schemas.inference_engine import PresetInferenceOut
 from lazy_bird.schemas.message import MessageOut
 
@@ -241,8 +247,30 @@ class _Turn:
 
 
 @contextmanager
+def _serving(resolved: ResolvedEngine, turn: _Turn) -> Iterator[None]:
+    """What a call to the engine runs inside.
+
+    A local engine's model is the residency's: leased for this conversation, as urgent as
+    inference (less than a search, more than background tasks), waiting for its memory if
+    needed. An API engine holds what it declares (``resources``) from the pool.
+    """
+    holder = f"inference:{turn.conversation_id}"
+    if not resolved.local:
+        with _hold(resolved, holder, turn):
+            yield
+        return
+
+    def waiting(missing: dict[str, float]) -> None:
+        turn.status("waiting_resources", needs=missing)
+
+    with acting_as(holder, priorities.INFERENCE, on_wait=waiting):
+        yield
+
+
+@contextmanager
 def _hold(resolved: ResolvedEngine, holder: str, turn: _Turn) -> Iterator[None]:
-    estimate = None if resolved.local else getattr(resolved.module, "resources", None)  # local models are accounted by the residency
+    """Hold the resources an API engine declares, for the duration of a call."""
+    estimate = getattr(resolved.module, "resources", None)
     needs = {name: amount for name, amount in (estimate(resolved.settings, resolved.model) if estimate else {}).items() if amount > 0}
     if not needs:
         yield
@@ -264,8 +292,8 @@ def _call_engine(turn: _Turn, resolved: ResolvedEngine, messages: list[ChatMessa
     for attempt in range(retry + 1):
         try:
             turn.status("generating", attempt=attempt + 1)
-            with _hold(resolved, f"inference:{turn.conversation_id}", turn):
-                return resolved.module.chat(messages, tools, resolved.settings, resolved.model, turn.run)
+            with _serving(resolved, turn):
+                return resolved.call("chat", messages, tools, emit=turn.run)
         except EngineError as error:
             if not error.retryable or attempt == retry:
                 return turn.fail(error.code, error.message, {**error.details, "attempts": attempt + 1})
@@ -406,7 +434,8 @@ def complete(prompt: str, instructions: str | None = None, preset_id: int | None
     """One question, one answer, with an inference preset (the default one when omitted)."""
     resolved = engine_family.resolve(preset_id)
     messages = ([ChatMessage("system", instructions)] if instructions else []) + [ChatMessage("user", prompt)]
-    return resolved.module.chat(messages, [], resolved.settings, resolved.model, Emitter())
+    with acting_as(None, priorities.INFERENCE):  # a local model is leased like a chat's
+        return resolved.call("chat", messages, [], emit=Emitter())
 
 
 __all__ = [

@@ -5,17 +5,7 @@ isolated tasks). Each item says what is wrong today, where to look, and what "do
 means. Read `AGENTS.md` §5.3 (local engines) and §7.5 (smart memory) first. Remove an
 item in the commit that finishes it.
 
-## 1. Streaming in the engine host protocol
-
-- **Today**: operations of a hosted engine must take and return picklable values
-  (`engine_host.py`). A local inference engine needs `chat(..., emit)`: tokens streamed
-  through an `Emitter`, and `emit.stopped` read during generation.
-- **Done when**: the host protocol can send events (tokens, reasoning) during a call
-  and receive a stop request, the agentic loop calls a local engine through
-  `ResolvedEngine.call` under `acting_as(..., priority.INFERENCE)`, and `_hold` in
-  `inference/__init__.py` remains only for engines that are not local.
-
-## 2. Tests that start processes are slow
+## 1. Tests that start processes are slow
 
 - **Today**: the tests starting child processes (`tests/test_engine_host.py`,
   `tests/tasks/test_isolated_tasks.py`, parts of `tests/tasks/test_preemption.py`) take
@@ -25,7 +15,7 @@ item in the commit that finishes it.
   engine families and their modules).
 - **Constraint**: tests must stay isolated and deterministic (`AGENTS.md` §11).
 
-## 3. Reservations forget what a model was measured to take
+## 2. Reservations forget what a model was measured to take
 
 - **Today**: a hosted model holds what its process really takes once it is read (after it
   loads, after every call: `Residency._account`), but the next time the same model is
@@ -38,7 +28,7 @@ item in the commit that finishes it.
   and used as its reservation when it is bigger than the estimate, `_check_possible`
   included, with a test.
 
-## 4. A pass over every file commits five times per file
+## 3. A pass over every file commits five times per file
 
 - **Today**: `ensure_all()` (startup, a new default preset, a vector database switch)
   costs about 16 ms per file on Windows (300 chunked files: 5 s), almost all of it SQLite
