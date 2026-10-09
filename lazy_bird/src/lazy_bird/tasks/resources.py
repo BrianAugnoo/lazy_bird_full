@@ -32,9 +32,13 @@ __all__ = ["InsufficientResourcesError", "ResourcePool", "Resources", "detect_ca
 
 
 def _total_ram_mb() -> float:
+    # psutil, not os.sysconf: sysconf does not exist on Windows
     try:
-        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**2
-    except (ValueError, OSError, AttributeError):
+        import psutil
+
+        return psutil.virtual_memory().total / 1024**2
+    except Exception as error:
+        logger.warning("Could not detect the RAM, assuming 8 GB: {}", error)
         return 8192.0
 
 

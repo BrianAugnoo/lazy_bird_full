@@ -1,9 +1,10 @@
+import os
 import threading
 import time
 
-from lazy_bird.tasks import memory
+from lazy_bird.tasks import memory, resources
 from lazy_bird.tasks.memory import Candidate, choose_victims
-from lazy_bird.tasks.resources import ResourcePool
+from lazy_bird.tasks.resources import ResourcePool, detect_capacity
 
 
 def victims(deficit, *candidates):
@@ -69,6 +70,16 @@ def test_the_real_machine_reports_its_ram():
     free = memory.system_free()
 
     assert free["ram_mb"] > 0
+
+
+def test_the_ram_capacity_is_the_whole_ram_of_the_machine(monkeypatch):
+    import psutil
+
+    monkeypatch.delattr(os, "sysconf", raising=False)  # as on Windows
+    monkeypatch.setattr(resources, "_total_vram_mb", lambda: 0.0)  # torch is slow to import, and not the point
+    total = psutil.virtual_memory().total / 1024**2
+
+    assert detect_capacity()["ram_mb"] == round(total)
 
 
 # ------------------------------------------------------------ the pool, for real
