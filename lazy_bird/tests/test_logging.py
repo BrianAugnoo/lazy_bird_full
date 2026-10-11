@@ -148,3 +148,81 @@ def test_reading_the_logs_is_not_traced(tmp_path):
         logger.remove(sink_id)
 
     assert [event for event in _json_events(messages) if event["event"] == "function_call"] == []  # it would write while reading
+
+
+def test_a_log_file_that_cannot_be_rotated_keeps_growing_instead_of_failing_on_every_line(tmp_path, monkeypatch):
+    import io
+
+    import loguru._file_sink as file_sink
+
+    from lazy_bird.logging_config import SizeRotation
+
+    def locked(source, target):  # Windows, when another process has the file open
+        raise PermissionError(32, "The file is used by another process", source)
+
+    reports = io.StringIO()
+    monkeypatch.setattr(file_sink.os, "rename", locked)
+    monkeypatch.setattr("sys.stderr", reports)
+    monkeypatch.setattr("sys.__stderr__", reports)
+    log_file = tmp_path / "logs.txt"
+    sink_id = logger.add(log_file, format="{message}", rotation=SizeRotation(200), catch=True)
+    try:
+        for index in range(30):
+            logger.info(f"line {index:02d} " + "x" * 20)
+    finally:
+        logger.remove(sink_id)
+
+    written = log_file.read_text(encoding="utf-8")
+    assert reports.getvalue().count("--- Logging error in Loguru Handler") == 1  # one failure, not one per line
+    assert "could not be rotated" in reports.getvalue()
+    assert "line 29" in written and written.count("line ") == 29  # only the line of the failed attempt is lost
+
+
+def test_a_log_file_is_rotated_past_its_size(tmp_path):
+    from lazy_bird.logging_config import SizeRotation
+
+    sink_id = logger.add(tmp_path / "logs.txt", format="{message}", rotation=SizeRotation(200))
+    try:
+        for index in range(30):
+            logger.info(f"line {index:02d} " + "x" * 20)
+    finally:
+        logger.remove(sink_id)
+
+    assert len(list(tmp_path.glob("logs*.txt"))) > 1
+    assert all(path.stat().st_size <= 200 for path in tmp_path.glob("logs*.txt"))
+
+
+def test_loguru_reports_about_a_failing_sink_reach_the_terminal_without_being_logged(monkeypatch):
+    import io
+
+    from lazy_bird.logging_config import _StreamToLoguru
+
+    terminal, records = io.StringIO(), []
+    monkeypatch.setattr("sys.__stderr__", terminal)
+    sink_id = logger.add(records.append, format="{message}")
+    stream = _StreamToLoguru("ERROR")
+    try:
+        stream.write("--- Logging error in Loguru Handler #2 ---\nRecord was: {...}\nPermissionError: [WinError 32]\n--- End of logging error ---\n")
+        stream.write("an ordinary error line\n")
+    finally:
+        logger.remove(sink_id)
+
+    assert "PermissionError" in terminal.getvalue() and terminal.getvalue().count("\n") == 4
+    assert [record.strip() for record in records] == ["an ordinary error line"]
+
+
+def test_call_tracing_is_off_unless_asked(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    probe = "import sys, lazy_bird.main, lazy_bird.logging_config as logs; sys.__stdout__.write('tracing=' + str(logs.tracing_enabled()))"  # print() is logged
+    environment = {key: value for key, value in os.environ.items() if key != "LAZY_BIRD_TRACE_ALL"}
+    environment["PYTHONPATH"] = os.pathsep.join(path for path in sys.path if path)
+
+    def traced(**extra):
+        run = subprocess.run([sys.executable, "-c", probe], cwd=tmp_path, capture_output=True, text=True, check=True, env={**environment, **extra})
+        return run.stdout.rsplit("tracing=", 1)[1].strip()
+
+    assert traced() == "False"
+    assert traced(LAZY_BIRD_TRACE_ALL="1") == "True"

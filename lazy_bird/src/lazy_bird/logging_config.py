@@ -5,6 +5,7 @@ import json
 import logging
 import sys
 import threading
+import time
 from functools import wraps
 from pathlib import Path
 from time import perf_counter
@@ -134,11 +135,19 @@ class _InterceptHandler(logging.Handler):
         logger.opt(exception=record.exc_info, depth=6).log(level, record.getMessage())
 
 
+LOGURU_ERROR_START = "--- Logging error in Loguru Handler"
+LOGURU_ERROR_END = "--- End of logging error ---"
+
+
 class _StreamToLoguru:
     """File-like object turning ``print``/``sys.stderr`` output into log records.
 
     ``print("a", b)`` issues several ``write`` calls; text is buffered per thread
     until a newline so that one printed line becomes one log record.
+
+    Loguru reports a failing sink (e.g. a log file it cannot rotate) on ``sys.stderr``:
+    those reports go to the real terminal as they are. Logged, each of their lines
+    would fail the same way and be reported in turn.
     """
 
     def __init__(self, level: str) -> None:
@@ -152,7 +161,13 @@ class _StreamToLoguru:
         *lines, rest = buffered.split("\n")
         self._state.buffer = rest
         for line in lines:
-            self._emit(line)
+            if line.startswith(LOGURU_ERROR_START):
+                self._state.reporting = True
+            if getattr(self._state, "reporting", False):
+                sys.__stderr__.write(line + "\n")
+                self._state.reporting = not line.startswith(LOGURU_ERROR_END)
+            else:
+                self._emit(line)
         return len(message)
 
     def _emit(self, line: str) -> None:
@@ -169,6 +184,39 @@ class _StreamToLoguru:
         rest = getattr(self._state, "buffer", "")
         self._state.buffer = ""
         self._emit(rest)
+
+
+class SizeRotation:
+    """Rotate the log file once it would exceed ``max_bytes`` (a loguru ``rotation``).
+
+    On Windows a file another process has open cannot be renamed (a second server on the
+    same folder, a reader): loguru's rotation then fails, the line is lost and it tries
+    again on the next line, forever. When the file is still too big right after a
+    rotation was asked, the rename failed: the file keeps growing instead, and rotating
+    is tried again ``retry_seconds`` later.
+    """
+
+    def __init__(self, max_bytes: int, retry_seconds: float = 60.0, clock: Callable[[], float] = time.monotonic) -> None:
+        self.max_bytes = max_bytes
+        self.retry_seconds = retry_seconds
+        self._clock = clock
+        self._asked = False
+        self._paused_until = 0.0
+
+    def __call__(self, message: Any, file: Any) -> bool:
+        file.seek(0, 2)
+        if file.tell() + len(message) <= self.max_bytes:
+            self._asked = False
+            return False
+        now = self._clock()
+        if self._asked:  # asked for the previous line and the file is still as big: the rename failed
+            self._asked = False
+            self._paused_until = now + self.retry_seconds
+            sys.__stderr__.write(f"The log file {file.name} could not be rotated (another process has it open?): it grows past its limit, rotation is tried again in {self.retry_seconds:g} s.\n")
+        if now < self._paused_until:
+            return False
+        self._asked = True
+        return True
 
 
 def _console_sink(message: str) -> None:
@@ -215,7 +263,7 @@ def configure_logging(log_file: str | Path = "logs.txt", trace_all: bool = False
         colorize=True,
         diagnose=True,
         backtrace=True,
-        rotation="10 MB",
+        rotation=SizeRotation(10 * 1000 * 1000),  # 10 MB, like loguru's "10 MB"
         retention=5,
         encoding="utf-8",
         format=log_format,

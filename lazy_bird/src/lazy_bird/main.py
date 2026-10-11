@@ -6,8 +6,9 @@ import os
 
 from lazy_bird.logging_config import configure_logging
 
-# Tracing every lazy_bird call is very verbose; set LAZY_BIRD_TRACE_ALL=0 to disable it.
-TRACE_ALL_LAZY_BIRD = os.getenv("LAZY_BIRD_TRACE_ALL", "1") not in {"0", "false", "False"}
+# Tracing every lazy_bird call logs each call and its result: off unless LAZY_BIRD_TRACE_ALL=1
+# (for a debugging session; it can also be switched from the Logs page).
+TRACE_ALL_LAZY_BIRD = os.getenv("LAZY_BIRD_TRACE_ALL", "0").lower() in {"1", "true", "yes", "on"}
 configure_logging(trace_all=TRACE_ALL_LAZY_BIRD)
 
 from fastapi import FastAPI, Request

@@ -77,8 +77,10 @@ cd src/lazy_bird && uv run alembic upgrade head
 ```
 
 The server migrates the selected SQL database to the latest revision at startup.
-`LAZY_BIRD_TRACE_ALL=0` disables call tracing at startup (it can also be switched
-at runtime from the Logs page / `PUT /logs/tracing`).
+Call tracing (every lazy_bird call, its arguments and result, in the logs) is off by
+default: it writes megabytes per minute and slows the server down. Turn it on for a
+debugging session with `LAZY_BIRD_TRACE_ALL=1` at startup, or at runtime from the Logs
+page / `PUT /logs/tracing`.
 
 ### 2.3 Engineering principles
 
@@ -614,7 +616,11 @@ fallback to `cpu`.
   A search reads the file as it is when it starts and closes it at once: the server keeps
   appending while it is read, and Windows cannot rotate an open file. The logging and
   log-reading modules (`logging_config`, `log_*`, the logs endpoint) are never traced, or
-  reading the log would write to it faster than it is read.
+  reading the log would write to it faster than it is read. `logs.txt` rotates past 10 MB
+  (5 old files kept, `SizeRotation`); when it cannot be renamed (Windows: another process
+  has it open, e.g. a second server started in the same folder) it keeps growing and
+  rotation is retried a minute later, instead of failing on every line. Loguru's reports
+  about a failing sink go straight to the terminal, never back into the logs.
 
 ## 9. Data model and schema changes
 
