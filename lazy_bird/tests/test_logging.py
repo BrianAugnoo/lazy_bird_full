@@ -130,3 +130,21 @@ def test_printed_lines_become_single_log_records():
         logger.remove(sink_id)
 
     assert [message.strip() for message in messages] == ["value: 42", "pending"]
+
+
+def test_reading_the_logs_is_not_traced(tmp_path):
+    from lazy_bird.log_search import search_logs
+    from lazy_bird.logging_config import set_package_tracing
+
+    log_file = tmp_path / "logs.txt"
+    log_file.write_text("2026-10-01 21:53:00.000 | INFO     | MainProcess:1 | MainThread:1 | lazy_bird.main:health:1 | started\n", encoding="utf-8")
+    messages = []
+    sink_id = logger.add(messages.append, format="{message}")
+    set_package_tracing(True)
+    try:
+        search_logs("started", log_file=log_file)
+    finally:
+        set_package_tracing(False)
+        logger.remove(sink_id)
+
+    assert [event for event in _json_events(messages) if event["event"] == "function_call"] == []  # it would write while reading

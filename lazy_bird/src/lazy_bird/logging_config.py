@@ -56,9 +56,14 @@ def _function_arguments(frame: Any) -> dict[str, str]:
         return {"<error>": _safe_repr(exc)}
 
 
+# Never traced: the logging itself, and what reads the logs (tracing it would fill the log
+# with the reading of the log, faster than it can be read).
+UNTRACED_MODULES = ("lazy_bird.logging_config", "lazy_bird.log_", "lazy_bird.api.endpoints.logs")
+
+
 def _is_lazy_bird_frame(frame: Any) -> bool:
     module = frame.f_globals.get("__name__") or ""
-    return module.startswith("lazy_bird.") and module != "lazy_bird.logging_config"
+    return module.startswith("lazy_bird.") and not module.startswith(UNTRACED_MODULES)
 
 
 def _profile_function(frame: Any, event: str, argument: Any) -> None:

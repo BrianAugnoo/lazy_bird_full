@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from lazy_bird.log_parser import parse_log_file
+from lazy_bird.log_parser import iter_log_entries, parse_log_file
 from lazy_bird.log_search import LogSearchError, search_logs
 from lazy_bird.log_tools import main
 from lazy_bird.log_tree import trace_function_calls
@@ -62,3 +62,33 @@ def test_cli_exit_codes_and_json(capsys):
     assert main(["search", "nothing", "--log-file", str(FIXTURE)]) == 1
     assert main(["search", "--log-file", str(FIXTURE)]) == 2
     assert main(["search", "x", "--log-file", str(FIXTURE.with_name("missing.log"))]) == 3
+
+def test_reading_a_log_that_grows_meanwhile_ends_with_what_it_held(tmp_path):
+    log_file = tmp_path / "logs.txt"
+    log_file.write_bytes(FIXTURE.read_bytes())
+    entries = iter_log_entries(log_file)
+
+    first = next(entries)
+    with log_file.open("a", encoding="utf-8") as appending:  # what the server writes while its log is read
+        appending.write(FIXTURE.read_text(encoding="utf-8"))
+    rest = list(entries)
+
+    assert len([first, *rest]) == 9
+
+
+def test_a_log_being_read_can_be_rotated(tmp_path):
+    log_file = tmp_path / "logs.txt"
+    log_file.write_bytes(FIXTURE.read_bytes())
+    entries = iter_log_entries(log_file)
+    next(entries)
+
+    log_file.rename(tmp_path / "logs.1.txt")  # Windows refuses to rename a file that is open
+
+    assert len(list(entries)) == 8
+
+
+def test_windows_line_ends_are_read_like_plain_ones(tmp_path):
+    log_file = tmp_path / "logs.txt"
+    log_file.write_bytes(FIXTURE.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+
+    assert [entry.message for entry in parse_log_file(log_file)] == [entry.message for entry in parse_log_file(FIXTURE)]

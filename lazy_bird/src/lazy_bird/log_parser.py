@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -40,7 +42,7 @@ def _parse_header(line: str) -> tuple[datetime, str, str, str, str, str] | None:
     if match is None:
         return None
     try:
-        timestamp = datetime.strptime(match.group("timestamp"), "%Y-%m-%d %H:%M:%S.%f")
+        timestamp = datetime.fromisoformat(match.group("timestamp"))  # "2026-10-01 21:53:00.123"; strptime was half the reading time
     except ValueError:
         return None
     return (
@@ -83,24 +85,34 @@ def _entry_from_lines(start_line: int, lines: list[str]) -> LogEntry:
     )
 
 
-def iter_log_entries(log_file: Path) -> Iterator[LogEntry]:
-    """Yield log entries from a file without loading the complete file."""
-    current: list[str] = []
-    start_line = 1
+def _snapshot(log_file: Path) -> str:
+    """The file as it is now, read at once and closed.
+
+    The server keeps appending to its log while it is read (with call tracing, reading
+    a line can write more than one): reading to the end of the file would never end. And
+    on Windows an open file cannot be renamed, so the logger could not rotate it.
+    """
     try:
-        handle = log_file.open("r", encoding="utf-8", errors="replace")
+        with log_file.open("rb") as handle:
+            data = handle.read(os.fstat(handle.fileno()).st_size)
     except OSError as exc:
         raise LogParseError(f"Impossible de lire le fichier de logs: {log_file}: {exc}") from exc
+    return data.decode("utf-8", errors="replace")
 
-    with handle:
-        for line_number, line in enumerate(handle, start=1):
-            if _parse_header(line) is not None and current:
-                yield _entry_from_lines(start_line, current)
-                current = []
-                start_line = line_number
-            current.append(line)
-        if current:
+
+def iter_log_entries(log_file: Path) -> Iterator[LogEntry]:
+    """Yield the log entries the file holds when the iteration starts."""
+    current: list[str] = []
+    start_line = 1
+    lines = io.StringIO(_snapshot(log_file), newline=None)  # newline=None: Windows line ends become plain newlines
+    for line_number, line in enumerate(lines, start=1):
+        if _parse_header(line) is not None and current:
             yield _entry_from_lines(start_line, current)
+            current = []
+            start_line = line_number
+        current.append(line)
+    if current:
+        yield _entry_from_lines(start_line, current)
 
 
 def parse_log_file(log_file: Path) -> list[LogEntry]:

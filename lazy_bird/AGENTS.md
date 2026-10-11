@@ -611,6 +611,10 @@ fallback to `cpu`.
   `HuggingFace` key logs in to the Hub (again when replaced, out when deleted).
 - **Logs**: loguru to the console and `logs.txt` (in the server's working directory); `/logs/` searches entries (BM25 or
   regex, levels, time range), `/logs/trace` rebuilds call trees of traced functions.
+  A search reads the file as it is when it starts and closes it at once: the server keeps
+  appending while it is read, and Windows cannot rotate an open file. The logging and
+  log-reading modules (`logging_config`, `log_*`, the logs endpoint) are never traced, or
+  reading the log would write to it faster than it is read.
 
 ## 9. Data model and schema changes
 
@@ -683,7 +687,7 @@ schema with unknown ids / invalid bodies and checks the uniform error format.
   - `storage_root`, `upload_file_factory`, `model_cache` (temporary HF cache);
   - `fake_embedding`, `fake_local_embedding` (a local engine recording its `loads` / `unloads`, with `gpu_mb` / `cpu_mb` placements), `fake_inference` (scriptable `ChatResult`s, `.calls`) ;
   - `running_scheduler`, `wait_until`, `process_inline`;
-  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `isolated_database_config` (database choices saved in a temporary file), `unknown_system_memory`;
+  - autouse: `isolated_scheduler`, `isolated_residency`, `isolated_preferences` (default preferences), `isolated_database_config` (database choices saved in a temporary file), `isolated_log_file` (the Logs routes read an empty temporary file), `unknown_system_memory`;
   - `tests/hosting/`: an engine (`engine.py`) and task kinds (`tasks.py`) importable by name, for tests that need a child process (model hosts, isolated tasks).
 - Tests must be deterministic; never weaken or skip a failing test to get green.
 - Frontend tests: `cd web && npm test` (see `web/AGENTS.md` §17).

@@ -69,6 +69,17 @@ def isolated_database_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(database_module, "_config", None)
 
 
+@pytest.fixture(autouse=True)
+def isolated_log_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The Logs routes read an empty temporary file, never the developer's ``logs.txt``."""
+    from lazy_bird import logging_config
+
+    log_file = tmp_path / "logs.txt"
+    log_file.touch()
+    monkeypatch.setattr(logging_config, "LOG_FILE", log_file)
+    return log_file
+
+
 @pytest.fixture(scope="session")
 def migrated_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """One database migrated to head per test session; tests get a copy of it."""
