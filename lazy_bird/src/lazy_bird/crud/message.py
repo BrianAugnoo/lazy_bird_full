@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import delete as sql_delete
 from sqlmodel import select
 
 from lazy_bird.database import db
@@ -67,19 +68,17 @@ def delete_after(conversation_id: int, message_id: int) -> int:
         anchor = _row(session, message_id)
         if anchor.conversation_id != conversation_id:
             raise NotFoundError("Message", message_id)
-        rows = session.exec(select(MessageORM).where(MessageORM.conversation_id == conversation_id, MessageORM.id > message_id)).all()
-        for row in rows:
-            session.delete(row)
+        deleted = session.execute(sql_delete(MessageORM).where(MessageORM.conversation_id == conversation_id, MessageORM.id > message_id)).rowcount
         session.commit()
-        return len(rows)
+        return deleted
 
 
 def delete(message_id: int) -> None:
     """Delete the last message of its conversation."""
     with db() as session:
         message = _row(session, message_id)
-        last = session.exec(select(MessageORM).where(MessageORM.conversation_id == message.conversation_id).order_by(MessageORM.id.desc())).first()
-        if last.id != message.id:
+        last_id = session.exec(select(MessageORM.id).where(MessageORM.conversation_id == message.conversation_id).order_by(MessageORM.id.desc()).limit(1)).first()
+        if last_id != message.id:
             raise ConflictError("Only the last message can be deleted; rewind the conversation to remove several.", code="message_not_last")
         session.delete(message)
         session.commit()

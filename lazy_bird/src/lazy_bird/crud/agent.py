@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
 from lazy_bird.agents import agent_preset
@@ -122,7 +123,8 @@ def _descends(session, start: int, target: int) -> bool:
 
 def get_all() -> list[AgentOut]:
     with db() as session:
-        return [_out(agent) for agent in session.exec(select(AgentORM).order_by(AgentORM.id)).all()]
+        query = select(AgentORM).options(selectinload(AgentORM.sub_agents), selectinload(AgentORM.parent_agents)).order_by(AgentORM.id)
+        return [_out(agent) for agent in session.exec(query).all()]
 
 
 def get(agent_id: int) -> AgentOut:
@@ -140,7 +142,8 @@ def get_by_id(agent_id: int) -> AgentOut | None:
 def get_by_session(session_id: int) -> list[AgentOut]:
     with db() as session:
         _require_session(session, session_id)
-        agents = session.exec(select(AgentORM).where(AgentORM.session_id == session_id).order_by(AgentORM.id)).all()
+        query = select(AgentORM).options(selectinload(AgentORM.sub_agents), selectinload(AgentORM.parent_agents))
+        agents = session.exec(query.where(AgentORM.session_id == session_id).order_by(AgentORM.id)).all()
         return [_out(agent) for agent in agents]
 
 

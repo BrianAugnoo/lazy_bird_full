@@ -19,6 +19,8 @@ class Task(SQLModel, table=True):
             postgresql_where=text("status IN ('queued', 'running', 'paused')"),
         ),
         Index("ix_task_queue_order", "status", "priority", "position"),
+        Index("ix_task_status_position", "status", "position"),
+        Index("ix_task_status_finished", "status", "finished_at", "id"),
     )
 
     id: int | None = Field(default=None, primary_key=True)

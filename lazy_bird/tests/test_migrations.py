@@ -38,6 +38,36 @@ def test_models_match_the_migrated_schema(migrated_database):
         assert compare_metadata(context, SQLModel.metadata) == []
 
 
+def test_lookup_indexes_preserve_populated_rows_in_both_directions(migrated_database):
+    from sqlmodel import Session
+    from lazy_bird.models.agent import Agent, AgentHierarchy
+    from lazy_bird.models.conversation import Conversation
+    from lazy_bird.models.file import File
+    from lazy_bird.models.file_processing import FileProcessing
+    from lazy_bird.models.session import Session as SessionRow
+    from lazy_bird.models.task import Task
+
+    with Session(migrated_database.engine) as session:
+        session.add_all([SessionRow(id=1, title="s"), File(id=1, name="f", path="/f.md", extension=".md", size=1), Task(id=1, kind="k", title="queued")])
+        session.flush()
+        session.add_all([Agent(id=1, name="parent", session_id=1), Agent(id=2, name="child", session_id=1)])
+        session.flush()
+        session.add_all([AgentHierarchy(parent_id=1, child_id=2), Conversation(id=1, agent_id=1, title="chat"), FileProcessing(file_id=1, processor="chunking", task_id=1)])
+        session.commit()
+    tables = ("agent", "agenthierarchy", "conversation", "fileprocessing", "task")
+
+    def snapshot():
+        with migrated_database.engine.connect() as connection:
+            return {table: connection.execute(text(f"SELECT * FROM {table}")).all() for table in tables}
+
+    before = snapshot()
+    config = alembic_config(migrated_database.url)
+    command.downgrade(config, "e5b7c9d1f3a5")
+    assert snapshot() == before
+    command.upgrade(config, "head")
+    assert snapshot() == before
+
+
 def test_migrations_downgrade_to_base_and_upgrade_again(migrated_database):
     config = alembic_config(migrated_database.url)
     head_tables = _tables(migrated_database.engine)

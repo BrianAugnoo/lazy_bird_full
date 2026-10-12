@@ -651,6 +651,12 @@ ID filters are read in bounded batches. Search reads only chunk IDs and distance
 from LanceDB (exact search); existing vector tables are opened directly without
 listing the catalog on each operation.
 
+Conversation summaries select only the last message's role, agent lists load
+hierarchy links in batches, and task lists and scheduler readiness are ordered and
+limited/filtered in SQL. Finished-task pruning deletes in SQL without hydrating
+history. Relationship lookups, processing task references, and task position and
+completion lookups have indexes installed by the normal startup migration.
+
 **Changing the schema**: edit the model, generate a revision from `src/lazy_bird/`
 (`alembic revision --autogenerate`), review `upgrade()`/`downgrade()` so existing
 data is kept (use a single `sa.table()` per table in data migrations; SQLite needs

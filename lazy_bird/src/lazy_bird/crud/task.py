@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, update
+from sqlalchemy import case, delete as sql_delete, func, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -102,10 +102,14 @@ def list_tasks(statuses: list[str] | None = None, kind: str | None = None, limit
             query = query.where(Task.status.in_(statuses))
         if kind:
             query = query.where(Task.kind == kind)
-        rows = session.exec(query).all()
-    active = sorted((row for row in rows if row.status in ACTIVE_STATUSES), key=_queue_key)
-    finished = sorted((row for row in rows if row.status in TERMINAL_STATUSES), key=lambda row: row.finished_at or row.updated_at, reverse=True)
-    return [TaskOut.model_validate(row) for row in (active + finished)[:limit]]
+        active = session.exec(query.where(Task.status.in_(ACTIVE_STATUSES)).order_by(
+            case((Task.status == "running", 0), else_=1), Task.priority, Task.position, Task.id
+        ).limit(limit if limit >= 0 else None)).all()
+        remaining = limit - len(active) if limit >= 0 else None
+        finished = session.exec(query.where(Task.status.in_(TERMINAL_STATUSES)).order_by(
+            func.coalesce(Task.finished_at, Task.updated_at).desc(), Task.id
+        ).limit(remaining)).all() if remaining != 0 else []
+        return [TaskOut.model_validate(row) for row in (active + finished)[:limit]]
 
 
 def _queue_key(row: Task):
@@ -115,9 +119,9 @@ def _queue_key(row: Task):
 def ready(now: datetime) -> list[Task]:
     """Queued tasks whose scheduled time has come, in execution order."""
     with db() as session:
-        rows = session.exec(select(Task).where(Task.status == "queued")).all()
-    due = [row for row in rows if row.run_at is None or _aware(row.run_at) <= now]
-    return sorted(due, key=_queue_key)
+        return list(session.exec(select(Task).where(
+            Task.status == "queued", or_(Task.run_at.is_(None), Task.run_at <= _aware(now).astimezone(timezone.utc))
+        ).order_by(Task.priority, Task.position, Task.id)).all())
 
 
 def _aware(value: datetime) -> datetime:
@@ -293,18 +297,15 @@ def delete(task_id: int) -> None:
 
 def clear_finished() -> int:
     with db() as session:
-        rows = session.exec(select(Task).where(Task.status.in_(TERMINAL_STATUSES))).all()
-        for row in rows:
-            session.delete(row)
+        count = session.execute(sql_delete(Task).where(Task.status.in_(TERMINAL_STATUSES))).rowcount
         session.commit()
-        return len(rows)
+        return count
 
 
 def prune_finished(keep: int) -> int:
     """Delete the oldest finished tasks beyond the ``keep`` most recent ones."""
     with db() as session:
-        rows = session.exec(select(Task).where(Task.status.in_(TERMINAL_STATUSES)).order_by(Task.finished_at.desc(), Task.id.desc())).all()
-        for row in rows[keep:]:
-            session.delete(row)
+        expired = select(Task.id).where(Task.status.in_(TERMINAL_STATUSES)).order_by(Task.finished_at.desc(), Task.id.desc()).offset(keep)
+        count = session.execute(sql_delete(Task).where(Task.id.in_(expired)).execution_options(synchronize_session=False)).rowcount
         session.commit()
-        return max(0, len(rows) - keep)
+        return count

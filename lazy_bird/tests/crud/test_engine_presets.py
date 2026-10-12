@@ -214,12 +214,14 @@ def test_preset_names_are_unique(family):
         family.create_preset("same", engine_id(family, "plain"), {"label": "b"})
 
 
-def test_resolve_hands_the_model_and_settings_to_the_engine(family, crud_database):
+def test_resolve_hands_the_model_and_settings_to_the_engine(family, crud_database, sql_activity):
     model_id = add_model(crud_database)
     family.create_preset("good", engine_id(family, "good"), {"model_id": model_id, "size": 3})
+    sql_activity["statements"].clear()
 
     resolved = family.resolve()
 
+    assert len(sql_activity["statements"]) == 3  # preset, engine, model: each read once
     assert resolved.model.id == model_id
     assert resolved.settings.size == 3
     assert embed_texts(["ab", "abcd"], resolved) == [[2.0, 2.0, 2.0], [4.0, 4.0, 4.0]]

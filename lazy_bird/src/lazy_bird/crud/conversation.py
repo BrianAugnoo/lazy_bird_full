@@ -17,6 +17,7 @@ from lazy_bird.database import db
 from lazy_bird.errors import NotFoundError
 from lazy_bird.models.agent import Agent as AgentORM
 from lazy_bird.models.conversation import Conversation as ConversationORM
+from lazy_bird.models.message import Message as MessageORM
 from lazy_bird.schemas.conversation import ConversationDetail, ConversationOut
 from lazy_bird.schemas.message import MessageOut
 
@@ -40,11 +41,16 @@ def pending_tool_calls(messages: list[MessageOut]) -> list[dict]:
     return []
 
 
-def _out(row: ConversationORM, messages: list[MessageOut] | None = None) -> ConversationOut:
+def _out(row: ConversationORM, last_role: str | None) -> ConversationOut:
     from lazy_bird.inference import is_running
 
-    history = messages if messages is not None else message_crud.for_conversation(row.id)
-    return ConversationOut.model_validate(row).model_copy(update={"runnable": runnable(history), "running": is_running(row.id)})
+    return ConversationOut.model_validate(row).model_copy(update={"runnable": last_role in RUNNABLE_ROLES, "running": is_running(row.id)})
+
+
+def _summaries():
+    # The conversation list needs only the last role, never message bodies or metadata.
+    last_role = select(MessageORM.role).where(MessageORM.conversation_id == ConversationORM.id).order_by(MessageORM.id.desc()).limit(1).scalar_subquery()
+    return select(ConversationORM, last_role).order_by(ConversationORM.updated_at.desc())
 
 
 def _row(session, conversation_id: int) -> ConversationORM:
@@ -73,29 +79,35 @@ def create(agent_id: int, title: str | None = None) -> ConversationDetail:
 
 def get(conversation_id: int) -> ConversationOut:
     with db() as session:
-        return _out(_row(session, conversation_id))
+        found = session.exec(_summaries().where(ConversationORM.id == conversation_id)).first()
+        if found is None:
+            raise NotFoundError("Conversation", conversation_id)
+        return _out(*found)
 
 
 def detail(conversation_id: int) -> ConversationDetail:
     with db() as session:
         row = _row(session, conversation_id)
         messages = message_crud.for_conversation(conversation_id)
-        return ConversationDetail(**_out(row, messages).model_dump(), messages=messages)
+        return ConversationDetail(**_out(row, messages[-1].role if messages else None).model_dump(), messages=messages)
 
 
 def get_all(agent_id: int | None = None) -> list[ConversationOut]:
     with db() as session:
-        query = select(ConversationORM).order_by(ConversationORM.updated_at.desc())
+        query = _summaries()
         if agent_id is not None:
             if session.get(AgentORM, agent_id) is None:
                 raise NotFoundError("Agent", agent_id)
             query = query.where(ConversationORM.agent_id == agent_id)
-        return [_out(row) for row in session.exec(query).all()]
+        return [_out(row, role) for row, role in session.exec(query).all()]
 
 
 def latest(agent_id: int) -> ConversationOut | None:
-    conversations = get_all(agent_id)
-    return conversations[0] if conversations else None
+    with db() as session:
+        if session.get(AgentORM, agent_id) is None:
+            raise NotFoundError("Agent", agent_id)
+        found = session.exec(_summaries().where(ConversationORM.agent_id == agent_id).limit(1)).first()
+        return _out(*found) if found else None
 
 
 def rename(conversation_id: int, title: str) -> ConversationOut:
@@ -104,8 +116,7 @@ def rename(conversation_id: int, title: str) -> ConversationOut:
         row.title = title
         session.add(row)
         session.commit()
-        session.refresh(row)
-        return _out(row)
+    return get(conversation_id)
 
 
 def delete(conversation_id: int) -> None:

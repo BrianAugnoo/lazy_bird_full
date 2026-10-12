@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+from sqlalchemy import Index
 from sqlmodel import SQLModel, Field, Relationship
 
 if TYPE_CHECKING:
@@ -7,6 +8,8 @@ if TYPE_CHECKING:
     from lazy_bird.models.agent import Agent
 
 class Conversation(SQLModel, table=True):
+    __table_args__ = (Index("ix_conversation_agent_updated", "agent_id", "updated_at"),)
+
     id: int | None = Field(default=None, primary_key=True)
     agent_id: int = Field(foreign_key="agent.id")
     title: str
@@ -29,4 +32,3 @@ class Conversation(SQLModel, table=True):
     )
     # Relationship to agent
     agent: "Agent" = Relationship(back_populates="conversations")
-    

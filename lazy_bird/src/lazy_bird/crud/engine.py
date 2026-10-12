@@ -380,15 +380,22 @@ class EngineFamily:
 
     def resolve(self, preset_id: int | None = None) -> ResolvedEngine:
         """Return the callable engine of a preset (the default preset when ``preset_id`` is None)."""
-        if preset_id is None:
-            preset = self.default_preset()
-            if preset is None:
-                raise UnavailableError(
-                    f"No {self.label} preset exists yet. Create one to use {self.label}.",
-                    code=f"no_default_{self.kind}_preset",
-                )
-        else:
-            preset = self.preset(preset_id)
-        if not preset.valid:
-            raise InvalidSettingsError(preset.errors, message=f"{self.label.capitalize()} preset '{preset.name}' is invalid.")
-        return self.resolve_settings(getattr(preset, self.engine_fk), preset.kwargs, preset.id)
+        with db() as session:
+            preset = (
+                session.exec(select(self.preset_table).where(self.preset_table.default == True)).first()  # noqa: E712
+                if preset_id is None else self._preset_row(session, preset_id)
+            )
+        if preset is None:
+            raise UnavailableError(
+                f"No {self.label} preset exists yet. Create one to use {self.label}.",
+                code=f"no_default_{self.kind}_preset",
+            )
+        # Validation and resolution use the same engine/model read. Building a
+        # public preset first would validate (and scan its model's files) twice.
+        try:
+            return self.resolve_settings(getattr(preset, self.engine_fk), preset.kwargs, preset.id)
+        except InvalidSettingsError as error:
+            fields = error.fields
+        except (UnavailableError, NotFoundError) as error:
+            fields = {ROOT_ERROR_KEY: error.message}
+        raise InvalidSettingsError(fields, message=f"{self.label.capitalize()} preset '{preset.name}' is invalid.")

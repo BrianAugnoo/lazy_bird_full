@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 class AgentHierarchy(SQLModel, table=True):
     """Table d'association parent <-> enfant"""
     parent_id: int = Field(foreign_key="agent.id", primary_key=True)
-    child_id: int = Field(foreign_key="agent.id", primary_key=True)
+    child_id: int = Field(foreign_key="agent.id", primary_key=True, index=True)
 
 
 class Agent(SQLModel, table=True):
@@ -18,7 +18,7 @@ class Agent(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str
-    session_id: int = Field(foreign_key="session.id", nullable=False)
+    session_id: int = Field(foreign_key="session.id", nullable=False, index=True)
     description: str | None = Field(default=None)
     # Free text appended to the composed system prompt.
     instructions: str | None = Field(default=None)
