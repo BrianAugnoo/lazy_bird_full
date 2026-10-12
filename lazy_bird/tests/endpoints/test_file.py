@@ -48,6 +48,10 @@ def test_file_endpoint_returns_the_entire_file_by_id(client):
     assert response.content == b"\x00\x01complete"
     assert response.headers["content-type"] == "application/octet-stream"
     assert 'filename="archive.bin"' in response.headers["content-disposition"]
+    assert response.headers["content-disposition"].startswith("inline;")
+    partial = client.get(f"/files/{file_id}/full", headers={"Range": "bytes=2-5"})
+    assert partial.status_code == 206
+    assert partial.content == b"comp"
 
 
 def test_file_output_includes_its_chunk_count(client, crud_database):
@@ -151,3 +155,48 @@ def test_file_endpoint_rejects_parent_directory(client):
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "invalid_path"
+
+
+def test_deleting_multiple_files_batches_vectors_and_preserves_other_files(client, monkeypatch):
+    from pathlib import Path
+    from lazy_bird.crud import file_processing
+    from lazy_bird.models.file_processing import FileProcessing
+
+    files = client.post("/files/upload?dir=docs", files=[("files", (f"{name}.md", b"Text")) for name in "abc"]).json()
+    chunks = [chunk_crud.replace(file["id"], [{"content": file["name"], "start_line": 1, "end_line": 1}])[0] for file in files]
+    database.vector_create("org/model", [{"chunk_id": chunk.id, "vector": [1.0, 0.0]} for chunk in chunks])
+    with database.db() as session:
+        session.add_all([FileProcessing(file_id=file["id"], processor="chunking") for file in files])
+        session.commit()
+    calls = []
+    delete = database.vector_delete
+    monkeypatch.setattr(database, "vector_delete", lambda model, ids: calls.append((model, ids)) or delete(model, ids))
+
+    response = client.request("DELETE", "/files/", json=[files[0]["id"], files[1]["id"], files[0]["id"], 9999])
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"deleted": 2}
+    assert len(calls) == 1 and set(calls[0][1]) == {chunk.id for chunk in chunks[:2]}
+    assert database.vector_count("org/model") == 1
+    assert [item["id"] for item in client.get("/files/").json()] == [files[2]["id"]]
+    assert all(not Path(file["path"]).exists() for file in files[:2])
+    assert file_processing.rows_for([files[0]["id"]]) == {files[0]["id"]: []}
+    assert client.delete("/files/all").json() == {"deleted": 1}
+    assert database.vector_count("org/model") == 0
+
+
+def test_directory_moves_update_nested_paths_and_directory_delete_removes_chunks(client):
+    first = client.post("/files/upload?dir=docs", files={"files": ("a.md", b"first")}).json()[0]
+    second = client.post("/files/upload?dir=docs/nested", files={"files": ("b.md", b"second")}).json()[0]
+    for file in (first, second):
+        chunk_crud.replace(file["id"], [{"content": "text", "start_line": 1, "end_line": 1}])
+
+    moved = client.patch("/files/directory?source=docs&destination=archive")
+
+    assert moved.status_code == 200, moved.text
+    assert moved.json() == {"path": "archive"}
+    assert client.get(f"/files/{second['id']}").json()["relative_path"] == "archive/nested/b.md"
+    assert client.get(f"/files/{first['id']}/content").text == "first"
+    assert client.delete("/files/directory?path=archive").status_code == 200
+    assert client.get("/files/").json() == []
+    assert all(chunk_crud.for_file(file["id"]) == [] for file in (first, second))

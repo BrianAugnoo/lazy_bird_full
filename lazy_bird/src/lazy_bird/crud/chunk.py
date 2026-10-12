@@ -72,10 +72,18 @@ def counts(file_ids: list[int]) -> dict[int, int]:
 
 def delete_for_file(file_id: int) -> int:
     """Delete the chunks of a file and their vectors; return how many chunks were deleted."""
-    chunk_ids = ids_for_file(file_id)
+    return delete_for_files([file_id])
+
+
+def delete_for_files(file_ids: list[int]) -> int:
+    """Remove vectors once per model, then delete SQL chunks in bounded batches."""
+    chunk_ids = ids_for_files(file_ids)
+    if not chunk_ids:
+        return 0
     database.vector_delete_chunks(chunk_ids)
     with db() as session:
-        session.execute(delete(Chunk).where(Chunk.file_id == file_id))
+        for batch in batched(dict.fromkeys(file_ids), ID_BATCH_SIZE):
+            session.execute(delete(Chunk).where(Chunk.file_id.in_(batch)))
         session.commit()
     return len(chunk_ids)
 

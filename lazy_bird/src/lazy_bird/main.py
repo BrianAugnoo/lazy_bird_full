@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
+from functools import lru_cache
 
 import os
 
@@ -105,6 +106,7 @@ async def require_database(request: Request, call_next):
             (perf_counter() - started) * 1000,
         )
 
+@lru_cache(maxsize=1)
 def _version() -> str:
     from importlib.metadata import PackageNotFoundError, version
 
@@ -129,7 +131,7 @@ async def health():
 
 
 @app.get("/schemas", include_in_schema=False)
-async def schema_view(request: Request):
+def schema_view(request: Request):
     """The data model as a diagram (pan by dragging, zoom with the wheel)."""
     return templates.TemplateResponse(request=request, name="schemas.html", context={"diagram": get_schema_diagram()})
 

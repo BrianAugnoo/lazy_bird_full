@@ -147,6 +147,8 @@ def test_an_isolated_task_uses_the_models_of_the_server(sched, crud_database, mo
 
     done = wait_for(sched, embed.submit(engine_id=engine.id, settings={"gpu_mb": 300}).id, "completed")
 
+    # Completion is persisted before the worker's finally block releases its lease.
+    wait_until(lambda: all(model["idle"] for model in residency().describe()), message="the finished task kept its model lease")
     [model] = residency().describe()  # the model was loaded by the server, for the task, and stays there idle
     assert done.result["model_pid"] == model["pid"] != done.result["pid"]
     assert model["idle"] is True and model["needs"]["vram_mb"] == 300

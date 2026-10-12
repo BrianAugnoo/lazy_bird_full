@@ -51,6 +51,19 @@ def children():
     return psutil.Process().children()
 
 
+def test_busy_engine_stats_do_not_wait_for_the_running_call():
+    from types import SimpleNamespace
+    from lazy_bird.engine_host import EngineHost
+
+    class Connection:
+        def send(self, request):
+            pytest.fail("A busy engine must not receive a stats request")
+
+    host = EngineHost(SimpleNamespace(alive=True, memory_mb=lambda: 12.0, connection=Connection()), "test")
+    with host._exchange:
+        assert host.stats() == {"rss_mb": 12.0}
+
+
 def test_a_model_lives_in_a_process_of_its_own_and_ends_with_its_last_user(hosted_engine, tmp_path):
     marker = tmp_path / "unloaded"
     model = resolved(hosted_engine, marker=str(marker))

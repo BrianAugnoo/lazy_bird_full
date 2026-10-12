@@ -33,16 +33,16 @@ item in the commit that finishes it.
   and used as its reservation when it is bigger than the estimate, `_check_possible`
   included, with a test.
 
-## 3. A pass over every file commits five times per file
+## 3. Batch commits when queueing processing for many files
 
-- **Today**: `ensure_all()` (startup, a new default preset, a vector database switch)
-  costs about 16 ms per file on Windows (300 chunked files: 5 s), almost all of it SQLite
-  commits: `_ensure` commits twice, then the task is created (`task_crud.create`) and its
-  row linked (`on_task_change`, twice: once by `_queue`, once by the scheduler's event).
-  Profile of that pass: 1,500 commits (1.7 s), task creation and its event (2.3 s),
-  `on_task_change` (1.6 s). Resolving presets is no longer a factor (the last per-file
-  resolve, about 10%, is the memory check of `scheduler.submit` on `files.embed`).
+- **Today** (2026-10-12): the performance pass reduced a 300-file embedding queue
+  from 1,500 to 900 commits (three per file: wanted row, task, task link). On a
+  temporary Windows SQLite database with memory checks disabled, that pass fell
+  from 3.147 s to 2.644 s. Ensuring unchanged queued files now commits nothing.
+  `_ensure` reads processing rows once and duplicate status notifications do not
+  write. Task creation and its listener still own separate transactions.
 - **Where**: `crud/file_processing._ensure`, `_queue`, `on_task_change`; `Scheduler.submit`.
 - **Done when**: a pass over many files commits a bounded number of times per batch of
-  files (or a measured large speed-up), the `_queueing` guarantee and the task events
-  kept, with a test counting commits or a benchmark in the handoff.
+  files, preserving `_queueing`, task deduplication and publication only after commit,
+  with rollback and concurrent default-preset-change tests. Combining those transactions
+  needs a scheduler transaction contract; do not defer events while allowing tasks to start.

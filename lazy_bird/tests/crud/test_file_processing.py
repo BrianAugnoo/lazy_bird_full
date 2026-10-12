@@ -230,6 +230,20 @@ async def test_a_pass_over_every_file_resolves_the_default_preset_once_not_once_
 
 
 @pytest.mark.anyio
+async def test_ensuring_files_avoids_duplicate_and_noop_commits(crud_database, storage_root, fake_embedding, upload_file_factory, sql_activity):
+    files = [await upload(upload_file_factory, f"{name}.md", b"Text.") for name in "abcd"]
+    chunked(crud_database, files)
+    sql_activity["commits"].clear()
+
+    assert file_processing.ensure_all() == len(files)
+    assert len(sql_activity["commits"]) == 3 * len(files)  # wanted row, task, task link
+    sql_activity["commits"].clear()
+    assert file_processing.ensure_all() == 0
+    assert sql_activity["commits"] == []
+    assert all(states(file_id)[("embedding", "fake/space-4")] == "queued" for file_id in files)
+
+
+@pytest.mark.anyio
 async def test_a_new_default_during_a_pass_is_used_by_the_rest_of_the_pass(crud_database, storage_root, fake_embedding, upload_file_factory, monkeypatch):
     from lazy_bird.embedding import engine_family
 

@@ -26,6 +26,7 @@ import threading
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import batched
 from typing import Any, Callable, Hashable
 
 from sqlmodel import select
@@ -174,13 +175,14 @@ def to_out(row: FileProcessing, file: File) -> ProcessingOut:
 def rows_for(file_ids: list[int]) -> dict[int, list[FileProcessing]]:
     if not file_ids:
         return {}
-    with db() as session:
-        rows = session.exec(
-            select(FileProcessing).where(FileProcessing.file_id.in_(file_ids)).order_by(FileProcessing.processor, FileProcessing.target)
-        ).all()
     grouped: dict[int, list[FileProcessing]] = {file_id: [] for file_id in file_ids}
-    for row in rows:
-        grouped[row.file_id].append(row)
+    with db() as session:
+        for batch in batched(grouped, 500):
+            rows = session.exec(
+                select(FileProcessing).where(FileProcessing.file_id.in_(batch)).order_by(FileProcessing.processor, FileProcessing.target)
+            ).all()
+            for row in rows:
+                grouped[row.file_id].append(row)
     return grouped
 
 
@@ -260,16 +262,19 @@ def _ensure(file_id: int, automatic: bool, wanted: list[tuple[str, str]] | None)
             raise NotFoundError("File", file_id)
         if file.missing:
             return []
+        rows = {(row.processor, row.target): row for row in session.exec(select(FileProcessing).where(FileProcessing.file_id == file_id)).all()}
         for processor, target in requested:
             if processor not in PROCESSORS:
                 raise NotFoundError("Processor", processor)
-            row = _row(session, file_id, processor, target, create=True)
+            row = rows.get((processor, target))
+            if row is None:
+                row = FileProcessing(file_id=file_id, processor=processor, target=target)
+                rows[(processor, target)] = row
+                session.add(row)
             if effective_state(row, file) == "outdated":
                 row.state = "outdated"  # a done result whose hash no longer matches
                 _move(row, "pending")
                 session.add(row)
-        session.commit()
-        rows = {(row.processor, row.target): row for row in session.exec(select(FileProcessing).where(FileProcessing.file_id == file_id)).all()}
         ready = []
         for row in rows.values():
             if row.state != "pending":
@@ -285,8 +290,9 @@ def _ensure(file_id: int, automatic: bool, wanted: list[tuple[str, str]] | None)
                 if upstream is None or not is_current(upstream, file):
                     continue
             ready.append((row.processor, row.target))
-        session.commit()
         snapshot = File.model_validate(file)
+        if session.new or session.dirty:
+            session.commit()
     return [task for task in (_queue(snapshot, processor, target) for processor, target in ready) if task is not None]
 
 
@@ -462,11 +468,16 @@ def on_task_change(task: TaskOut) -> None:
         file = session.get(File, file_id)
         if file is None:
             return
-        row = _row(session, file_id, processor.name, target, create=True)
+        row = _row(session, file_id, processor.name, target)
+        if row is None:
+            row = FileProcessing(file_id=file_id, processor=processor.name, target=target)
+            session.add(row)
         changed = _apply(row, task, file)
-        session.add(row)
-        session.commit()
         state = row.state
+        # _queue also reports an already active task. Preserve field changes
+        # (e.g. a new task id), but do not commit an identical status twice.
+        if row in session.new or session.is_modified(row):
+            session.commit()
     if changed and task.status == "completed" and processor.name == "chunking":
         on_chunks_replaced(file_id)
     if changed and (task.status == "completed" or state in ("outdated", "unsupported")):

@@ -143,11 +143,12 @@ async def tasks_socket(websocket: WebSocket):
     events = current.events.subscribe()
     try:
         tasks = await run_in_threadpool(current.tasks)
+        resources = await run_in_threadpool(current.resources)
         await websocket.send_json(
             {
                 "type": "snapshot",
                 "tasks": [task.model_dump(mode="json") for task in tasks],
-                "resources": current.resources(),
+                "resources": resources,
                 "kinds": [kind.model_dump() for kind in _kinds()],
             }
         )

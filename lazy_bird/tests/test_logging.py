@@ -6,6 +6,18 @@ from loguru import logger
 from lazy_bird.logging_config import traced
 
 
+def test_console_logs_work_with_a_legacy_windows_encoding(monkeypatch):
+    import io
+    import sys
+    from lazy_bird.logging_config import _console_sink
+
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding="cp1252", newline="")
+    monkeypatch.setattr(sys, "__stdout__", stream)
+    _console_sink("A traceback branch: \u2502\n")
+    assert buffer.getvalue().decode("cp1252") == "A traceback branch: \\u2502\n"
+
+
 def _json_events(messages):
     events = []
     for message in messages:

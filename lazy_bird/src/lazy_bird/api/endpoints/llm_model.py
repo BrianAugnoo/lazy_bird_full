@@ -1,6 +1,8 @@
 import shutil
 
+import anyio
 from fastapi import APIRouter, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 
 import lazy_bird.crud.llm_model as LLMModel
 from lazy_bird.errors import ExternalServiceError, InvalidInputError
@@ -38,19 +40,19 @@ async def upload_model_file(name: str, path: str, request: Request):
 
     Upload every file of the model this way, then ``POST /models/uploads/{name}``.
     """
-    LLMModel.ensure_absent(_local_repo(name))
+    await run_in_threadpool(LLMModel.ensure_absent, _local_repo(name))
     try:
-        target = hf_cache.staged_path(name, path)
+        target = await run_in_threadpool(hf_cache.staged_path, name, path)
     except ValueError as error:
         raise InvalidInputError(str(error), code="invalid_path") from error
-    target.parent.mkdir(parents=True, exist_ok=True)
+    await run_in_threadpool(target.parent.mkdir, parents=True, exist_ok=True)
     partial = target.with_name(f".{target.name}.part")  # hidden: ignored if the upload stops midway
     size = 0
-    with partial.open("wb") as stream:
+    async with await anyio.open_file(partial, "wb") as stream:
         async for chunk in request.stream():
-            stream.write(chunk)
+            await stream.write(chunk)
             size += len(chunk)
-    partial.replace(target)
+    await run_in_threadpool(partial.replace, target)
     return UploadedFileOut(path=target.relative_to(hf_cache.staging_folder(name)).as_posix(), size=size)
 
 

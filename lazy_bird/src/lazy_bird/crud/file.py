@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
+from itertools import batched
 from pathlib import Path
 from typing import Callable
 import mimetypes
 
 from fastapi import UploadFile
+from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import delete
 from sqlmodel import select
 
 from lazy_bird.crud import chunk as chunk_crud
@@ -33,6 +36,8 @@ def _directory(relative: str) -> str:
 
 
 def _outputs(files: list[FileORM]) -> list[FileOut]:
+    if not files:
+        return []
     file_ids = [file.id for file in files]
     chunk_counts = chunk_crud.counts(file_ids)
     rows = file_processing.rows_for(file_ids)
@@ -74,10 +79,7 @@ def remove_directory(path: str) -> str:
     with db() as session:
         files = session.exec(select(FileORM)).all()
         affected = [file for file in files if Path(file.path).resolve().is_relative_to(directory_path)]
-        for file in affected:
-            chunk_crud.delete_for_file(file.id)
-            session.delete(file)
-        session.commit()
+    _delete_records(affected)
     return relative_path(str(directory_path))
 
 
@@ -90,10 +92,10 @@ def move_directory(source: str, destination: str) -> str:
         for file in files:
             file_path = Path(file.path)
             try:
-                relative_path = file_path.resolve().relative_to(source_root)
+                relative = file_path.resolve().relative_to(source_root)
             except ValueError:
                 continue
-            file.path = str(destination_root / relative_path)
+            file.path = str(destination_root / relative)
             session.add(file)
         session.commit()
     return relative_path(str(destination_root))
@@ -101,25 +103,30 @@ def move_directory(source: str, destination: str) -> str:
 
 async def creates(dir: str, files: list[UploadFile]):
     """Store uploaded files; a name already used in the directory gets a numbered suffix."""
+    return await run_in_threadpool(_store_uploads, dir, files)
+
+
+def _store_uploads(dir: str, files: list[UploadFile]) -> list[FileOut]:
+    """Disk copies, hashing, SQL and processing submission run outside the event loop."""
     created = []
     with db() as session:
         for file in files:
             try:
                 file_info = store_file(dir, file)
             finally:
-                await file.close()
+                file.file.close()
             record = FileORM(**file_info)
             _refresh_identity(record)
             session.add(record)
             session.flush()
             created.append(record)
-        session.commit()
         file_ids = [record.id for record in created]
+        session.commit()
 
     if auto_embedding_enabled():
         for file_id in file_ids:
             file_processing.ensure(file_id)
-    return [find(file_id) for file_id in file_ids]
+    return get_many(file_ids)
 
 
 def process(file_id: int) -> FileOut:
@@ -160,9 +167,10 @@ def _check_on_disk(file_id: int) -> str | None:
             return None
         found = fingerprint(file.path)
         if found is None:
-            file.missing = True
-            session.add(file)
-            session.commit()
+            if not file.missing:
+                file.missing = True
+                session.add(file)
+                session.commit()
             return "missing"
         was_missing = file.missing
         stored = (file.size, _as_utc(file.modified_at))
@@ -188,6 +196,14 @@ def find(id: int):
     with db() as session:
         file = session.get(FileORM, id)
     return _outputs([file])[0] if file is not None else None
+
+
+def get_many(ids: list[int]) -> list[FileOut]:
+    with db() as session:
+        found = {}
+        for batch in batched(dict.fromkeys(ids), 500):
+            found.update((file.id, file) for file in session.exec(select(FileORM).where(FileORM.id.in_(batch))).all())
+    return _outputs([found[id] for id in ids if id in found])
 
 
 def get_out(id: int) -> FileOut:
@@ -261,27 +277,27 @@ def update_file(id: int, name: str | None = None, dir: str | None = None) -> Fil
 
 def deletes(ids: list[int]) -> int:
     """Delete files (disk, chunks, vectors); unknown ids are ignored. Returns how many were deleted."""
-    deleted = 0
     with db() as session:
-        for id in ids:
-            file = session.get(FileORM, id)
-            if file:
-                chunk_crud.delete_for_file(file.id)
-                session.delete(file)
-                Path(file.path).unlink(missing_ok=True)
-                deleted += 1
-        session.commit()
-    return deleted
+        files = []
+        for batch in batched(dict.fromkeys(ids), 500):
+            files.extend(session.exec(select(FileORM).where(FileORM.id.in_(batch))).all())
+    return _delete_records(files)
 
 
-def delete_all():
+def _delete_records(files: list[FileORM]) -> int:
+    ids = [file.id for file in files]
+    chunk_crud.delete_for_files(ids)
     with db() as session:
-        statement = select(FileORM)
-        files = session.exec(statement).all()
         for file in files:
-            chunk_crud.delete_for_file(file.id)
-            session.delete(file)
-            path = Path(file.path)
-            if path.exists():
-                path.unlink()
-        session.commit()
+            Path(file.path).unlink(missing_ok=True)
+        for batch in batched(ids, 500):
+            session.execute(delete(FileORM).where(FileORM.id.in_(batch)))
+        if files:
+            session.commit()
+    return len(files)
+
+
+def delete_all() -> int:
+    with db() as session:
+        files = session.exec(select(FileORM)).all()
+    return _delete_records(list(files))

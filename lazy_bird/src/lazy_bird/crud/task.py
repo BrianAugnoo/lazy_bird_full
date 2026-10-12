@@ -38,9 +38,10 @@ def _row(session, task_id: int) -> Task:
 def _save(session, row: Task) -> TaskOut:
     row.updated_at = _now()
     session.add(row)
+    session.flush()
+    result = TaskOut.model_validate(row)
     session.commit()
-    session.refresh(row)
-    return TaskOut.model_validate(row)
+    return result
 
 
 def _queue_end(session) -> int:
@@ -81,12 +82,13 @@ def create(
         )
         session.add(row)
         try:
+            session.flush()
+            result = TaskOut.model_validate(row)
             session.commit()
         except IntegrityError:
             session.rollback()
             return TaskOut.model_validate(_active_with_key(session, dedupe_key)), False
-        session.refresh(row)
-        return TaskOut.model_validate(row), True
+        return result, True
 
 
 def get(task_id: int) -> TaskOut:

@@ -221,7 +221,11 @@ class SizeRotation:
 
 def _console_sink(message: str) -> None:
     try:
-        sys.__stdout__.write(message)
+        try:
+            sys.__stdout__.write(message)
+        except UnicodeEncodeError:
+            encoding = sys.__stdout__.encoding or "utf-8"
+            sys.__stdout__.write(message.encode(encoding, errors="backslashreplace").decode(encoding))
         sys.__stdout__.flush()
     except OSError:
         return None

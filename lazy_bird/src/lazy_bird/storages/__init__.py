@@ -93,21 +93,25 @@ def store_file(dir: str, file: UploadFile) -> dict:
         raise InvalidInputError("The file name is empty or invalid.", code="invalid_file_name")
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = free_path(target_dir / filename)
-    extension = target_path.suffix.lower()
-    file_name = target_path.stem
     size = file.size
 
     try:
-        with open(target_path, "wb") as f:
+        while True:
+            target_path = free_path(target_dir / filename)
+            try:
+                stream = target_path.open("xb")
+                break
+            except FileExistsError:
+                continue  # Another upload reserved the same free name.
+        with stream as f:
             shutil.copyfileobj(file.file, f)
     except Exception as e:
         raise StorageError(f"Failed to store file {filename}: {e}") from e
 
     return {
-        "name": file_name,
+        "name": target_path.stem,
         "path": str(target_path),
-        "extension": extension,
+        "extension": target_path.suffix.lower(),
         "size": size
     }
 

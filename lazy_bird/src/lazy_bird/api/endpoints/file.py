@@ -20,7 +20,7 @@ class DeletedOut(BaseModel):
 
 @router.post("/upload", response_model=list[FileOut])
 async def upload_files(dir: str = "", files: list[UploadFile] = File(...)):
-    """Store files in ``dir`` (relative to the storage). A file with the same name is replaced."""
+    """Store files in ``dir`` (relative to the storage); duplicate names get a numbered suffix."""
     return await FileCrud.creates(dir, files)
 
 
@@ -66,7 +66,7 @@ def delete_files(ids: list[int]):
 
 @router.delete("/all", response_model=DeletedOut)
 def delete_all_files():
-    return DeletedOut(deleted=FileCrud.deletes([file.id for file in FileCrud.get_all()]))
+    return DeletedOut(deleted=FileCrud.delete_all())
 
 
 @router.get("/{file_id}", response_model=FileOut)
@@ -88,11 +88,12 @@ def update_file_content(file_id: int, payload: FileContentIn):
 @router.get("/{file_id}/full")
 def get_full_file(file_id: int):
     """The raw bytes of a file, to display it inline."""
-    content, filename, media_type = FileCrud.full(file_id)
-    return Response(
-        content=content,
+    path, filename, media_type = FileCrud.download_info(file_id)
+    return FileResponse(
+        path,
+        filename=filename,
         media_type=media_type or "application/octet-stream",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        content_disposition_type="inline",
     )
 
 

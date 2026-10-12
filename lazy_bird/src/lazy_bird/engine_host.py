@@ -120,12 +120,10 @@ class EngineHost:
         if not self.alive:
             return None
         used = {"rss_mb": self._child.memory_mb() or 0.0}
-        if self._exchange.acquire(blocking=False):
-            self._exchange.release()
-            try:
-                used.update(self._ask(("stats",), timeout=5))
-            except EngineProcessError:
-                pass
+        try:
+            used.update(self._ask(("stats",), timeout=5, blocking=False) or {})
+        except EngineProcessError:
+            pass
         return used
 
     def stop(self) -> None:
@@ -145,9 +143,13 @@ class EngineHost:
         """End the process now. A call in progress fails; the memory of the process is returned to the system."""
         self._child.kill()
 
-    def _ask(self, request: tuple, timeout: float | None = None, emit: Any = None) -> Any:
+    def _ask(self, request: tuple, timeout: float | None = None, emit: Any = None, *, blocking: bool = True) -> Any:
         connection = self._child.connection
-        with self._exchange:
+        # Stats must acquire and use the same lock in one step: probing and
+        # releasing it first lets a long model call slip in before the request.
+        if not self._exchange.acquire(blocking=blocking):
+            return None
+        try:
             try:
                 connection.send(request)
                 stop_sent = False
@@ -180,6 +182,8 @@ class EngineHost:
                     code="engine_crashed",
                     details={"exit_code": code},
                 ) from None
+        finally:
+            self._exchange.release()
         if status == "error":
             raise _remote_error(value)
         return value

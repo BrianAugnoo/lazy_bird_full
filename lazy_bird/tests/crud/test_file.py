@@ -79,3 +79,32 @@ def test_find_returns_none_for_unknown_id(crud_database):
 
 def test_get_all_returns_empty_list(crud_database):
     assert file_crud.get_all() == []
+
+
+@pytest.mark.anyio
+async def test_upload_disk_work_does_not_block_the_event_loop(crud_database, storage_root, upload_file_factory, monkeypatch):
+    import asyncio
+    import threading
+
+    loop = asyncio.get_running_loop()
+    real_store = file_crud.store_file
+
+    def store(directory, file):
+        responded = threading.Event()
+        loop.call_soon_threadsafe(responded.set)
+        assert responded.wait(2), "Upload disk work blocked the server event loop"
+        return real_store(directory, file)
+
+    monkeypatch.setattr(file_crud, "store_file", store)
+    [created] = await file_crud.creates("docs", [upload_file_factory("note.md", b"Text")])
+    assert created.name == "note"
+
+
+@pytest.mark.anyio
+async def test_unchanged_missing_files_are_not_written_on_every_scan(crud_database, storage_root, upload_file_factory, sql_activity):
+    [created] = await file_crud.creates("docs", [upload_file_factory("note.md", b"Text")])
+    Path(created.path).unlink()
+    assert file_crud.detect_changes()["missing"] == [created.id]
+    sql_activity["commits"].clear()
+    assert file_crud.detect_changes()["missing"] == [created.id]
+    assert sql_activity["commits"] == []

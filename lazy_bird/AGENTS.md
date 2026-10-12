@@ -391,6 +391,10 @@ connection, then `message`, `token`, `reasoning`, `tool_start`, `status`,
 without streaming (`POST /conversations/{id}/run`, `/stop`). `rewind` deletes the
 messages after one (edit and regenerate).
 
+Disk-backed uploads and task resource snapshots run their blocking work outside
+the ASGI event loop. Engine-host memory snapshots skip a busy connection using a
+single nonblocking lock acquisition, so monitoring cannot queue behind inference.
+
 ## 7. Background tasks (`tasks/`)
 
 ### 7.1 Declaring a task
@@ -512,6 +516,10 @@ With `auto-embedding.enable` (default), every file is chunked and embedded with 
 default preset automatically. The API summarizes rows into one file `state`:
 `missing`, `processing`, `error`, `outdated`, `pending`, `unsupported`, `ready`, `new`.
 
+An ensure pass reads each file's processing rows once and commits only changes;
+the scheduler's queued event and the explicit task link do not write the same
+state twice. The per-file queueing lock and status events remain authoritative.
+
 ### 7.5 Smart memory (`residency.py`, `tasks/memory.py`, `tasks/scheduler.py`)
 
 The `smart-memory` preference section decides how much the machine is supervised:
@@ -579,6 +587,11 @@ fallback to `cpu`.
 - **Files**: uploads go to `storages/uploads/{dir}/`; a name already taken in the
   folder gets a numbered suffix (`notes (1).md`). Folders can be created, renamed,
   moved and deleted; text content can be read and edited (`not_text` for binary).
+  Upload copies, hashing and SQL run in a worker thread, and destination names are
+  reserved exclusively so simultaneous uploads cannot overwrite each other.
+  Bulk deletion removes vectors once per model and batches SQL deletes. Repeated
+  scans do not rewrite files already known to be missing.
+  Inline raw-file responses stream from disk, including byte-range requests.
 - **Models** (`llmmodel`): the Hugging Face cache (`~/.cache/huggingface/hub`) is the
   source of truth. Downloads (`models.download`, optionally only some weight files,
   e.g. one GGUF quantization) and uploads are tasks. An upload works from any
