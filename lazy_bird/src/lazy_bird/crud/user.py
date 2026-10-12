@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlmodel import select
 
+from lazy_bird.crud import profile as profile_crud
 from lazy_bird.database import db
 from lazy_bird.errors import InvalidInputError, NotFoundError
 from lazy_bird.models.user import User as UserORM
@@ -32,6 +33,8 @@ def create(payload: UserIn) -> UserOut:
     with db() as session:
         created = UserORM(**payload.model_dump())
         session.add(created)
+        session.flush()
+        profile_crud.ensure(session)
         session.commit()
         session.refresh(created)
         return UserOut.model_validate(created)
@@ -54,5 +57,7 @@ def update(user_id: int, changes: dict[str, Any]) -> UserOut:
 
 def delete(user_id: int) -> None:
     with db() as session:
-        session.delete(_row(session, user_id))
+        found = _row(session, user_id)
+        profile_crud.release(session, user_id)
+        session.delete(found)
         session.commit()

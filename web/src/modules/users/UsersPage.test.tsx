@@ -19,6 +19,8 @@ const ada: UserOut = {
   updated_at: '2026-01-01T00:00:00Z',
 };
 
+const active = (user: UserOut) => ({ user_id: user.id, user });
+
 const renderPage = () =>
   render(
     <ToastProvider>
@@ -32,7 +34,7 @@ describe('UsersPage', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('lists the users with their profession and language', async () => {
-    mockApi({ 'GET /users/': [ada] });
+    mockApi({ 'GET /users/': [ada], 'GET /profile/': active(ada) });
     renderPage();
 
     expect(await screen.findByText('Ada')).toBeTruthy();
@@ -41,14 +43,14 @@ describe('UsersPage', () => {
   });
 
   it('says when there is no user yet', async () => {
-    mockApi({ 'GET /users/': [] });
+    mockApi({ 'GET /users/': [], 'GET /profile/': { user_id: null, user: null } });
     renderPage();
 
     expect(await screen.findByText('No user yet.')).toBeTruthy();
   });
 
   it('adds a user, leaving empty fields out', async () => {
-    const sent = mockApi({ 'GET /users/': [], 'POST /users/': { ...ada, id: 2, name: 'Bob' } });
+    const sent = mockApi({ 'GET /users/': [], 'GET /profile/': { user_id: null, user: null }, 'POST /users/': { ...ada, id: 2, name: 'Bob' } });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /add a user/i }));
 
@@ -63,7 +65,7 @@ describe('UsersPage', () => {
   });
 
   it('collects ranked languages and age when adding a user', async () => {
-    const sent = mockApi({ 'GET /users/': [], 'POST /users/': { ...ada, id: 2 } });
+    const sent = mockApi({ 'GET /users/': [], 'GET /profile/': { user_id: null, user: null }, 'POST /users/': { ...ada, id: 2 } });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /add a user/i }));
 
@@ -83,7 +85,7 @@ describe('UsersPage', () => {
   });
 
   it('edits a user by sending only what changed', async () => {
-    const sent = mockApi({ 'GET /users/': [ada], 'PATCH /users/1': { ...ada, profession: 'Mathematician' } });
+    const sent = mockApi({ 'GET /users/': [ada], 'GET /profile/': active(ada), 'PATCH /users/1': { ...ada, profession: 'Mathematician' } });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
 
@@ -109,11 +111,49 @@ describe('UsersPage', () => {
   });
 
   it('deletes a user after confirmation', async () => {
-    const sent = mockApi({ 'GET /users/': [ada], 'DELETE /users/1': undefined });
+    const sent = mockApi({ 'GET /users/': [ada], 'GET /profile/': active(ada), 'DELETE /users/1': undefined });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Delete Ada' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(sent('DELETE /users/1')).toHaveLength(1));
+  });
+
+  it('marks the active user and offers to switch to the others', async () => {
+    const bob = { ...ada, id: 2, name: 'Bob' };
+    mockApi({ 'GET /users/': [ada, bob], 'GET /profile/': active(ada) });
+    renderPage();
+
+    expect(await screen.findByText('Bob')).toBeTruthy();
+    expect(screen.getAllByText('Active')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Make Ada active' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Make Bob active' })).toBeTruthy();
+  });
+
+  it('switches the active user', async () => {
+    const bob = { ...ada, id: 2, name: 'Bob' };
+    let current = ada;
+    const sent = mockApi({
+      'GET /users/': [ada, bob],
+      'GET /profile/': () => active(current),
+      'PUT /profile/': (body: unknown) => {
+        current = (body as { user_id: number }).user_id === 2 ? bob : ada;
+        return active(current);
+      },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Make Bob active' }));
+
+    await waitFor(() => expect(sent('PUT /profile/')).toEqual([{ user_id: 2 }]));
+    expect(await screen.findByRole('button', { name: 'Make Ada active' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Make Bob active' })).toBeNull();
+  });
+
+  it('offers no switch when there is a single user', async () => {
+    mockApi({ 'GET /users/': [ada], 'GET /profile/': active(ada) });
+    renderPage();
+
+    expect(await screen.findByText('Active')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /make .* active/i })).toBeNull();
   });
 });

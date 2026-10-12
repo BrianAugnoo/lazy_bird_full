@@ -9,6 +9,7 @@ import type {
   Preferences,
   PreferencesForm,
   PreferencesUpdateOut,
+  ProfileOut,
   UserIn,
   UserOut,
   VectorTable,
@@ -31,6 +32,11 @@ export const users = {
   create: (user: UserIn) => request<UserOut>('/users/', { method: 'POST', body: json(user) }),
   update: (id: number, changes: Partial<UserIn>) => request<UserOut>(`/users/${id}`, { method: 'PATCH', body: json(changes) }),
   remove: (id: number) => request<void>(`/users/${id}`, { method: 'DELETE' }),
+};
+
+export const profile = {
+  get: () => request<ProfileOut>('/profile/'),
+  switchTo: (userId: number) => request<ProfileOut>('/profile/', { method: 'PUT', body: json({ user_id: userId }) }),
 };
 
 export const preferences = {

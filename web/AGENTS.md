@@ -208,7 +208,7 @@ by side / preview, text).
 | --- | --- | --- |
 | Chat (`chat`) | `modules/chat` | `/sessions/*` (incl. `from-preset`), `/agents/*` (incl. `from-preset`, `/{id}/tools`), `/conversations/*` (incl. `rewind`, `stop`), `/messages/*`, `WS /ws/conversations/{id}`, `/session-presets/`, `/agent-presets/`, tools/hooks/skills/instructions lists, inference presets/engines |
 | Files (`files`) | `modules/files` | `/files/*` (upload, directories, directory CRUD, content, full, download, process, processing, scan, all), `/files/{id}/chunks`, file events of `/ws/tasks` |
-| Users (`users`) | `modules/users` | `/users/*` (list, create, partial update, delete; edited in a drawer: languages are an ordered list moved with arrows; the backend's `meta` is not shown or sent) |
+| Users (`users`) | `modules/users` | `/users/*` and `/profile/` (list, create, partial update, delete; the active user is marked and any other can be made active; edited in a drawer: languages are an ordered list moved with arrows; the backend's `meta` is not shown or sent) |
 | Search (`search`) | `modules/search` | `POST /search/` (embedding only, or reranking with `rerank`, `cross_encoder_preset_id`, `top_n`), embedding and cross-encoder presets, files |
 | Tools, Hooks (`tools`, `hooks`) | `modules/tools` | `/tools/*`, `/hooks/*` (list, reload, settings per module file) |
 | Skills (`skills`) | `modules/skills` | `/skills/*` (incl. resource files) |

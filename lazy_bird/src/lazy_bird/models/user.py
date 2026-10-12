@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Column, JSON
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
+
+if TYPE_CHECKING:
+    from lazy_bird.models.profile import Profile
 
 
 class User(SQLModel, table=True):
@@ -16,3 +20,6 @@ class User(SQLModel, table=True):
     meta: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # The profile, when this is the user the agents currently work for.
+    profile: Optional["Profile"] = Relationship(back_populates="user", sa_relationship_kwargs={"uselist": False})

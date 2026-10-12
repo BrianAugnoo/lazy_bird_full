@@ -41,6 +41,12 @@ export interface UserOut {
   updated_at: string;
 }
 
+/** The user the agents currently work for; `null` until a user exists. */
+export interface ProfileOut {
+  user_id: number | null;
+  user: UserOut | null;
+}
+
 /** What the user form edits; an empty optional field is sent as `null`. */
 export interface UserIn {
   name: string;

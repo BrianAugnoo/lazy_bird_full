@@ -655,6 +655,7 @@ Tables (see the live diagram at `/schemas`):
 | `conversation` | title, timestamps | `agent_id` → `message` |
 | `message` | role, content (text), meta | `conversation_id` |
 | `apikey` | name, key | |
+| `profile` | `user_id`: at most one row (`id = 1`, a CHECK constraint), the user the agents work for. It exists as soon as a user does, on the first user added, moves to the first remaining user when its user is deleted, and is gone with the last user (`crud/profile.py`; nothing reads it yet) | `user_id` (has one `user`) |
 | `user` | name, description, profession, email, `age`, `languages` (JSON list, best mastered first, no blanks or repeats), `meta` (JSON object for the program's own use: served by the API, never shown in the interface), timestamps: the people agents work for (nothing reads it yet: no login, no link to sessions) | |
 
 Vectors are not in SQL: each vector table (one per model) stores `chunk_id` +
@@ -713,7 +714,7 @@ checks that models match the migrated schema and that downgrade/upgrade works).
 Routers (`api/endpoints/`): `files`, `chunks`, `search`, `models` (+ uploads, hub
 status, login, files), `embedding-engines`/`embedding-presets`, `cross-encoder-engines`/`cross-encoder-presets`, `inference-engines`/
 `inference-presets` (+ `/inference/complete`), `tasks` (+ `/ws/tasks`), `databases`,
-`api-keys`, `users`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
+`api-keys`, `users`, `profile`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
 `instructions`, `agent-presets`, `session-presets`, `sessions`, `agents`,
 `conversations` (+ `/ws/conversations/{id}`), `messages`. Every feature is reachable
 from the web interface; when you add an endpoint, add its screen and update

@@ -237,3 +237,33 @@ def test_user_migration_turns_the_single_language_into_a_ranked_list(tmp_path):
 
     assert upgraded == {"Ada": (["French"], None, None), "Bob": ([], None, None)}
     assert restored == {"Ada": "French", "Bob": None}
+
+
+def test_profile_migration_gives_the_first_existing_user_the_profile(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "profile.db", "b8d2f4a6c0e1")
+    engine = create_engine(db_url)
+    with engine.begin() as connection:
+        for name in ("Ada", "Bob"):
+            connection.execute(
+                text("INSERT INTO user (name, languages, created_at, updated_at) VALUES (:name, '[]', '2026-01-01', '2026-01-01')"),
+                {"name": name},
+            )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        profiles = connection.execute(text("SELECT id, user_id FROM profile")).all()
+        users = connection.execute(text("SELECT id FROM user ORDER BY id")).scalars().all()
+    engine.dispose()
+    command.downgrade(config, "b8d2f4a6c0e1")
+
+    assert profiles == [(1, users[0])]
+
+
+def test_profile_migration_without_users_creates_no_profile(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "no_profile.db")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM profile")).scalar_one() == 0
+    engine.dispose()

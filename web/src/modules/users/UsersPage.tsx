@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ApiError } from '@/api/client';
-import { users } from '@/api/endpoints/system';
+import { profile, users } from '@/api/endpoints/system';
 import type { UserOut } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { AsyncState } from '@/ui/AsyncState';
@@ -98,14 +98,27 @@ export function UsersPage() {
   const toast = useToast();
   const dialogs = useDialogs();
   const list = useResource(users.list, []);
+  const current = useResource(profile.get, []);
+  const activeId = current.data?.user_id ?? null;
   const [editing, setEditing] = useState<{ user: UserOut | null } | null>(null);
 
   const remove = async (user: UserOut) => {
-    if (!(await dialogs.confirm({ title: `Delete ${user.name}?`, confirmLabel: 'Delete', danger: true }))) return;
+    const message = user.id === activeId && (list.data?.length ?? 0) > 1 ? 'This is the active user: the first remaining user becomes active.' : undefined;
+    if (!(await dialogs.confirm({ title: `Delete ${user.name}?`, message, confirmLabel: 'Delete', danger: true }))) return;
     try {
       await users.remove(user.id);
       toast.show('User deleted');
-      await list.reload();
+      await Promise.all([list.reload(), current.reload()]);
+    } catch (reason) {
+      toast.error(reason);
+    }
+  };
+
+  const makeActive = async (user: UserOut) => {
+    try {
+      await profile.switchTo(user.id);
+      toast.show(`${user.name} is now the active user`);
+      await current.reload();
     } catch (reason) {
       toast.error(reason);
     }
@@ -115,7 +128,7 @@ export function UsersPage() {
     <>
       <PageHeader
         title="Users"
-        description="The people agents work for: who they are and what they do."
+        description="The people agents work for. One of them is the active user."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setEditing({ user: null })}>
             <Icon name="plus" /> Add a user
@@ -130,11 +143,17 @@ export function UsersPage() {
                 <div className="list-row-main">
                   <div className="list-row-title">
                     <Icon name="user" size={16} /> {user.name}
+                    {user.id === activeId && <span className="chip chip-accent">Active</span>}
                   </div>
                   <div className="list-row-meta">{[user.profession, user.age === null ? null : `${user.age} years old`, user.languages.join(', '), user.email].filter(Boolean).join(' · ') || 'No details yet'}</div>
                   {user.description && <div className="list-row-meta">{user.description}</div>}
                 </div>
                 <div className="list-row-actions">
+                  {activeId !== null && user.id !== activeId && (
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => void makeActive(user)} aria-label={`Make ${user.name} active`}>
+                      Make active
+                    </button>
+                  )}
                   <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing({ user })}>
                     Edit
                   </button>
@@ -153,7 +172,7 @@ export function UsersPage() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
-            void list.reload();
+            void Promise.all([list.reload(), current.reload()]);
           }}
         />
       )}
