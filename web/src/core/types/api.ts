@@ -25,6 +25,32 @@ export interface APIKeyOut {
   name: string;
 }
 
+// ------------------------------------------------------------------- users
+export interface UserOut {
+  id: number;
+  name: string;
+  description: string | null;
+  profession: string | null;
+  email: string | null;
+  age: number | null;
+  /** Spoken languages, the best mastered first. */
+  languages: string[];
+  /** Set by the program, never shown or edited in the interface. */
+  meta: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the user form edits; an empty optional field is sent as `null`. */
+export interface UserIn {
+  name: string;
+  description: string | null;
+  profession: string | null;
+  email: string | null;
+  age: number | null;
+  languages: string[];
+}
+
 // ------------------------------------------------------------------ models
 export interface LLMModel {
   id: number;

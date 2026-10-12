@@ -59,7 +59,8 @@ lazy_bird_full/
 6. **Fix what you find.** Inconsistencies, bad practices and bugs met on the way are
    fixed without asking (with a test), and mentioned in the handoff.
 7. **Every schema change has a migration** (Alembic revision preserving data), or a
-   documented reset procedure when data cannot be converted (see §9).
+   documented reset procedure when data cannot be converted (see §9). A revision that
+   may have run is never edited afterwards (warning in §9).
 8. **Keep the docs true.** This file and `web/AGENTS.md` describe the current code;
    update them in the same commit as the change that makes them stale.
 
@@ -654,6 +655,7 @@ Tables (see the live diagram at `/schemas`):
 | `conversation` | title, timestamps | `agent_id` → `message` |
 | `message` | role, content (text), meta | `conversation_id` |
 | `apikey` | name, key | |
+| `user` | name, description, profession, email, `age`, `languages` (JSON list, best mastered first, no blanks or repeats), `meta` (JSON object for the program's own use: served by the API, never shown in the interface), timestamps: the people agents work for (nothing reads it yet: no login, no link to sessions) | |
 
 Vectors are not in SQL: each vector table (one per model) stores `chunk_id` +
 `vector`. Timestamps are stored in UTC; the API sends them with their offset.
@@ -669,6 +671,20 @@ hierarchy links in batches, and task lists and scheduler readiness are ordered a
 limited/filtered in SQL. Finished-task pruning deletes in SQL without hydrating
 history. Relationship lookups, processing task references, and task position and
 completion lookups have indexes installed by the normal startup migration.
+
+**Warning — the running server migrates as you save.** The server migrates its database
+to `head` at every start, and `uvicorn --reload` restarts at every saved file. A revision
+file is therefore applied the moment it appears in `migration/versions/`, even when it is
+empty or unfinished, and the database is then stamped with its id: Alembic never runs it
+again. Editing that revision afterwards changes nothing for this database, which keeps the
+old tables (`no such column: …` → 500 on the routes using them). So:
+
+- never edit a revision that may have run, even one you wrote minutes ago and never
+  committed: write a new revision that converts the existing tables (keeping their data);
+- write the revision completely before it lands in `versions/` (draft it elsewhere, or
+  stop the server while you work on it);
+- if a database ended up stamped with a wrong revision, fix it with a new revision, or
+  `alembic stamp <previous revision>` and drop the half-made tables (development only).
 
 **Changing the schema**: edit the model, generate a revision from `src/lazy_bird/`
 (`alembic revision --autogenerate`), review `upgrade()`/`downgrade()` so existing
@@ -697,7 +713,7 @@ checks that models match the migrated schema and that downgrade/upgrade works).
 Routers (`api/endpoints/`): `files`, `chunks`, `search`, `models` (+ uploads, hub
 status, login, files), `embedding-engines`/`embedding-presets`, `cross-encoder-engines`/`cross-encoder-presets`, `inference-engines`/
 `inference-presets` (+ `/inference/complete`), `tasks` (+ `/ws/tasks`), `databases`,
-`api-keys`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
+`api-keys`, `users`, `preferences`, `logs`, `extensions`, `tools`, `hooks`, `skills`,
 `instructions`, `agent-presets`, `session-presets`, `sessions`, `agents`,
 `conversations` (+ `/ws/conversations/{id}`), `messages`. Every feature is reachable
 from the web interface; when you add an endpoint, add its screen and update

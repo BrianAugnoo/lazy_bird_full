@@ -9,6 +9,8 @@ import type {
   Preferences,
   PreferencesForm,
   PreferencesUpdateOut,
+  UserIn,
+  UserOut,
   VectorTable,
 } from '@/core/types/api';
 
@@ -22,6 +24,13 @@ export const apiKeys = {
   create: (name: string, key: string) => request<APIKeyOut>('/api-keys/', { method: 'POST', body: json({ name, key }) }),
   update: (name: string, key: string) => request<APIKeyOut>(`/api-keys/${enc(name)}`, { method: 'PUT', body: json({ key }) }),
   remove: (name: string) => request<void>(`/api-keys/${enc(name)}`, { method: 'DELETE' }),
+};
+
+export const users = {
+  list: () => request<UserOut[]>('/users/'),
+  create: (user: UserIn) => request<UserOut>('/users/', { method: 'POST', body: json(user) }),
+  update: (id: number, changes: Partial<UserIn>) => request<UserOut>(`/users/${id}`, { method: 'PATCH', body: json(changes) }),
+  remove: (id: number) => request<void>(`/users/${id}`, { method: 'DELETE' }),
 };
 
 export const preferences = {

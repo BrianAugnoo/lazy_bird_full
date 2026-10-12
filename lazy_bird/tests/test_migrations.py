@@ -211,3 +211,29 @@ def test_engine_migration_removes_the_unloading_setting_from_saved_presets(tmp_p
     engine.dispose()
     assert kwargs == {"old": {"model_id": 1, "batch_size": 8}, "new": {"model_id": 2}}
     assert local == 0  # engines learn whether they are local when they are discovered at startup
+
+
+def test_user_migration_turns_the_single_language_into_a_ranked_list(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "users.db", "a7c1e3f5b9d2")
+    engine = create_engine(db_url)
+    with engine.begin() as connection:
+        for name, language in (("Ada", "French"), ("Bob", None)):
+            connection.execute(
+                text("INSERT INTO user (name, language, created_at, updated_at) VALUES (:name, :language, '2026-01-01', '2026-01-01')"),
+                {"name": name, "language": language},
+            )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        upgraded = {name: (json.loads(languages), age, meta) for name, languages, age, meta in connection.execute(text("SELECT name, languages, age, meta FROM user"))}
+    engine.dispose()
+    command.downgrade(config, "a7c1e3f5b9d2")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        restored = dict(connection.execute(text("SELECT name, language FROM user")).all())
+    engine.dispose()
+
+    assert upgraded == {"Ada": (["French"], None, None), "Bob": ([], None, None)}
+    assert restored == {"Ada": "French", "Bob": None}
