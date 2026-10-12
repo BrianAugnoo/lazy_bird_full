@@ -261,6 +261,28 @@ def test_profile_migration_gives_the_first_existing_user_the_profile(tmp_path):
     assert profiles == [(1, users[0])]
 
 
+def test_message_hooks_migration_keeps_messages_with_nothing_attached(tmp_path):
+    db_url, config = _upgrade_fresh(tmp_path, "messages.db", "c9e1a3b5d7f2")
+    engine = create_engine(db_url)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO message (conversation_id, role, content, created_at, updated_at) VALUES (1, 'user', 'Hello', '2026-01-01', '2026-01-01')"))
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        upgraded = [(content, json.loads(hooks)) for content, hooks in connection.execute(text("SELECT content, hooks FROM message"))]
+    engine.dispose()
+    command.downgrade(config, "c9e1a3b5d7f2")
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        restored = connection.execute(text("SELECT content FROM message")).scalars().all()
+    engine.dispose()
+
+    assert upgraded == [("Hello", {})]
+    assert restored == ["Hello"]
+
+
 def test_profile_migration_without_users_creates_no_profile(tmp_path):
     db_url, config = _upgrade_fresh(tmp_path, "no_profile.db")
     engine = create_engine(db_url)

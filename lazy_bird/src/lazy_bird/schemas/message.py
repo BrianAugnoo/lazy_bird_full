@@ -11,6 +11,7 @@ class MessageOut(BaseModel):
     role: str
     content: str | None = None
     meta: dict[str, Any] | None = None
+    hooks: dict[str, Any] = Field(default_factory=dict)
     created_at: UtcDatetime
     updated_at: UtcDatetime
 

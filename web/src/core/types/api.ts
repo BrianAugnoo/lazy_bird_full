@@ -387,6 +387,8 @@ export interface Message {
   role: MessageRole;
   content: string | null;
   meta: Record<string, unknown> | null;
+  /** Data hooks attached (system and user messages), given to the LLM as YAML. */
+  hooks: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

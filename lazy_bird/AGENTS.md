@@ -239,7 +239,7 @@ The frontend builds every settings form from `kwargs_key` (see `web/AGENTS.md` �
 | Chunker | `chunker/extensions/<ext>.py` (`md.py` for `.md`) | `async def chunk(file, max_token) -> list[dict]`; each dict has `content`, `start_line`, `end_line` and optionally `start_row`, `end_row`, `token_count`, `meta` |
 | Task kind | `tasks/{extension}/*.py` | functions decorated with `@task(...)` (§7) |
 | Tool | `agents/tools/{extension}/<module>.py` | `tools = [...]` functions and/or classes; optional `ToolSettings` + `fields` (§6.1) |
-| Hook | `agents/hook/{extension}/<module>.py` | `hooks = [...]`; each hook takes exactly `conversation_id`; optional `HookSettings` |
+| Hook | `agents/hook/{extension}/<module>.py` | `hooks = [...]`; a function takes exactly `conversation_id`; a class takes `conversation_id` in `__init__` and its public methods take no argument; the docstring is the description; optional `HookSettings` (§6.1) |
 | Instruction | `agents/instruction/{full|sub}/{extension}/<name>.md` | markdown text; `full` = base system prompts, `sub` = fragments added after them |
 | Skill | `agents/skill/{extension}/<name>/SKILL.md` (+ resource files) | front matter `name` (= folder name) and `description`, body = instructions |
 | Agent preset | `agents/agent_preset/{extension}/<name>.json` | keys `name` (= file name), `description`, `tools`, `hooks`, `skills`, `sub_agents` (agent preset ids), `instruction_fulls`, `instruction_subs`; unknown keys rejected |
@@ -313,7 +313,8 @@ and deleted (instructions, skills, presets) or configured (tool/hook settings).
 
 An entry is a function, or a public method of a class listed in `tools` / `hooks`.
 Its docstring (with an `Args:` section) and type hints become the JSON schema shown
-to the LLM (`self` is never shown). A class is instantiated once per agent run with:
+to the LLM (`self` is never shown). A tool class is instantiated once per agent run, a
+hook class once per pass of the hooks (with `conversation_id`, see below), with:
 
 - `settings`: the module settings saved in `toolsettings` / `hooksettings`
   (edited through `/tools/settings/{file_path}`), if `__init__` takes `settings`;
@@ -330,9 +331,26 @@ share a name, the one from `default/` (else the first) keeps it and the others a
 shown under their id. Built-in tools: `load_skill` / `read_skill_file` for agents
 with skills, `delegate_to_agent` for agents with sub-agents.
 
-Hooks run, in order, before every call to the LLM, with the conversation id; they
-change the conversation through the CRUD (inject context, compress history…). A
-failing hook ends the turn with an error message.
+Hooks run, in order, before every call to the LLM: a function gets the conversation
+id; a class is built for each pass with `conversation_id` in its `__init__` (besides
+`settings` and session meta values, which never include it) and its methods, taking no
+argument, share that instance. They change the conversation through the CRUD (inject
+context, compress history…). A failing hook ends the turn with an error message. A
+hook's whole docstring is its description (Hooks page).
+
+**Message hooks**: a hook can attach data to a system or user message instead of
+changing its text, in the message's `hooks` column (a JSON object):
+`message_crud.edit_hooks(message_id, {key: value})` replaces the given top-level keys
+and keeps the others, so each hook module writes under a key of its own
+(`hooks["system"]` for `default/system.py`). After the hooks, `hook.format_messages(
+conversation_id)` gives the loop the conversation as the LLM reads it: each message's
+`hooks` as YAML (keys holding `None` removed at any depth, mappings left empty
+dropped, multi-line strings as `|` blocks) added after a newline at the end of a
+system message, at the beginning of a user message. Stored contents never change.
+The shipped `default/system.py` hook (class `System`, session value `workspace`) has
+`date` (the user's prompt that started the turn), `environment_information` (operating
+system, harness, workspace) and `user_information` (the profile's user, §9), the last
+two on the system prompt.
 
 ### 6.2 Sessions, agents, presets
 
@@ -359,7 +377,7 @@ max_iter=20)` (one run per conversation at a time, `conversation_busy` otherwise
 
 1. build the agent runtime (system prompt, tools, hooks) and resolve its engine;
 2. for each step: run pending tool calls if any; else run the hooks, read the
-   conversation, call the engine (`status: generating`), retrying retryable
+   conversation with its message hooks (`hook.format_messages`), call the engine (`status: generating`), retrying retryable
    `EngineError`s with exponential backoff (`status: retrying`, delay ≤ 8 s). An API
    engine holds its declared `resources` from the shared pool during the call; a local
    engine is called through the residency (`resolved.call("chat", ..., emit=...)`) under
@@ -653,10 +671,10 @@ Tables (see the live diagram at `/schemas`):
 | `session` | title, meta | → `agent` |
 | `agent` | name, description, instructions, lists of tools/hooks/skills/instructions, master, preset, meta | `session_id`, `agenthierarchy` (parent/child) |
 | `conversation` | title, timestamps | `agent_id` → `message` |
-| `message` | role, content (text), meta | `conversation_id` |
+| `message` | role, content (text), meta, `hooks` (JSON object: data hooks attached, §6.1) | `conversation_id` |
 | `apikey` | name, key | |
-| `profile` | `user_id`: at most one row (`id = 1`, a CHECK constraint), the user the agents work for. It exists as soon as a user does, on the first user added, moves to the first remaining user when its user is deleted, and is gone with the last user (`crud/profile.py`; nothing reads it yet) | `user_id` (has one `user`) |
-| `user` | name, description, profession, email, `age`, `languages` (JSON list, best mastered first, no blanks or repeats), `meta` (JSON object for the program's own use: served by the API, never shown in the interface), timestamps: the people agents work for (nothing reads it yet: no login, no link to sessions) | |
+| `profile` | `user_id`: at most one row (`id = 1`, a CHECK constraint), the user the agents work for. It exists as soon as a user does, on the first user added, moves to the first remaining user when its user is deleted, and is gone with the last user (`crud/profile.py`; read by the `default/system.py` hook) | `user_id` (has one `user`) |
+| `user` | name, description, profession, email, `age`, `languages` (JSON list, best mastered first, no blanks or repeats), `meta` (JSON object for the program's own use: served by the API, never shown in the interface), timestamps: the people agents work for (the profile's user is given to agents by the `default/system.py` hook; no login, no link to sessions) | |
 
 Vectors are not in SQL: each vector table (one per model) stores `chunk_id` +
 `vector`. Timestamps are stored in UTC; the API sends them with their offset.

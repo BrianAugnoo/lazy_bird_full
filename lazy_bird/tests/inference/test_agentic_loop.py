@@ -158,6 +158,25 @@ def test_hooks_run_before_the_conversation_is_read(fake_inference, monkeypatch):
     assert fake_inference.calls[0]["messages"][-1].content == "Today is Tuesday."
 
 
+def test_the_llm_reads_what_hook_classes_attach_to_messages(fake_inference, monkeypatch):
+    class Stamp:
+        def __init__(self, conversation_id):
+            self.prompt = message_crud.last(conversation_id)
+
+        def stamp(self):
+            message_crud.edit_hooks(self.prompt.id, {"test": {"Day": "Tuesday", "Unknown": None}})
+
+    entry = Entry(id="test-hooks-Stamp-stamp", name="stamp", extension="test", module="hooks", file_path="test/hooks.py", function=Stamp.stamp, owner=Stamp)
+    monkeypatch.setattr(hooks._found, "entries", {entry.id: entry})
+    fake_inference.script = [ChatResult(content="Tuesday")]
+    conversation_id = conversation_with(make_agent(hooks=[entry.id]), "Which day?")
+
+    inference.agentic_loop(conversation_id)
+
+    assert fake_inference.calls[0]["messages"][-1].content == "test:\n  Day: Tuesday\nWhich day?"
+    assert message_crud.for_conversation(conversation_id)[1].content == "Which day?"
+
+
 def test_a_failing_hook_stops_the_turn(fake_inference, monkeypatch):
     def refuse(conversation_id):
         raise PermissionError("unsafe request")

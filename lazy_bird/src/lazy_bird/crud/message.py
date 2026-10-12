@@ -42,6 +42,12 @@ def create(conversation_id: int, role: str, content: str | None = None, meta: di
         return MessageOut.model_validate(message)
 
 
+def last(conversation_id: int) -> MessageOut | None:
+    with db() as session:
+        row = session.exec(select(MessageORM).where(MessageORM.conversation_id == conversation_id).order_by(MessageORM.id.desc()).limit(1)).first()
+        return MessageOut.model_validate(row) if row is not None else None
+
+
 def for_conversation(conversation_id: int) -> list[MessageOut]:
     with db() as session:
         rows = session.exec(select(MessageORM).where(MessageORM.conversation_id == conversation_id).order_by(MessageORM.id)).all()
@@ -60,15 +66,19 @@ def edit(message_id: int, content: str) -> MessageOut:
         session.commit()
         session.refresh(message)
         return MessageOut.model_validate(message)
-    
-def edit_hooks(hooks: dict[str, Any], message_id: int) -> MessageOut:
-    """Change the hooks of a user or system message (follow with a rewind to answer it again)."""
+
+
+def edit_hooks(message_id: int, hooks: dict[str, Any]) -> MessageOut:
+    """Set what hooks attach to a user or system message (its content is unchanged).
+
+    Top-level keys are replaced one by one and the others kept, so each hook module
+    writes its own key without erasing the others' data.
+    """
     with db() as session:
         message = _row(session, message_id)
         if message.role not in EDITABLE_ROLES:
-            raise ConflictError(f"Only {' and '.join(EDITABLE_ROLES)} messages can be edited.", code="message_not_editable")
-        message.hooks = hooks
-        message.updated_at = datetime.now(timezone.utc)
+            raise ConflictError(f"Hooks only attach data to {' and '.join(EDITABLE_ROLES)} messages.", code="message_not_editable")
+        message.hooks = {**message.hooks, **hooks}
         session.add(message)
         session.commit()
         session.refresh(message)

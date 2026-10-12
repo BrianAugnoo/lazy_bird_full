@@ -1,94 +1,81 @@
+"""Context the LLM gets on every turn: the date, this machine and the user it works for.
+
+Message texts are never changed: the data is attached to ``hooks["system"]`` of the
+messages (see ``agents/hook/__init__.py``), the date to the user's prompt, the
+environment and the user to the system prompt.
+"""
+
+import platform
+from datetime import datetime
+from typing import Any
+
 import lazy_bird.crud.conversation as conversation_crud
 import lazy_bird.crud.message as message_crud
-from lazy_bird.schemas.message import MessageIn
 from lazy_bird.crud.profile import get as get_profile
+from lazy_bird.schemas.message import MessageOut
+
+KEY = "system"
+HARNESS = "Lazy Bird (development stage)"
+
 
 class System:
-    def __init__(self, session, conversation_id: int):
-        self.session = session
-        self.last_message = self._get_last_message(conversation_id)
+    def __init__(self, conversation_id: int, workspace: str | None = None):
+        last = message_crud.last(conversation_id)
+        # Hooks also run between tool calls: the date belongs to the prompt that started the turn.
+        self.prompt = last if last is not None and last.role == "user" else None
         self.instructions = conversation_crud.get_instructions(conversation_id)
-        self.editable_roles = self.last_message.role == "user"
-        sys_hooks = lambda: self.last_message.hooks.get("system")
-        if not sys_hooks() and self.editable_roles:
-            self.last_message.hooks["system"] = {}
-            message_crud.edit_hooks(self.last_message.hooks, self.last_message.id)
-        self.sys_hooks = sys_hooks()
-        
+        self.workspace = workspace
+
     def date(self):
-        """Add Date: to the user prompt"""
-        if self.editable_roles:
-            from datetime import datetime
-            now = datetime.now()
-            date_str = now.strftime("%Y-%m-%d %H:%M:%S")
-            self.sys_hooks["date"] = f"Date: {date_str}"
-            message_crud.edit_hooks(self.last_message.hooks, self.last_message.id)
-            
+        """Give the user's prompt the current date and time."""
+        if self.prompt:
+            _attach(self.prompt, "Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
     def environment_information(self):
-        """Add environment information to the system prompt"""
+        """Give the system prompt the operating system, the harness and the session's workspace."""
         if self.instructions:
-            sys_hooks = lambda: self.instructions.hooks.get("system")
-            if not sys_hooks():
-                self.instructions.hooks["system"] = {}
-            sys_hooks()["Environment Information"] = {
-                "os_info": self._get_os_info(),
-                "harness": "Lazy Bird (development stage)",
-                "wokspace": self.session.meta.get("workspace"),
-            }
-            message_crud.edit_hooks(self.instructions.hooks, self.instructions.id)
-            
+            _attach(self.instructions, "Environment Information", {"OS": _os_info(), "Harness": HARNESS, "Workspace": self.workspace})
+
     def user_information(self):
-        """Add user information to the system prompt"""
+        """Give the system prompt who the user is: the active user of the Users page."""
         if self.instructions:
-            sys_hooks = lambda: self.instructions.hooks.get("system")
-            if not sys_hooks():
-                self.instructions.hooks["system"] = {}
-                user = get_profile().user
-            sys_hooks()["User Information"] = {
+            user = get_profile().user
+            about = None if user is None else {
                 "Name": user.name,
+                "Profession": user.profession,
                 "Email": user.email,
                 "Age": user.age,
-                "languages": " ,".join(user.languages) if user.languages else None,
+                "Languages": ", ".join(user.languages) or None,
                 "Description": user.description,
             }
-            message_crud.edit_hooks(self.instructions.hooks, self.instructions.id)
-            
-    def _get_last_message(self, conversation_id: int):
-        """Get the last message in the conversation."""
-        messages = message_crud.for_conversation(conversation_id)
-        return messages[-1] if messages else None
-    
-    @staticmethod
-    def _get_os_info():
-        import platform
-        system = platform.system()
+            _attach(self.instructions, "User Information", about)
 
-        info = {
-            "system": system,                 
-            "version": platform.version(),
-        }
 
-        if system == "Darwin":
-            info["os_version"] = platform.mac_ver()[0]
+def _attach(message: MessageOut, key: str, value: Any) -> None:
+    """Set ``hooks["system"][key]`` of ``message`` (no write when it already holds ``value``)."""
+    section = message.hooks.setdefault(KEY, {})
+    if section.get(key) == value:
+        return
+    section[key] = value
+    message_crud.edit_hooks(message.id, {KEY: section})
 
-        elif system == "Windows":
-            release, version, service_pack, _ = platform.win32_ver()
-            info["os_version"] = version
-            info["windows_release"] = release
-            info["service_pack"] = service_pack
 
-        elif system == "Linux":
-            get_distro = getattr(platform, "freedesktop_os_release", None)
+def _os_info() -> dict[str, str | None]:
+    """What the operating system says about itself (``None`` when it does not say)."""
+    system = platform.system()
+    info = {"system": system, "version": platform.version()}
+    if system == "Darwin":
+        info["os_version"] = platform.mac_ver()[0] or None
+    elif system == "Windows":
+        release, version, service_pack, _ = platform.win32_ver()
+        info.update(os_version=version or None, windows_release=release or None, service_pack=service_pack or None)
+    elif system == "Linux":
+        try:
+            distro = platform.freedesktop_os_release()
+        except OSError:
+            distro = {}
+        info.update(distribution=distro.get("PRETTY_NAME"), distribution_id=distro.get("ID"), os_version=distro.get("VERSION_ID"))
+    return info
 
-            if get_distro is not None:
-                try:
-                    distro = get_distro()
-                    info["distribution"] = distro.get("PRETTY_NAME", "")
-                    info["distribution_id"] = distro.get("ID", "")
-                    info["os_version"] = distro.get("VERSION_ID", "")
-                except OSError:
-                    pass 
 
-        return info
-    
 hooks = [System]

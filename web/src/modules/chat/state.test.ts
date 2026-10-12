@@ -8,6 +8,7 @@ const message = (id: number, role: Message['role'], content: string | null, meta
   role,
   content,
   meta,
+  hooks: {},
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 });

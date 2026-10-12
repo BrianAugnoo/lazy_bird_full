@@ -5,7 +5,7 @@ import uuid
 import pytest
 from pydantic import BaseModel
 
-from lazy_bird.agents import callables, hook
+from lazy_bird.agents import hook
 from lazy_bird.agents.callables import MissingMetaError, NotConfiguredError, Runner, build_entries
 from lazy_bird.agents.tools import _describe as describe_tool
 from lazy_bird.extension import ExtensionContractError
@@ -127,12 +127,18 @@ MODULES = {
             prefix: str = ">"
         CALLS = []
         def log(conversation_id):
+            """Log the conversation.
+
+            Every turn."""
             CALLS.append(("log", conversation_id))
         class Guard:
-            def __init__(self, settings):
-                self.settings = settings
-            def check(self, conversation_id):
-                CALLS.append((self.settings.prefix, conversation_id))
+            def __init__(self, conversation_id, settings, workspace=None):
+                self.conversation_id, self.settings, self.workspace = conversation_id, settings, workspace
+            def check(self):
+                """Check the conversation."""
+                CALLS.append((self.settings.prefix, self.conversation_id, self.workspace))
+            def again(self):
+                CALLS.append(("again", self))
         hooks = [log, Guard]
     ''',
     "bad_signature": '''
@@ -140,11 +146,25 @@ MODULES = {
             pass
         hooks = [hook]
     ''',
+    "class_without_conversation": '''
+        class Late:
+            def check(self, conversation_id):
+                pass
+        hooks = [Late]
+    ''',
+    "method_with_argument": '''
+        class Talkative:
+            def __init__(self, conversation_id):
+                pass
+            def check(self, conversation_id):
+                pass
+        hooks = [Talkative]
+    ''',
     "settings_without_model": '''
         class Needy:
-            def __init__(self, settings):
+            def __init__(self, conversation_id, settings):
                 pass
-            def run(self, conversation_id):
+            def run(self):
                 pass
         hooks = [Needy]
     ''',
@@ -170,20 +190,39 @@ def hook_package(tmp_path, monkeypatch):
 
 
 def test_hook_discovery_validates_signatures_and_settings(hook_package):
-    found = callables.discover(hook_package, kind="hook", variable="hooks", settings_attribute="HookSettings", describe=hook._describe)
+    found = hook.discover_hooks(hook_package)
 
-    assert sorted(found.entries) == ["acme-good-Guard-check", "acme-good-log"]
+    assert sorted(found.entries) == ["acme-good-Guard-again", "acme-good-Guard-check", "acme-good-log"]
     assert list(found.settings) == ["acme/good.py"]
     failures = {failure.source: failure.error for failure in found.failures}
-    assert set(failures) == {"acme/bad_signature.py", "acme/settings_without_model.py", "acme/no_list.py"}
+    assert set(failures) == {"acme/bad_signature.py", "acme/class_without_conversation.py", "acme/method_with_argument.py", "acme/settings_without_model.py", "acme/no_list.py"}
     assert "conversation_id" in failures["acme/bad_signature.py"]
+    assert "Late.__init__ must take 'conversation_id'" in failures["acme/class_without_conversation.py"]
+    assert "must take no argument" in failures["acme/method_with_argument.py"]
 
 
-def test_hooks_run_in_order_with_their_settings(hook_package):
-    found = callables.discover(hook_package, kind="hook", variable="hooks", settings_attribute="HookSettings", describe=hook._describe)
-    runner = Runner({}, lambda path: found.settings[path].validate({"prefix": "!"}))
+def test_hook_classes_read_session_values_but_not_the_conversation_id(hook_package):
+    guard = hook.discover_hooks(hook_package).entries["acme-good-Guard-check"]
 
-    for hook_id in ("acme-good-log", "acme-good-Guard-check"):
-        runner.call(found.entries[hook_id], {"conversation_id": 7})
+    assert guard.meta_params == ("workspace",) and guard.required_meta == ()
 
-    assert sys.modules[f"{hook_package}.acme.good"].CALLS == [("log", 7), ("!", 7)]
+
+def test_hook_descriptions_are_their_whole_docstrings(hook_package):
+    found = hook.discover_hooks(hook_package)
+
+    assert found.entries["acme-good-log"].description == "Log the conversation.\n\nEvery turn."
+    assert found.entries["acme-good-Guard-check"].description == "Check the conversation."
+    assert found.entries["acme-good-Guard-again"].description == ""
+
+
+def test_hooks_run_in_order_classes_built_with_the_conversation_id(hook_package, monkeypatch):
+    monkeypatch.setattr(hook, "_found", hook.discover_hooks(hook_package))
+    monkeypatch.setattr(hook.settings_store, "saved", lambda path: {"prefix": "!"})
+    calls = sys.modules[f"{hook_package}.acme.good"].CALLS
+
+    hook.run_hooks(["acme-good-log", "acme-good-Guard-check", "acme-good-Guard-again", "acme-good-Guard-again"], 7, {"workspace": "w", "conversation_id": 99})
+    hook.run_hooks(["acme-good-Guard-again"], 8, {})
+
+    assert calls[:2] == [("log", 7), ("!", 7, "w")]
+    instances = [instance for name, instance in calls[2:]]
+    assert instances[0] is instances[1] and instances[2] is not instances[0]  # one instance per pass, shared by its methods

@@ -17,9 +17,11 @@ Agent configuration: ``Agent.meta`` holds either ``preset_inference_engine_id`` 
 
 Turn rules: an agent answers only when its conversation is runnable (last message
 from the user, an error or an unfinished tool turn). Each step of the loop runs the
-agent's hooks, reads the conversation, calls the engine (retrying failures up to
-``retry`` times), then either runs the requested tools and continues, or stores the
-answer. Failures end the run with an ``error`` message (``meta.code``).
+agent's hooks (hook classes are built with the conversation id), reads the
+conversation with the data hooks attached to its messages (``hook.format_messages``),
+calls the engine (retrying failures up to ``retry`` times), then either runs the
+requested tools and continues, or stores the answer. Failures end the run with an
+``error`` message (``meta.code``).
 """
 
 from __future__ import annotations
@@ -341,6 +343,7 @@ def _run_tools(turn: _Turn, runtime, calls: list[dict[str, Any]]) -> None:
 
 def agentic_loop(conversation_id: int, *, emit: Emitter | None = None, retry: int = 3, max_iter: int = 20) -> RunOutcome:
     """Let the conversation's agent answer, using tools as needed; see the module docstring."""
+    from lazy_bird.agents import hook as hooks
     from lazy_bird.agents.runtime import build
     from lazy_bird.crud import agent as agent_crud
     from lazy_bird.crud import conversation as conversation_crud
@@ -372,7 +375,7 @@ def agentic_loop(conversation_id: int, *, emit: Emitter | None = None, retry: in
                 except Exception as error:
                     logger.opt(exception=error).warning("A hook of agent {} failed", agent.id)
                     return turn.fail("hook_failed", f"A hook failed: {error}")
-            messages = to_chat_messages(message_crud.for_conversation(conversation_id))
+            messages = to_chat_messages(hooks.format_messages(conversation_id))
             result = _call_engine(turn, resolved, messages, runtime.tools, retry)
             if isinstance(result, RunOutcome):
                 return result

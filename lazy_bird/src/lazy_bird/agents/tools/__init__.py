@@ -36,7 +36,7 @@ settings_store = ModuleSettingsStore(ToolSettingsTable, "tool")
 _found = Discovery()
 
 
-def _describe(function, name: str) -> tuple[str, dict[str, Any]]:
+def _describe(function, name: str, owner: type | None) -> tuple[str, dict[str, Any]]:
     schema = get_json_schema(function)
     schema["function"].pop("return", None)
     return schema["function"].get("description", ""), schema
