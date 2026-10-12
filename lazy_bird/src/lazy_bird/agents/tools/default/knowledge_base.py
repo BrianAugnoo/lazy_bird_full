@@ -5,7 +5,7 @@ from lazy_bird.crud.search import search
 
 def search_knowledge_base(query: str, top_k: int = 5) -> str:
     """
-    Search the Lazy Bird knowledge base.
+    Search in the knowledge base.
 
     Args:
         query: The question or information to search for.

@@ -60,6 +60,19 @@ def edit(message_id: int, content: str) -> MessageOut:
         session.commit()
         session.refresh(message)
         return MessageOut.model_validate(message)
+    
+def edit_hooks(hooks: dict[str, Any], message_id: int) -> MessageOut:
+    """Change the hooks of a user or system message (follow with a rewind to answer it again)."""
+    with db() as session:
+        message = _row(session, message_id)
+        if message.role not in EDITABLE_ROLES:
+            raise ConflictError(f"Only {' and '.join(EDITABLE_ROLES)} messages can be edited.", code="message_not_editable")
+        message.hooks = hooks
+        message.updated_at = datetime.now(timezone.utc)
+        session.add(message)
+        session.commit()
+        session.refresh(message)
+        return MessageOut.model_validate(message)
 
 
 def delete_after(conversation_id: int, message_id: int) -> int:

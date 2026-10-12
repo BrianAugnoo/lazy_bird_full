@@ -102,6 +102,15 @@ def get_all(agent_id: int | None = None) -> list[ConversationOut]:
         return [_out(row, role) for row, role in session.exec(query).all()]
 
 
+def get_instructions(conversation_id: int) -> str | None:
+    """Return the system prompt of a conversation, if any."""
+    with db() as session:
+        row = _row(session, conversation_id)
+        first_message = session.exec(select(MessageORM).where(MessageORM.conversation_id == row.id).order_by(MessageORM.id)).first()
+        if first_message and first_message.role == "system":
+            return MessageOut(**first_message.__dict__)
+        return None
+
 def latest(agent_id: int) -> ConversationOut | None:
     with db() as session:
         if session.get(AgentORM, agent_id) is None:
