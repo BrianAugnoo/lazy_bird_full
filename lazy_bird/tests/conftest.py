@@ -129,6 +129,29 @@ def crud_database(db_session_factory, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
+def sql_activity(migrated_database):
+    """SQL work on the test database; count round trips without timing-sensitive tests."""
+    from sqlalchemy import event
+
+    activity = {"statements": [], "commits": []}
+
+    def statement(connection, cursor, sql, parameters, context, executemany):
+        activity["statements"].append(sql)
+
+    def commit(connection):
+        activity["commits"].append(1)
+
+    engine = migrated_database.engine
+    event.listen(engine, "before_cursor_execute", statement)
+    event.listen(engine, "commit", commit)
+    try:
+        yield activity
+    finally:
+        event.remove(engine, "before_cursor_execute", statement)
+        event.remove(engine, "commit", commit)
+
+
+@pytest.fixture
 def storage_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "storage"
     monkeypatch.setattr(storage_module, "storage_dir", root)

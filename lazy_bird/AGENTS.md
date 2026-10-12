@@ -645,6 +645,12 @@ Tables (see the live diagram at `/schemas`):
 Vectors are not in SQL: each vector table (one per model) stores `chunk_id` +
 `vector`. Timestamps are stored in UTC; the API sends them with their offset.
 
+Chunk replacement uses a bulk insert and one SQL transaction for deletion and
+insertion, after removing the old vectors. Counts are grouped in SQL and chunk/file
+ID filters are read in bounded batches. Search reads only chunk IDs and distances
+from LanceDB (exact search); existing vector tables are opened directly without
+listing the catalog on each operation.
+
 **Changing the schema**: edit the model, generate a revision from `src/lazy_bird/`
 (`alembic revision --autogenerate`), review `upgrade()`/`downgrade()` so existing
 data is kept (use a single `sa.table()` per table in data migrations; SQLite needs

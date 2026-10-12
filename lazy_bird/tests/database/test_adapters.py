@@ -96,3 +96,43 @@ def test_drop_removes_a_model_table(vectors):
     vectors.drop(MODEL)
 
     assert vectors.tables() == []
+
+
+def test_existing_table_operations_do_not_list_the_catalog(vectors, monkeypatch):
+    vectors.create(MODEL, [{"chunk_id": 1, "vector": [1.0, 0.0]}])
+
+    def unexpected_listing(database):
+        pytest.fail("Opening an existing table should not scan the catalog")
+
+    monkeypatch.setattr(vectors, "_table_names", unexpected_listing)
+    vectors.create(MODEL, [{"chunk_id": 2, "vector": [0.0, 1.0]}])
+    assert vectors.count(MODEL) == 2
+    assert vectors.retrieve(MODEL, 1, [0.0, 1.0]) == [{"chunk_id": 2, "distance": 0.0}]
+    assert vectors.delete(MODEL, [2]) == 1
+    vectors.drop(MODEL)
+
+
+def test_failed_open_of_an_existing_table_is_not_hidden(vectors, monkeypatch):
+    vectors.create(MODEL, [{"chunk_id": 1, "vector": [1.0, 0.0]}])
+
+    def failed_open(name):
+        raise ValueError("damaged manifest")
+
+    monkeypatch.setattr(vectors._db(), "open_table", failed_open)
+    with pytest.raises(ValueError, match="damaged manifest"):
+        vectors.count(MODEL)
+
+
+def test_workers_can_create_the_same_model_table_concurrently(vectors):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    start = threading.Barrier(4)
+
+    def create(chunk_id):
+        start.wait(timeout=5)
+        return vectors.create(MODEL, [{"chunk_id": chunk_id, "vector": [float(chunk_id), 0.0]}])
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert list(pool.map(create, range(4))) == [1, 1, 1, 1]
+    assert vectors.count(MODEL) == 4

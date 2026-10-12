@@ -47,9 +47,11 @@ def _nearest(query: str, count: int, preset_id: int | None, file_ids: list[int] 
     vector, resolved = embed_query(query, preset_id)
     scope = None
     if file_ids is not None:
-        scope = [chunk_id for file_id in file_ids for chunk_id in chunk_crud.ids_for_file(file_id)]
+        scope = chunk_crud.ids_for_files(file_ids)
     hits = database.vector_retrieve(vector_space(resolved), count, vector, scope)
     chunks = chunk_crud.get_many([hit["chunk_id"] for hit in hits])
+    if not chunks:
+        return []
     with db() as session:
         files = {file.id: file for file in session.exec(select(File).where(File.id.in_({chunk.file_id for chunk in chunks.values()}))).all()}
     results = []

@@ -1,4 +1,5 @@
 import re
+import threading
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -9,6 +10,7 @@ name = "lancedb"
 messages = {"initialize": "LanceDB stores vectors locally.", "disconnect": "Dropping LanceDB removes all vector tables."}
 TABLE_PREFIX = "vectors__"
 _connection = None
+_creation_lock = threading.RLock()
 
 
 class Settings(BaseModel):
@@ -69,10 +71,18 @@ def _table_names(database) -> list[str]:
 
 
 def _open(model_name: str):
-    database, table = _db(), table_name(model_name)
-    if table not in _table_names(database):
-        return None
-    return database.open_table(table)
+    # A newly created local table has a directory before its first manifest is
+    # committed. Other server threads must not open it halfway through creation.
+    with _creation_lock:
+        database, table = _db(), table_name(model_name)
+        try:
+            return database.open_table(table)
+        except (ValueError, RuntimeError):
+            # Existing tables are the hot path. List only after an open fails, so
+            # errors from a damaged table are still reported rather than hidden.
+            if table not in _table_names(database):
+                return None
+            raise
 
 
 def _ids_filter(chunk_ids: list[int]) -> str:
@@ -87,11 +97,20 @@ def create(model_name: str, rows: list[dict]) -> int:
     if not rows:
         raise ValueError("create() needs at least one row")
     records = [{"chunk_id": int(row["chunk_id"]), "vector": [float(value) for value in row["vector"]]} for row in rows]
-    table = _open(model_name)
-    if table is None:
-        _db().create_table(table_name(model_name), data=records)
-    else:
-        table.merge_insert("chunk_id").when_matched_update_all().when_not_matched_insert_all().execute(records)
+    with _creation_lock:
+        table = _open(model_name)
+        if table is None:
+            try:
+                _db().create_table(table_name(model_name), data=records)
+                return len(records)
+            except ValueError as error:
+                # A task process can have created the table since our open.
+                if "already exists" not in str(error):
+                    raise
+                table = _open(model_name)
+                if table is None:
+                    raise
+    table.merge_insert("chunk_id").when_matched_update_all().when_not_matched_insert_all().execute(records)
     return len(records)
 
 
@@ -117,7 +136,7 @@ def retrieve(model_name: str, top_k: int, vector: list[float], chunk_ids: list[i
     table = _open(model_name)
     if table is None or (chunk_ids is not None and not chunk_ids):
         return []
-    query = table.search(vector).limit(top_k)
+    query = table.search(vector).limit(top_k).select(["chunk_id"])
     if chunk_ids is not None:
         query = query.where(_ids_filter(chunk_ids), prefilter=True)
     return [{"chunk_id": int(row["chunk_id"]), "distance": float(row["_distance"])} for row in query.to_list()]

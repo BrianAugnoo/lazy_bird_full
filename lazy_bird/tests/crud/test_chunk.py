@@ -57,3 +57,55 @@ def test_delete_for_file_keeps_other_files_untouched(crud_database):
 def test_unknown_chunk_is_not_found(crud_database):
     with pytest.raises(NotFoundError):
         chunk_crud.get(404)
+
+
+def test_large_replacement_uses_bounded_sql_work(crud_database, sql_activity):
+    file_id = create_file(crud_database)
+    chunk_crud.replace(file_id, CHUNKS)
+    sql_activity["statements"].clear()
+    sql_activity["commits"].clear()
+
+    stored = chunk_crud.replace(file_id, CHUNKS * 300)
+
+    assert len(stored) == 600
+    assert [chunk.position for chunk in stored] == list(range(600))
+    assert len(sql_activity["statements"]) <= 4
+    assert len(sql_activity["commits"]) == 1
+    assert chunk_crud.for_file(file_id) == stored
+    assert chunk_crud.get_many([chunk.id for chunk in stored]) == {chunk.id: chunk for chunk in stored}
+
+
+def test_chunk_counts_and_scope_handle_large_file_filters(crud_database):
+    file_id = create_file(crud_database)
+    stored = chunk_crud.replace(file_id, CHUNKS)
+    file_ids = [file_id, *range(1000, 2200), file_id]
+
+    assert chunk_crud.counts(file_ids) == {id: 2 if id == file_id else 0 for id in file_ids}
+    assert set(chunk_crud.ids_for_files(file_ids)) == {chunk.id for chunk in stored}
+    assert chunk_crud.ids_for_files([]) == []
+
+
+def test_failed_replacement_preserves_previous_sql_chunks(crud_database, migrated_database):
+    from sqlalchemy import event
+
+    file_id = create_file(crud_database)
+    previous = chunk_crud.replace(file_id, CHUNKS)
+
+    def reject_insert(connection, cursor, statement, parameters, context, executemany):
+        if statement.startswith("INSERT INTO chunk"):
+            raise RuntimeError("simulated insert failure")
+
+    event.listen(migrated_database.engine, "before_cursor_execute", reject_insert)
+    try:
+        with pytest.raises(RuntimeError, match="simulated insert failure"):
+            chunk_crud.replace(file_id, CHUNKS[:1])
+    finally:
+        event.remove(migrated_database.engine, "before_cursor_execute", reject_insert)
+    assert chunk_crud.for_file(file_id) == previous
+
+
+def test_replacing_with_no_chunks_clears_file(crud_database):
+    file_id = create_file(crud_database)
+    chunk_crud.replace(file_id, CHUNKS)
+    assert chunk_crud.replace(file_id, []) == []
+    assert chunk_crud.for_file(file_id) == []
