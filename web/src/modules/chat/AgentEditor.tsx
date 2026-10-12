@@ -8,6 +8,7 @@ import { buildHash } from '@/core/router';
 import type { Agent, AgentFields, AgentInferenceMeta } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { SettingsForm } from '@/modules/settings-form/SettingsForm';
+import { CallableField } from '@/modules/tools/CallableField';
 import { Drawer } from '@/ui/Modal';
 import { MultiSelect } from '@/ui/MultiSelect';
 import { useToast } from '@/ui/toastContext';
@@ -285,12 +286,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
         <h3 className="form-section-title">Abilities</h3>
         <div className="form-group">
           <label className="form-label">Tools</label>
-          <MultiSelect
-            options={(opt?.toolList ?? []).map((item) => ({ value: item.id, label: item.name, description: item.description || item.id }))}
-            value={draft.tools}
-            onChange={(value) => set('tools', value)}
-            emptyText="No tools installed."
-          />
+          <CallableField kind="tools" items={opt?.toolList ?? []} value={draft.tools} onChange={(value) => set('tools', value)} emptyText="No tools installed." />
         </div>
         <div className="form-group">
           <label className="form-label">Skills</label>
@@ -303,12 +299,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
         </div>
         <div className="form-group">
           <label className="form-label">Hooks</label>
-          <MultiSelect
-            options={(opt?.hookList ?? []).map((item) => ({ value: item.id, label: item.name, description: item.description || item.id }))}
-            value={draft.hooks}
-            onChange={(value) => set('hooks', value)}
-            emptyText="No hooks installed."
-          />
+          <CallableField kind="hooks" items={opt?.hookList ?? []} value={draft.hooks} onChange={(value) => set('hooks', value)} emptyText="No hooks installed." />
           <div className="form-hint">Hooks run before every call to the model (inject context, compress history…).</div>
         </div>
       </section>

@@ -3,6 +3,7 @@ import { ApiError } from '@/api/client';
 import { agentPresets, hooks, instructions, sessionPresets, skills, tools } from '@/api/endpoints/extensions';
 import type { AgentPresetData, ExtensionPreset, SessionPresetData } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
+import { CallableField } from '@/modules/tools/CallableField';
 import { AsyncState } from '@/ui/AsyncState';
 import { useDialogs } from '@/ui/dialogContext';
 import { Icon } from '@/ui/Icon';
@@ -75,13 +76,13 @@ function AgentFields({ data, set, options, selfId, readOnly, errors }: { data: A
       <section className="form-section">
         <h3 className="form-section-title">Abilities</h3>
         <Field label="Tools" error={errors.tools}>
-          {select('tools', options.toolList.map((item) => ({ value: item.id, label: item.name, description: item.description || item.id })), 'No tools installed.')}
+          <CallableField kind="tools" items={options.toolList} value={list('tools')} onChange={readOnly ? undefined : (tools) => set({ ...data, tools })} emptyText="No tools installed." />
         </Field>
         <Field label="Skills" error={errors.skills}>
           {select('skills', options.skillList.map((item) => ({ value: item.id, label: item.name, description: item.description })), 'No skills installed.')}
         </Field>
         <Field label="Hooks" error={errors.hooks}>
-          {select('hooks', options.hookList.map((item) => ({ value: item.id, label: item.name, description: item.description || item.id })), 'No hooks installed.')}
+          <CallableField kind="hooks" items={options.hookList} value={list('hooks')} onChange={readOnly ? undefined : (hooks) => set({ ...data, hooks })} emptyText="No hooks installed." />
         </Field>
       </section>
       <section className="form-section">

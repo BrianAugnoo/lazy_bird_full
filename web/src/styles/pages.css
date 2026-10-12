@@ -524,6 +524,33 @@ button.tool-card-head:hover { background: var(--bg-card-hover); }
 .callable-description { color: var(--text-secondary); white-space: pre-wrap; font-size: var(--text-sm); }
 .param-list { list-style: none; display: flex; flex-direction: column; gap: 2px; padding-left: 12px; border-left: 2px solid var(--border-subtle); }
 
+/* Extensions on the left, the chosen one's modules on the right (pages and pickers). */
+.extension-browser { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 20px; align-items: start; }
+.extension-nav { display: flex; flex-direction: column; gap: 1px; position: sticky; top: 0; }
+.extension-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--text-md); text-align: left; }
+.extension-nav-item:hover { background-color: var(--bg-sunken); color: var(--text-primary); }
+.extension-nav-item.is-active { background-color: var(--bg-card); color: var(--accent-primary); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border-base); }
+.extension-nav-badge { margin-left: auto; font-size: var(--text-xs); font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 720px) {
+  .extension-browser { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .extension-nav { flex-direction: row; overflow-x: auto; position: static; }
+  .extension-nav-item { width: auto; flex-shrink: 0; }
+}
+
+.picker-section { border: 1px solid var(--border-base); border-radius: var(--radius-md); overflow: hidden; }
+.picker-section-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; background-color: var(--bg-sunken); border-bottom: 1px solid var(--border-subtle); cursor: pointer; }
+.picker-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; font-size: var(--text-md); cursor: pointer; }
+.picker-item + .picker-item { border-top: 1px solid var(--border-subtle); }
+.picker-item:hover { background-color: var(--bg-card-hover); }
+.picker-item input { margin-top: 3px; }
+.extension-browser input[type="checkbox"] { accent-color: var(--accent-primary); }
+.picker-item-description { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; color: var(--text-muted); font-size: var(--text-xs); }
+
+.callable-field { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.chip-remove { display: inline-flex; margin-right: -4px; color: inherit; opacity: 0.6; }
+.chip-remove:hover { opacity: 1; }
+
 /* ============================================================ library items */
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 .item-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px; text-align: left; background: var(--bg-card); border: 1px solid var(--border-base); border-radius: var(--radius-md); transition: border-color var(--transition-fast), box-shadow var(--transition-fast); }

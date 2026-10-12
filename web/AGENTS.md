@@ -122,6 +122,7 @@ src/
                          Toasts, Dialogs (styled confirm/prompt), Sidebar
   modules/               one folder per feature; an index.ts registers its pages
   test/http.ts           mockApi(): fetch mock keyed by "METHOD /path"
+  test/callables.ts      callable(): a tool or hook as the API lists it
 ```
 
 ## 11. Contracts (extension points)
@@ -210,10 +211,10 @@ by side / preview, text).
 | Files (`files`) | `modules/files` | `/files/*` (upload, directories, directory CRUD, content, full, download, process, processing, scan, all), `/files/{id}/chunks`, file events of `/ws/tasks` |
 | Users (`users`) | `modules/users` | `/users/*` and `/profile/` (list, create, partial update, delete; the active user is marked and any other can be made active; edited in a drawer: languages are an ordered list moved with arrows; the backend's `meta` is not shown or sent) |
 | Search (`search`) | `modules/search` | `POST /search/` (embedding only, or reranking with `rerank`, `cross_encoder_preset_id`, `top_n`), embedding and cross-encoder presets, files |
-| Tools, Hooks (`tools`, `hooks`) | `modules/tools` | `/tools/*`, `/hooks/*` (list, reload, settings per module file) |
+| Tools, Hooks (`tools`, `hooks`) | `modules/tools` | `/tools/*`, `/hooks/*` (list, reload, settings per module file). A side menu lists the extensions (`default`, `custom` — both always shown — then the others; the chosen one is `?extension=`), and each module (Python file) of the chosen extension is a section with its items, their description (a hook's whole docstring), parameters, session values and the module's settings |
 | Skills (`skills`) | `modules/skills` | `/skills/*` (incl. resource files) |
 | Instructions (`instructions`) | `modules/instructions` | `/instructions/{full|sub}/*` |
-| Agent / session presets | `modules/presets` | `/agent-presets/*`, `/session-presets/*` |
+| Agent / session presets | `modules/presets` | `/agent-presets/*`, `/session-presets/*`, tools/hooks lists (picker, §15) |
 | Models (`models`) | `modules/models` | `/models/*` (download with file choice, upload from the computer with progress, sync, hub status/login/files), model tasks |
 | Embedding, Cross-encoder (`cross-encoder`), Inference | `modules/engines` | `/{kind}-engines/`, `/{kind}-presets/*` (kind `embedding`, `cross-encoder`, `inference`), `POST /inference/complete`; engines with `local: true` show that they run the model on this computer |
 | Tasks (`tasks`) | `modules/tasks` | `WS /ws/tasks` (snapshot, events, commands incl. `update` with `priority: 0` = Run now; `resources.models` lists the local models in memory: idle or in use, own process, real memory; `resources.processes` marks running isolated tasks with their memory), `DELETE /tasks/finished` |
@@ -283,7 +284,12 @@ states. Light by default, dark through `prefers-color-scheme`. Use the tokens of
 sentence case everywhere. Lists are `.list` / `.list-row`, editing happens in a
 `Drawer`, confirmations in `Dialogs`, results in toasts. A dialog offering options
 (`ChoiceList`) never acts on a single click: the user picks, then confirms with the
-primary button or Enter. Icons come from
+primary button or Enter. Escape closes only the overlay opened last. The tools and
+hooks of an agent or agent preset are chosen in a picker (`modules/tools/CallableField`
+opens `CallablePicker`), laid out like the Tools and Hooks pages: extensions on the
+left, modules as sections, a checkbox per item, per module and per extension (dashed
+when partly chosen); Confirm applies the choice to the form, which keeps the order
+items were chosen in (hooks run in that order). Icons come from
 `ui/Icon.tsx` (24×24 line icons; add a path there when a new one is needed).
 Layouts must work from 390 px wide (the chat rail becomes an overlay).
 

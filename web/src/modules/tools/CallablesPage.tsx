@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ApiError } from '@/api/client';
 import { callableApi } from '@/api/endpoints/extensions';
 import type { SettingsValues } from '@/core/fields/types';
+import { setParams, useRoute } from '@/core/router';
 import type { CallableItem, ModuleSettings } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { SettingsForm } from '@/modules/settings-form/SettingsForm';
@@ -10,18 +11,18 @@ import { Icon } from '@/ui/Icon';
 import { Drawer } from '@/ui/Modal';
 import { PageHeader } from '@/ui/PageHeader';
 import { useToast } from '@/ui/toastContext';
-
-type Kind = 'tools' | 'hooks';
+import { groupByExtension, type CallableKind as Kind, type CallableModule } from './catalog';
+import { ExtensionNav } from './ExtensionNav';
 
 const TEXT: Record<Kind, { title: string; description: string; folder: string }> = {
   tools: {
     title: 'Tools',
-    description: 'Functions agents can call. Each Python file of agents/tools/{extension}/ is a module; add or change files on disk, then reload.',
+    description: 'Functions agents can call, by extension (a folder of agents/tools/) and module (a Python file in it). Add or change files on disk, then reload.',
     folder: 'agents/tools',
   },
   hooks: {
     title: 'Hooks',
-    description: 'Functions run before every call to the model, e.g. to add context or shorten long conversations. Files live in agents/hook/{extension}/.',
+    description: 'Functions run before every call to the model, e.g. to add context or shorten long conversations, by extension (a folder of agents/hook/) and module.',
     folder: 'agents/hook',
   },
 };
@@ -97,23 +98,76 @@ function load(kind: Kind) {
   return Promise.all([api.list(), api.settings()]).then(([items, settings]) => ({ items, settings }));
 }
 
+function CallableEntry({ kind, item }: { kind: Kind; item: CallableItem }) {
+  return (
+    <div className="callable">
+      <div className="callable-head">
+        <span className="callable-name">{item.name}</span>
+        <span className="mono muted small">{item.id}</span>
+      </div>
+      {item.description && <p className="callable-description">{item.description}</p>}
+      {kind === 'tools' && <Parameters item={item} />}
+      {(item.meta_params.length > 0 || item.accepts_any_meta) && (
+        <div className="small muted">
+          Reads session values:{' '}
+          {item.accepts_any_meta
+            ? 'all of them'
+            : item.meta_params.map((name) => (
+                <span key={name} className={`chip ${item.required_meta.includes(name) ? 'chip-warning' : 'chip-outline'}`} title={item.required_meta.includes(name) ? 'Required' : 'Optional'}>
+                  {name}
+                </span>
+              ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One module (Python file) of an extension: its tools or hooks and its settings. */
+function ModuleSection({ kind, module, settings, onSettings }: { kind: Kind; module: CallableModule; settings: ModuleSettings | undefined; onSettings: (settings: ModuleSettings) => void }) {
+  const configurable = settings && Object.keys(settings.kwargs_key).length > 0;
+  return (
+    <section className="card" aria-label={module.module}>
+      <div className="card-header">
+        <div>
+          <h2 className="card-title mono">{module.module}</h2>
+          <p className="card-description">
+            <span className="mono">{module.filePath}</span> · {module.items.length} {module.items.length === 1 ? kind.slice(0, -1) : kind}
+          </p>
+        </div>
+        {configurable && (
+          <div className="row">
+            {!settings.valid && <span className="chip chip-warning">needs settings</span>}
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onSettings(settings)}>
+              <Icon name="settings" /> Settings
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="card-body callable-list">
+        {module.items.map((item) => (
+          <CallableEntry key={item.id} kind={kind} item={item} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function CallablesPage({ kind }: { kind: Kind }) {
   const api = useMemo(() => callableApi(kind), [kind]);
   const toast = useToast();
+  const { params } = useRoute();
   const data = useResource(() => load(kind), [kind]);
   const [editing, setEditing] = useState<ModuleSettings | null>(null);
   const text = TEXT[kind];
 
-  const modules = useMemo(() => {
-    const groups = new Map<string, CallableItem[]>();
-    for (const item of data.data?.items ?? []) groups.set(item.file_path, [...(groups.get(item.file_path) ?? []), item]);
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [data.data]);
+  const extensions = useMemo(() => groupByExtension(data.data?.items ?? []), [data.data]);
+  const current = extensions.find((entry) => entry.extension === params.extension) ?? extensions[0];
 
   const reload = async () => {
     try {
       const items = await api.reload();
-      data.setData((current) => (current ? { ...current, items } : current));
+      data.setData((loaded) => (loaded ? { ...loaded, items } : loaded));
       await data.reload();
       toast.show(`${items.length} ${kind} found`);
     } catch (reason) {
@@ -132,69 +186,31 @@ export function CallablesPage({ kind }: { kind: Kind }) {
           </button>
         }
       />
-      <AsyncState
-        {...data}
-        onRetry={data.reload}
-        isEmpty={(value) => value.items.length === 0}
-        empty={
-          <>
-            <div className="state-title">No {kind} installed</div>
-            <p className="state-desc">
-              Add a Python file in <span className="mono">{text.folder}/custom/</span> and reload.
-            </p>
-          </>
-        }
-      >
+      <AsyncState {...data} onRetry={data.reload} isEmpty={() => false}>
         {({ settings }) => (
-          <div className="stack">
-            {modules.map(([filePath, items]) => {
-              const moduleSettings = settings.find((entry) => entry.file_path === filePath);
-              const configurable = moduleSettings && Object.keys(moduleSettings.kwargs_key).length > 0;
-              return (
-                <div key={filePath} className="card">
-                  <div className="card-header">
-                    <div>
-                      <h2 className="card-title mono">{filePath}</h2>
-                      <p className="card-description">
-                        <span className="chip chip-outline">{items[0].extension}</span> {items.length} {items.length === 1 ? kind.slice(0, -1) : kind}
-                      </p>
-                    </div>
-                    {configurable && (
-                      <div className="row">
-                        {!moduleSettings.valid && <span className="chip chip-warning">needs settings</span>}
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing(moduleSettings)}>
-                          <Icon name="settings" /> Settings
-                        </button>
-                      </div>
-                    )}
+          <div className="extension-browser">
+            <ExtensionNav
+              label={`${text.title} extensions`}
+              extensions={extensions}
+              active={current.extension}
+              onSelect={(extension) => setParams({ extension: extension === extensions[0].extension ? null : extension })}
+              badge={(entry) => entry.items.length}
+            />
+            <div className="stack">
+              {current.modules.length === 0 && (
+                <div className="state-empty">
+                  <div className="state-title">
+                    No {kind} in {current.extension}
                   </div>
-                  <div className="card-body callable-list">
-                    {items.map((item) => (
-                      <div key={item.id} className="callable">
-                        <div className="callable-head">
-                          <span className="callable-name">{item.name}</span>
-                          <span className="mono muted small">{item.id}</span>
-                        </div>
-                        {item.description && <p className="callable-description">{item.description}</p>}
-                        {kind === 'tools' && <Parameters item={item} />}
-                        {(item.meta_params.length > 0 || item.accepts_any_meta) && (
-                          <div className="small muted">
-                            Reads session values:{' '}
-                            {item.accepts_any_meta
-                              ? 'all of them'
-                              : item.meta_params.map((name) => (
-                                  <span key={name} className={`chip ${item.required_meta.includes(name) ? 'chip-warning' : 'chip-outline'}`} title={item.required_meta.includes(name) ? 'Required' : 'Optional'}>
-                                    {name}
-                                  </span>
-                                ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <p className="state-desc">
+                    Add a Python file in <span className="mono">{`${text.folder}/${current.extension}/`}</span> and reload.
+                  </p>
                 </div>
-              );
-            })}
+              )}
+              {current.modules.map((module) => (
+                <ModuleSection key={module.filePath} kind={kind} module={module} settings={settings.find((entry) => entry.file_path === module.filePath)} onSettings={setEditing} />
+              ))}
+            </div>
           </div>
         )}
       </AsyncState>
@@ -205,7 +221,7 @@ export function CallablesPage({ kind }: { kind: Kind }) {
           onClose={() => setEditing(null)}
           onSaved={(next) => {
             setEditing(null);
-            data.setData((current) => (current ? { ...current, settings: current.settings.map((entry) => (entry.file_path === next.file_path ? next : entry)) } : current));
+            data.setData((loaded) => (loaded ? { ...loaded, settings: loaded.settings.map((entry) => (entry.file_path === next.file_path ? next : entry)) } : loaded));
           }}
         />
       )}

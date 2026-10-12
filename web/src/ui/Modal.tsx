@@ -1,14 +1,26 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Icon } from './Icon';
 
+/** Open overlays, the last opened on top: Escape only closes that one. */
+const open: object[] = [];
+
 function useEscape(onClose: () => void) {
+  const close = useRef(onClose);
   useEffect(() => {
+    close.current = onClose;
+  });
+  useEffect(() => {
+    const overlay = {};
+    open.push(overlay);
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && open[open.length - 1] === overlay) close.current();
     };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      open.splice(open.indexOf(overlay), 1);
+    };
+  }, []);
 }
 
 interface OverlayProps {

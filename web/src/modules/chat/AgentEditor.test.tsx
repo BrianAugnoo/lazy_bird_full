@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '@/core/types/api';
+import { callable } from '@/test/callables';
 import { mockApi } from '@/test/http';
 import { ToastProvider } from '@/ui/Toasts';
 import { AgentEditor } from './AgentEditor';
@@ -60,13 +61,31 @@ describe('AgentEditor', () => {
     open(onSaved);
 
     fireEvent.change(await screen.findByLabelText('Inference preset'), { target: { value: '2' } });
-    fireEvent.click(await screen.findByLabelText(/search/));
+    fireEvent.click(await screen.findByText('Choose tools…'));
+    fireEvent.click(screen.getByLabelText(/search/));
+    fireEvent.click(screen.getByText('Confirm'));
     fireEvent.click(screen.getByText('Save'));
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     const body = sent('PATCH /agents/7')[0] as { meta: unknown; tools: string[] };
     expect(body.meta).toEqual({ preset_inference_engine_id: 2, color: 'blue' });
     expect(body.tools).toEqual(['default-kb-search']);
+  });
+
+  it('chooses hooks module by module in the picker', async () => {
+    const sent = routes({
+      'GET /hooks/': [callable('default', 'system', 'date'), callable('default', 'system', 'user_information'), callable('default', 'compress', 'shorten')],
+      'PATCH /agents/7': (body: unknown) => ({ ...agent, ...(body as object) }),
+    });
+    open();
+
+    fireEvent.click(await screen.findByText('Choose hooks…'));
+    fireEvent.click(screen.getByLabelText('All hooks of default/system.py'));
+    fireEvent.click(screen.getByText('Confirm'));
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(sent('PATCH /agents/7')).toHaveLength(1));
+    expect((sent('PATCH /agents/7')[0] as { hooks: string[] }).hooks).toEqual(['default-system-date', 'default-system-user_information']);
   });
 
   it('switches to custom engine settings', async () => {
