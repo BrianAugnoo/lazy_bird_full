@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ApiError } from '@/api/client';
 import { instructions } from '@/api/endpoints/extensions';
-import { setParams, useRoute } from '@/core/router';
+import { useRoute, useRouteActions } from '@/core/router';
 import type { InstructionKind } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { MarkdownEditor } from '@/modules/viewers/MarkdownViewer';
@@ -10,6 +10,9 @@ import { useDialogs } from '@/ui/dialogContext';
 import { Icon } from '@/ui/Icon';
 import { Drawer } from '@/ui/Modal';
 import { PageHeader } from '@/ui/PageHeader';
+import { LibraryBrowser } from '@/ui/LibraryBrowser';
+import { SearchInput } from '@/ui/SearchInput';
+import { libraryExtensions, librarySelection } from '@/core/library';
 import { useToast } from '@/ui/toastContext';
 
 const KINDS: Record<InstructionKind, { label: string; help: string }> = {
@@ -115,10 +118,13 @@ function InstructionEditor({ kind, id, onClose, onSaved }: { kind: InstructionKi
 }
 
 export function InstructionsPage() {
+  const { setParams } = useRouteActions();
   const { params } = useRoute();
   const kind: InstructionKind = params.kind === 'sub' ? 'sub' : 'full';
   const list = useResource(() => instructions.list(kind), [kind]);
   const [open, setOpen] = useState<{ id: string | null } | null>(null);
+  const [search, setSearch] = useState('');
+  const extension = librarySelection(list.data ?? [], params.extension);
 
   return (
     <>
@@ -139,10 +145,12 @@ export function InstructionsPage() {
         ))}
       </div>
       <p className="muted small">{KINDS[kind].help}</p>
-      <AsyncState {...list} onRetry={list.reload} empty={<span className="muted">Nothing here yet.</span>}>
+      <SearchInput label="Search instructions" value={search} onChange={setSearch} />
+      <AsyncState {...list} onRetry={list.reload} isEmpty={() => false}>
         {(items) => (
+          <LibraryBrowser label="Instruction extensions" extensions={libraryExtensions(items)} active={extension} onSelect={extension => setParams({ extension })}>
           <div className="list">
-            {items.map((item) => (
+            {items.filter(item => item.extension === extension && `${item.name} ${item.id}`.toLowerCase().includes(search.toLowerCase())).map((item) => (
               <button key={item.id} type="button" className="list-row list-row-button" onClick={() => setOpen({ id: item.id })}>
                 <div className="list-row-main">
                   <div className="list-row-title">
@@ -154,7 +162,9 @@ export function InstructionsPage() {
                 <Icon name="chevronRight" />
               </button>
             ))}
+            {!items.some(item => item.extension === extension && `${item.name} ${item.id}`.toLowerCase().includes(search.toLowerCase())) && <div className="state-empty">{search ? 'No matching instructions.' : `No instructions in ${extension}.`}</div>}
           </div>
+          </LibraryBrowser>
         )}
       </AsyncState>
       {open && (

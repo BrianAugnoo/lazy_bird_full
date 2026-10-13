@@ -1,0 +1,15 @@
+{
+  "fileKey": "ajGYWkwUAAGLcOMbXccnxp",
+  "fileUrl": "https://www.figma.com/design/ajGYWkwUAAGLcOMbXccnxp",
+  "scope": "workspace design and prototype",
+  "screens": {
+    "chat": "3:15",
+    "files": "3:68",
+    "tools": "3:118",
+    "split": "4:35"
+  },
+  "foundations": "3:165",
+  "navigationComponent": "3:13",
+  "prototype": "Click the workspace tabs to cycle Chat \u2192 Files \u2192 Tools.",
+  "status": "Created and visually reviewed before implementation"
+}

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/ui/Icon';
+import { Popover } from '@/ui/Popover';
+import { useRouteActions } from '@/core/router';
 
 interface ComposerProps {
   placeholder: string;
@@ -13,6 +15,8 @@ interface ComposerProps {
 /** Prompt box: Enter sends, Shift+Enter adds a line, Escape stops the agent. */
 export function Composer({ placeholder, running, disabled = false, disabledReason, onSend, onStop }: ComposerProps) {
   const [text, setText] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { active } = useRouteActions();
   const area = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -23,13 +27,14 @@ export function Composer({ placeholder, running, disabled = false, disabledReaso
   }, [text]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running || !active) return;
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onStop();
+      const overlayOpen = [...document.querySelectorAll('[role="dialog"]')].some(dialog => !dialog.closest('[hidden]'));
+      if (event.key === 'Escape' && !event.defaultPrevented && !overlayOpen) onStop();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [running, onStop]);
+  }, [running, onStop, active]);
 
   const submit = () => {
     const content = text.trim();
@@ -41,6 +46,14 @@ export function Composer({ placeholder, running, disabled = false, disabledReaso
   return (
     <div className="composer">
       <div className={`composer-box ${disabled ? 'is-disabled' : ''}`}>
+        <div className="composer-add">
+          <button type="button" className="btn btn-ghost btn-icon" aria-label="Add to message" aria-haspopup="dialog" aria-expanded={menuOpen} title="Add to message" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={20} /></button>
+          {menuOpen && <Popover label="Add to message" onClose={() => setMenuOpen(false)} className="composer-menu">
+            <div className="popover-caption">More ways to create</div>
+            {[{ label: 'Import files', icon: 'upload' as const }, { label: 'Import folders', icon: 'files' as const }, { label: 'Create an image', icon: 'image' as const }].map(item => <button type="button" key={item.label} className="popover-item" aria-disabled="true" title="Coming soon — unavailable in chat"><Icon name={item.icon} size={17} /><span>{item.label}</span><small className="soon-badge">Coming soon</small></button>)}
+            <p className="popover-note">These features are not available yet.</p>
+          </Popover>}
+        </div>
         <textarea
           ref={area}
           className="composer-input"
@@ -57,13 +70,14 @@ export function Composer({ placeholder, running, disabled = false, disabledReaso
           }}
           aria-label="Message"
         />
+        <button type="button" className="btn btn-ghost btn-icon composer-microphone" aria-label="Audio — coming soon" aria-disabled="true" title="Audio — coming soon"><Icon name="microphone" size={19} /></button>
         {running ? (
-          <button type="button" className="btn btn-secondary composer-button" onClick={onStop} title="Stop (Esc)">
-            <Icon name="stop" /> Stop
+          <button type="button" className="btn btn-secondary btn-icon composer-button" onClick={onStop} title="Stop (Esc)" aria-label="Stop">
+            <Icon name="stop" size={16} />
           </button>
         ) : (
-          <button type="button" className="btn btn-primary composer-button" onClick={submit} disabled={!text.trim() || disabled} title="Send (Enter)">
-            <Icon name="send" /> Send
+          <button type="button" className="btn btn-primary btn-icon composer-button" onClick={submit} disabled={!text.trim() || disabled} title="Send (Enter)" aria-label="Send">
+            <Icon name="send" size={21} />
           </button>
         )}
       </div>

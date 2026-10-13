@@ -2,11 +2,20 @@
  * Hash router: the location is `#/{page}?key=value`, so reloading keeps the page and
  * links can point inside a page (e.g. `#/chat?conversation=3`).
  */
-import { useSyncExternalStore } from 'react';
+import { createContext, useContext, useSyncExternalStore } from 'react';
 
 export interface Route {
   page: string;
   params: Record<string, string>;
+}
+
+export type RouteChanges = Record<string, string | number | null | undefined>;
+export const RouteContext = createContext<{ route: Route; active: boolean; setParams: (changes: RouteChanges) => void } | null>(null);
+
+/** Writes in a mounted workspace tab stay scoped to that tab, even in the background. */
+export function useRouteActions() {
+  const scope = useContext(RouteContext);
+  return { setParams: scope?.setParams ?? setParams, active: scope?.active ?? true };
 }
 
 export function parseHash(hash: string): Route {
@@ -46,6 +55,7 @@ function subscribe(onChange: () => void): () => void {
 }
 
 export function useRoute(): Route {
+  const scope = useContext(RouteContext);
   const hash = useSyncExternalStore(subscribe, () => window.location.hash, () => '');
-  return parseHash(hash);
+  return scope?.route ?? parseHash(hash);
 }

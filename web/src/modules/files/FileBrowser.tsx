@@ -1,23 +1,27 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { files as filesApi } from '@/api/endpoints/files';
-import { setParams } from '@/core/router';
+import { useRouteActions } from '@/core/router';
 import { onFileChange } from '@/core/tasks/store';
 import type { FileItem } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { AsyncState } from '@/ui/AsyncState';
 import { useDialogs } from '@/ui/dialogContext';
 import { Icon } from '@/ui/Icon';
+import { FileIcon } from '@/ui/FileIcon';
+import { SearchInput } from '@/ui/SearchInput';
 import { PageHeader } from '@/ui/PageHeader';
 import { useToast } from '@/ui/toastContext';
 import { FileDetails } from './FileDetails';
 import { baseName, breadcrumbs, childFolders, formatSize, joinPath, parentOf } from './paths';
 import { FILE_STATES, fileLabel, processingSummary } from './states';
+import { FILE_DRAG_TYPE, parseFileDrag, validDestination, type FileDrag } from './drag';
 
 function loadAll() {
   return Promise.all([filesApi.list(), filesApi.directories()]).then(([list, directories]) => ({ list, directories }));
 }
 
 export function FileBrowser({ dir }: { dir: string }) {
+  const { setParams } = useRouteActions();
   const toast = useToast();
   const dialogs = useDialogs();
   const data = useResource(loadAll, []);
@@ -25,6 +29,10 @@ export function FileBrowser({ dir }: { dir: string }) {
   const [details, setDetails] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
+  const [search, setSearch] = useState('');
+  const [moving, setMoving] = useState(false);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const internalDrag = useRef<FileDrag | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -43,8 +51,8 @@ export function FileBrowser({ dir }: { dir: string }) {
 
   const list = useMemo(() => data.data?.list ?? [], [data.data]);
   const directories = useMemo(() => data.data?.directories ?? [], [data.data]);
-  const folders = useMemo(() => childFolders(dir, directories), [dir, directories]);
-  const here = useMemo(() => list.filter((file) => file.directory === dir).sort((a, b) => fileLabel(a).localeCompare(fileLabel(b))), [list, dir]);
+  const folders = useMemo(() => childFolders(dir, directories).filter(path => baseName(path).toLowerCase().includes(search.toLowerCase())), [dir, directories, search]);
+  const here = useMemo(() => list.filter((file) => file.directory === dir && fileLabel(file).toLowerCase().includes(search.toLowerCase())).sort((a, b) => fileLabel(a).localeCompare(fileLabel(b))), [list, dir, search]);
   const selectedFiles = here.filter((file) => selected.has(file.id));
   const detailFile = list.find((file) => file.id === details) ?? null;
 
@@ -60,8 +68,37 @@ export function FileBrowser({ dir }: { dir: string }) {
       await data.reload();
     } catch (reason) {
       toast.error(reason);
+      await data.reload();
     }
   };
+
+  const startDrag = (event: DragEvent, payload: FileDrag) => {
+    if (moving) { event.preventDefault(); return; }
+    internalDrag.current = payload;
+    event.dataTransfer.setData(FILE_DRAG_TYPE, JSON.stringify(payload));
+    event.dataTransfer.effectAllowed = 'move';
+  };
+  const dropFolder = (destination: string) => ({
+    onDragOver: (event: DragEvent) => {
+      const payload = internalDrag.current;
+      if (!event.dataTransfer.types.includes(FILE_DRAG_TYPE) || !payload || !validDestination(payload, destination) || moving) return;
+      event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDropTarget(destination);
+    },
+    onDragLeave: (event: DragEvent) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); },
+    onDrop: (event: DragEvent) => {
+      if (!event.dataTransfer.types.includes(FILE_DRAG_TYPE)) return;
+      event.preventDefault(); event.stopPropagation(); setDropTarget(null);
+      const payload = parseFileDrag(event.dataTransfer.getData(FILE_DRAG_TYPE));
+      internalDrag.current = null;
+      if (!payload || !validDestination(payload, destination) || moving || (destination && !directories.includes(destination))) return;
+      setMoving(true);
+      void run(async () => {
+        if (payload.kind === 'folder') await filesApi.moveDirectory(payload.path, joinPath(destination, baseName(payload.path)));
+        else for (const id of payload.ids) { const file = list.find(item => item.id === id); if (file && file.directory !== destination) await filesApi.patch(id, { dir: destination }); }
+        setSelected(new Set());
+      }, 'Moved').finally(() => setMoving(false));
+    },
+  });
 
   const upload = async (picked: File[]) => {
     if (picked.length === 0) return;
@@ -168,6 +205,7 @@ export function FileBrowser({ dir }: { dir: string }) {
       if (event.dataTransfer.types.includes('Files')) event.preventDefault();
     },
     onDrop: (event: DragEvent) => {
+      if (event.dataTransfer.types.includes(FILE_DRAG_TYPE)) return;
       event.preventDefault();
       dragDepth.current = 0;
       setDragging(false);
@@ -183,10 +221,10 @@ export function FileBrowser({ dir }: { dir: string }) {
   });
 
   return (
-    <div className="file-browser" {...dropProps}>
+    <div className="file-browser" {...dropProps} onDragEnd={() => { internalDrag.current = null; setDropTarget(null); }} aria-busy={moving}>
       <PageHeader
         title="Files"
-        description="Files are split into chunks and embedded so agents and search can use them. Drop files anywhere here to upload them."
+        description="Your knowledge, in one place. Drop files to upload, or drag them onto a folder to move."
         actions={
           <>
             <button type="button" className="btn btn-primary" onClick={() => picker.current?.click()}>
@@ -204,6 +242,7 @@ export function FileBrowser({ dir }: { dir: string }) {
           </>
         }
       />
+      <SearchInput label="Search this folder" value={search} onChange={setSearch} />
       <input
         ref={picker}
         type="file"
@@ -216,13 +255,14 @@ export function FileBrowser({ dir }: { dir: string }) {
       />
 
       <nav className="breadcrumb" aria-label="Folder">
-        <button type="button" className={`breadcrumb-item ${dir ? '' : 'is-current'}`} onClick={() => go('')}>
+        {moving && <span className="chip chip-live" role="status"><span className="spinner" /> Moving…</span>}
+        <button type="button" className={`breadcrumb-item ${dir ? '' : 'is-current'} ${dropTarget === '' ? 'is-drop-target' : ''}`} onClick={() => go('')} {...dropFolder('')}>
           Storage
         </button>
         {breadcrumbs(dir).map((crumb) => (
           <span key={crumb.path} className="breadcrumb-part">
             <Icon name="chevronRight" size={14} />
-            <button type="button" className={`breadcrumb-item ${crumb.path === dir ? 'is-current' : ''}`} onClick={() => go(crumb.path)}>
+            <button type="button" className={`breadcrumb-item ${crumb.path === dir ? 'is-current' : ''} ${dropTarget === crumb.path ? 'is-drop-target' : ''}`} onClick={() => go(crumb.path)} {...dropFolder(crumb.path)}>
               {crumb.name}
             </button>
           </span>
@@ -257,8 +297,8 @@ export function FileBrowser({ dir }: { dir: string }) {
           folders.length === 0 && here.length === 0 ? (
             <div className="state-empty drop-hint">
               <Icon name="upload" size={32} />
-              <div className="state-title">{dir ? 'This folder is empty' : 'No file yet'}</div>
-              <p className="state-desc">Drop files here, or use Upload.</p>
+              <div className="state-title">{search ? 'No matching files or folders' : dir ? 'This folder is empty' : 'No file yet'}</div>
+              <p className="state-desc">{search ? 'Try another search or clear the filter.' : 'Drop files here, or use Upload.'}</p>
             </div>
           ) : (
             <div className="table-container">
@@ -282,7 +322,7 @@ export function FileBrowser({ dir }: { dir: string }) {
                 </thead>
                 <tbody>
                   {dir && (
-                    <tr className="file-row is-folder" onDoubleClick={() => go(parentOf(dir))}>
+                    <tr className={`file-row is-folder ${dropTarget === parentOf(dir) ? 'is-drop-target' : ''}`} onDoubleClick={() => go(parentOf(dir))} {...dropFolder(parentOf(dir))}>
                       <td />
                       <td colSpan={5}>
                         <button type="button" className="file-name" onClick={() => go(parentOf(dir))}>
@@ -292,11 +332,11 @@ export function FileBrowser({ dir }: { dir: string }) {
                     </tr>
                   )}
                   {folders.map((path) => (
-                    <tr key={path} className="file-row is-folder">
+                    <tr key={path} className={`file-row is-folder ${dropTarget === path ? 'is-drop-target' : ''}`} draggable={!moving} onDragStart={event => startDrag(event, { kind: 'folder', path })} {...dropFolder(path)}>
                       <td />
                       <td>
                         <button type="button" className="file-name" onClick={() => go(path)}>
-                          <Icon name="files" size={16} className="file-icon folder" /> {baseName(path)}
+                          <FileIcon folder /> {baseName(path)}
                         </button>
                       </td>
                       <td colSpan={3} className="muted small">
@@ -316,13 +356,13 @@ export function FileBrowser({ dir }: { dir: string }) {
                   {here.map((file) => {
                     const state = FILE_STATES[file.state] ?? FILE_STATES.new;
                     return (
-                      <tr key={file.id} className={`file-row ${selected.has(file.id) ? 'is-selected' : ''}`}>
+                      <tr key={file.id} className={`file-row ${selected.has(file.id) ? 'is-selected' : ''}`} draggable={!moving} onDragStart={event => startDrag(event, { kind: 'files', ids: selected.has(file.id) ? selectedFiles.map(item => item.id) : [file.id] })}>
                         <td>
                           <input type="checkbox" aria-label={`Select ${fileLabel(file)}`} checked={selected.has(file.id)} onChange={() => toggle(file.id)} />
                         </td>
                         <td>
                           <button type="button" className="file-name" onClick={() => setParams({ file: file.id })} title="Open">
-                            <Icon name="file" size={16} className="file-icon" /> {fileLabel(file)}
+                            <FileIcon extension={file.extension} /> {fileLabel(file)}
                           </button>
                         </td>
                         <td>

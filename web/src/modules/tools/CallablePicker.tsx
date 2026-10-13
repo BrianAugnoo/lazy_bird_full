@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { CallableItem } from '@/core/types/api';
 import { Modal } from '@/ui/Modal';
+import { SearchInput } from '@/ui/SearchInput';
 import { groupByExtension, selectionState, setSelected, type CallableKind } from './catalog';
 import { ExtensionNav } from './ExtensionNav';
 import { GroupCheckbox } from './GroupCheckbox';
@@ -24,6 +25,7 @@ const ids = (items: CallableItem[]) => items.map((item) => item.id);
 export function CallablePicker({ kind, items, value, onConfirm, onClose }: CallablePickerProps) {
   const extensions = useMemo(() => groupByExtension(items), [items]);
   const [draft, setDraft] = useState(value);
+  const [search, setSearch] = useState('');
   const [active, setActive] = useState(() => (extensions.find((entry) => entry.items.some((item) => value.includes(item.id))) ?? extensions[0]).extension);
   const current = extensions.find((entry) => entry.extension === active) ?? extensions[0];
   const noun = NOUN[kind];
@@ -64,6 +66,7 @@ export function CallablePicker({ kind, items, value, onConfirm, onClose }: Calla
           badge={(entry) => `${entry.items.filter((item) => draft.includes(item.id)).length}/${entry.items.length}`}
         />
         <div className="stack">
+          <SearchInput label={`Search ${noun.many}`} value={search} onChange={setSearch} />
           <div className="row-between">
             <h3 className="card-title">{current.extension}</h3>
             {current.items.length > 0 && (
@@ -74,7 +77,7 @@ export function CallablePicker({ kind, items, value, onConfirm, onClose }: Calla
             )}
           </div>
           {current.modules.length === 0 && <p className="muted">No {noun.many} in {current.extension}.</p>}
-          {current.modules.map((module) => (
+          {current.modules.map(module => ({ ...module, items: module.items.filter(item => `${item.name} ${item.description} ${item.id}`.toLowerCase().includes(search.toLowerCase())) })).filter(module => module.items.length > 0).map((module) => (
             <section key={module.filePath} className="picker-section" aria-label={module.module}>
               <label className="picker-section-head">
                 <GroupCheckbox label={`All ${noun.many} of ${module.filePath}`} state={selectionState(ids(module.items), draft)} onChange={(on) => toggle(module.items, on)} />
@@ -92,6 +95,7 @@ export function CallablePicker({ kind, items, value, onConfirm, onClose }: Calla
               ))}
             </section>
           ))}
+          {search && !current.items.some(item => `${item.name} ${item.description} ${item.id}`.toLowerCase().includes(search.toLowerCase())) && <p className="muted small">No matching {noun.many}.</p>}
         </div>
       </form>
     </Modal>

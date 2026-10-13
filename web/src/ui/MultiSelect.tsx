@@ -30,8 +30,8 @@ export function MultiSelect({ options, value, onChange, placeholder = 'Filter…
 
   return (
     <div className="multi-select" id={id}>
-      {options.length > 6 && (
-        <input className="form-input multi-select-search" placeholder={placeholder} value={filter} onChange={(event) => setFilter(event.target.value)} />
+      {options.length > 0 && (
+        <input type="search" className="form-input multi-select-search" aria-label={placeholder === 'Filter…' ? 'Filter options' : placeholder} placeholder={placeholder} value={filter} onChange={(event) => setFilter(event.target.value)} />
       )}
       <div className="multi-select-options">
         {options.length === 0 && missing.length === 0 && <div className="muted small" style={{ padding: 8 }}>{emptyText}</div>}
@@ -52,6 +52,7 @@ export function MultiSelect({ options, value, onChange, placeholder = 'Filter…
             </span>
           </label>
         ))}
+        {filter && shown.length === 0 && <div className="muted small multi-select-empty">No matching options.</div>}
       </div>
       {value.length > 0 && <div className="multi-select-summary">{value.length} selected</div>}
     </div>

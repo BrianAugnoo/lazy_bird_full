@@ -7,6 +7,8 @@ import { ChoiceList, type Choice } from '@/ui/ChoiceList';
 import { KeyValueEditor } from '@/ui/KeyValueEditor';
 import { Drawer, Modal } from '@/ui/Modal';
 import { useToast } from '@/ui/toastContext';
+import { useDialogs } from '@/ui/dialogContext';
+import { SearchInput } from '@/ui/SearchInput';
 
 const BLANK = '';
 
@@ -36,6 +38,7 @@ export function NewSessionDialog({ onClose, onCreated }: { onClose: () => void; 
   const [title, setTitle] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState('');
   const firstValid = presets.data?.find((preset) => preset.valid)?.id;
   // Until the user picks, the first valid preset is suggested (else an empty session).
   const choice = picked ?? (presets.loading && !presets.data ? null : (firstValid ?? BLANK));
@@ -54,7 +57,7 @@ export function NewSessionDialog({ onClose, onCreated }: { onClose: () => void; 
   };
 
   const choices: Choice[] = [
-    ...(presets.data ?? []).map((preset) => ({
+    ...(presets.data ?? []).filter(preset => `${preset.name} ${preset.data?.description ?? ''}`.toLowerCase().includes(search.toLowerCase())).map((preset) => ({
       value: preset.id,
       disabled: !preset.valid,
       title: (
@@ -106,6 +109,7 @@ export function NewSessionDialog({ onClose, onCreated }: { onClose: () => void; 
         </div>
         <div className="form-group">
           <div className="form-label">Start from</div>
+          <SearchInput label="Search session presets" value={search} onChange={setSearch} />
           <PresetLoadState loading={presets.loading && !presets.data} error={presets.error} onRetry={presets.reload} />
           <ChoiceList label="Start from" choices={choices} value={choice} onChange={setPicked} onConfirm={(value) => void create(value)} />
         </div>
@@ -128,6 +132,7 @@ export function AddAgentDialog({
 }) {
   const toast = useToast();
   const presets = useResource(agentPresets.list, []);
+  const [search, setSearch] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const firstValid = presets.data?.find((preset) => preset.valid)?.id;
@@ -150,7 +155,7 @@ export function AddAgentDialog({
   };
 
   const choices: Choice[] = [
-    ...(presets.data ?? []).map((preset) => ({
+    ...(presets.data ?? []).filter(preset => `${preset.name} ${preset.data?.description ?? ''}`.toLowerCase().includes(search.toLowerCase())).map((preset) => ({
       value: preset.id,
       disabled: !preset.valid,
       title: (
@@ -186,6 +191,7 @@ export function AddAgentDialog({
           void confirm();
         }}
       >
+        <SearchInput label="Search agent presets" value={search} onChange={setSearch} />
         <PresetLoadState loading={presets.loading && !presets.data} error={presets.error} onRetry={presets.reload} />
         <ChoiceList label="Agent to add" choices={choices} value={choice} onChange={setPicked} onConfirm={(value) => void confirm(value)} />
       </form>
@@ -209,6 +215,7 @@ export function SessionSettings({
 }) {
   const toast = useToast();
   const [title, setTitle] = useState(session.title);
+  const dialogs = useDialogs();
   const [meta, setMeta] = useState<Record<string, unknown>>(session.meta ?? {});
   const toolList = useResource(toolsApi.list, []);
 
@@ -229,7 +236,7 @@ export function SessionSettings({
   };
 
   const remove = async () => {
-    if (!window.confirm(`Delete the session "${session.title}", its agents and their conversations?`)) return;
+    if (!await dialogs.confirm({ title: `Delete ${session.title}?`, message: 'Its agents and their conversations will be deleted too.', confirmLabel: 'Delete session', danger: true })) return;
     try {
       await sessions.remove(session.id);
       toast.show('Session deleted');

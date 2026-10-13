@@ -10,6 +10,8 @@ import { Icon } from '@/ui/Icon';
 import { Drawer } from '@/ui/Modal';
 import { PageHeader } from '@/ui/PageHeader';
 import { useToast } from '@/ui/toastContext';
+import { useDialogs } from '@/ui/dialogContext';
+import { SearchInput } from '@/ui/SearchInput';
 
 const TEXT: Record<EngineKind, { title: string; description: string }> = {
   embedding: {
@@ -192,6 +194,8 @@ function TryInference({ presets }: { presets: PresetOut[] }) {
 }
 
 export function EnginePresets({ kind }: { kind: EngineKind }) {
+  const dialogs = useDialogs();
+  const [search, setSearch] = useState('');
   const api = useMemo(() => engineApi(kind), [kind]);
   const toast = useToast();
   const data = useResource(() => Promise.all([api.listEngines(), api.listPresets()]).then(([engines, presets]) => ({ engines, presets })), [kind]);
@@ -213,6 +217,9 @@ export function EnginePresets({ kind }: { kind: EngineKind }) {
     const engine = engines.find((item) => item.available) ?? engines[0];
     setEditing({ draft: { id: null, name: '', engineId: engine?.id ?? null, kwargs: {}, formKey: Date.now() }, errors: {} });
   };
+  const remove = async (preset: PresetOut) => {
+    if (await dialogs.confirm({ title: `Delete ${preset.name}?`, message: 'Agents using this preset will need another one.', confirmLabel: 'Delete', danger: true })) await act(() => api.deletePreset(preset.id), 'Preset deleted');
+  };
 
   return (
     <>
@@ -225,6 +232,7 @@ export function EnginePresets({ kind }: { kind: EngineKind }) {
           </button>
         }
       />
+      <SearchInput label={`Search ${text.title.toLowerCase()} presets`} value={search} onChange={setSearch} />
       <AsyncState
         {...data}
         onRetry={data.reload}
@@ -245,7 +253,7 @@ export function EnginePresets({ kind }: { kind: EngineKind }) {
       >
         {({ presets }) => (
           <div className="list">
-            {presets.map((preset) => {
+            {presets.filter(preset => preset.name.toLowerCase().includes(search.toLowerCase())).map((preset) => {
               const engine = engines.find((item) => item.id === api.engineIdOf(preset));
               return (
                 <div key={preset.id} className={`list-row ${preset.default ? 'is-highlighted' : ''}`}>
@@ -286,7 +294,7 @@ export function EnginePresets({ kind }: { kind: EngineKind }) {
                       type="button"
                       className="btn btn-ghost btn-icon btn-sm"
                       aria-label={`Delete ${preset.name}`}
-                      onClick={() => window.confirm(`Delete the preset "${preset.name}"?`) && act(() => api.deletePreset(preset.id), 'Preset deleted')}
+                      onClick={() => void remove(preset)}
                     >
                       <Icon name="trash" />
                     </button>
@@ -294,6 +302,7 @@ export function EnginePresets({ kind }: { kind: EngineKind }) {
                 </div>
               );
             })}
+            {search && !presets.some(preset => preset.name.toLowerCase().includes(search.toLowerCase())) && <div className="state-empty">No matching presets.</div>}
           </div>
         )}
       </AsyncState>

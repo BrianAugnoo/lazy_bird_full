@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Agent, Conversation, Session } from '@/core/types/api';
 import { Icon } from '@/ui/Icon';
+import { SearchInput } from '@/ui/SearchInput';
 import { agentTree, relativeTime } from './tree';
 
 interface SessionRailProps {
@@ -28,9 +29,14 @@ const COLLAPSED_LIMIT = 6;
 export function SessionRail(props: SessionRailProps) {
   const { sessions, session, agents, conversations, selectedConversation, selectedAgent } = props;
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [search, setSearch] = useState('');
+  const [sessionSearch, setSessionSearch] = useState('');
+  const needle = search.toLowerCase().trim();
+  const matches = conversations.filter(item => `${item.title} ${agents.find(agent => agent.id === item.agent_id)?.name ?? ''}`.toLowerCase().includes(needle));
 
   return (
     <aside className="chat-rail" aria-label="Sessions and conversations">
+      <div className="rail-search"><SearchInput label="Search sessions" value={sessionSearch} onChange={setSessionSearch} /></div>
       <div className="chat-rail-head">
         <select
           className="form-input"
@@ -38,7 +44,7 @@ export function SessionRail(props: SessionRailProps) {
           onChange={(event) => props.onSelectSession(Number(event.target.value))}
           aria-label="Session"
         >
-          {sessions.map((item) => (
+          {sessions.filter(item => item.id === session?.id || item.title.toLowerCase().includes(sessionSearch.toLowerCase())).map((item) => (
             <option key={item.id} value={item.id}>
               {item.title}
             </option>
@@ -51,15 +57,17 @@ export function SessionRail(props: SessionRailProps) {
           <Icon name="plus" />
         </button>
         {props.onClose && (
-          <button type="button" className="btn btn-ghost btn-icon mobile-inline" onClick={props.onClose} aria-label="Back to the chat">
+          <button type="button" className="btn btn-ghost btn-icon" onClick={props.onClose} aria-label="Hide sessions and conversations">
             <Icon name="close" />
           </button>
         )}
       </div>
+      <div className="rail-search"><SearchInput label="Search conversations and agents" value={search} onChange={setSearch} /></div>
 
       <div className="chat-rail-body">
         {agentTree(agents).map(({ agent, depth }) => {
-          const own = conversations.filter((conversation) => conversation.agent_id === agent.id);
+          const own = matches.filter((conversation) => conversation.agent_id === agent.id);
+          if (needle && own.length === 0 && !agent.name.toLowerCase().includes(needle)) return null;
           const showAll = expanded[agent.id];
           const shown = showAll ? own : own.slice(0, COLLAPSED_LIMIT);
           return (
@@ -103,6 +111,7 @@ export function SessionRail(props: SessionRailProps) {
             </div>
           );
         })}
+        {needle && matches.length === 0 && !agents.some(agent => agent.name.toLowerCase().includes(needle)) && <p className="rail-no-results muted small">No matching conversations or agents.</p>}
         <button type="button" className="btn btn-ghost btn-sm rail-add" onClick={props.onAddAgent} disabled={!session}>
           <Icon name="plus" /> Add an agent
         </button>

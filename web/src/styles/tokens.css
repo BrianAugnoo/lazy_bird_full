@@ -1,119 +1,73 @@
-/*
- * Design tokens — "field notebook": cool paper surfaces, ink text, one kingfisher
- * accent for selection and primary actions, amber only for live activity.
- * Light by default, dark when the system asks for it.
- */
+/* Obsidian workspace. All visual semantics are centralized here. */
 :root {
-  color-scheme: light;
-
-  /* Surfaces */
-  --bg-app: #f3f5f5;
-  --bg-sidebar: #eaeeee;
-  --bg-card: #ffffff;
-  --bg-card-hover: #f6f8f8;
-  --bg-input: #ffffff;
-  --bg-sunken: #eef1f1;
-  --bg-overlay: rgba(20, 30, 34, 0.42);
-
-  /* Lines */
-  --border-subtle: #e4e9ea;
-  --border-base: #d3dadc;
-  --border-strong: #b5c0c3;
-  --border-focus: #0e7d86;
-
-  /* Ink */
-  --text-primary: #172227;
-  --text-secondary: #43525a;
-  --text-muted: #6d7b82;
-  --text-inverse: #ffffff;
-
-  /* Accent: kingfisher */
-  --accent-primary: #0e7d86;
-  --accent-primary-hover: #0a646c;
-  --accent-soft: #e1f1f2;
-  --accent-secondary: #0e7d86;
-  --accent-glow: rgba(14, 125, 134, 0.18);
-
-  /* Live activity: amber */
-  --live: #b7770c;
-  --live-soft: #fbf0d9;
-
-  /* States */
-  --color-success: #2a7d47;
-  --color-success-bg: #e3f2e8;
-  --color-warning: #a66a06;
-  --color-warning-bg: #fbf0d9;
-  --color-error: #b93a33;
-  --color-error-bg: #f9e5e3;
-  --color-info: #2b6cb0;
-  --color-info-bg: #e5eef8;
-
-  /* Shape */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-
-  --shadow-sm: 0 1px 1px rgba(23, 34, 39, 0.06);
-  --shadow-md: 0 2px 6px rgba(23, 34, 39, 0.08);
-  --shadow-lg: 0 12px 32px rgba(23, 34, 39, 0.16);
-
-  /* Type */
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+  --bg-app: #09090b;
+  --bg-sidebar: #101012;
+  --bg-card: #151518;
+  --bg-input: #131316;
+  --bg-sunken: #1c1c20;
+  --overlay-hover: rgba(255,255,255,0.06);
+  --overlay-selected: rgba(255,255,255,0.10);
+  --bg-card-hover: var(--overlay-hover);
+  --bg-overlay: rgba(0,0,0,0.65);
+  --border-subtle: #232327;
+  --border-base: #2c2c31;
+  --border-strong: #494950;
+  --border-focus: #c4c4ce;
+  --text-primary: #ededf0;
+  --text-secondary: #bcbcc5;
+  --text-muted: #9999a5;
+  --text-inverse: #111114;
+  --accent-primary: #ededf0;
+  --accent-primary-hover: #ffffff;
+  --accent-soft: var(--overlay-selected);
+  --accent-glow: rgba(255,255,255,0.15);
+  --color-success: #8fc7a4;
+  --color-success-bg: #18271f;
+  --color-warning: #e6bb79;
+  --color-warning-bg: #2c2419;
+  --color-error: #ec9292;
+  --color-error-bg: #301d20;
+  --color-info: #b7acd9;
+  --color-info-bg: #242132;
+  --live: var(--color-warning);
+  --live-soft: var(--color-warning-bg);
+  --chat-user-bg: #1c2d48;
+  --chat-user-text: #eef2f8;
+  --folder-back: #8b8980;
+  --folder-front: #bbb8ac;
+  --file-document: var(--text-secondary);
+  --file-code: var(--color-info);
+  --file-data: var(--color-warning);
+  --file-image: var(--color-success);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-message: 20px;
+  --radius-full: 999px;
+  --shadow-sm: none;
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.16);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,0.45);
+  --font-ui: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
   --text-md: 0.875rem;
   --text-lg: 1rem;
   --text-xl: 1.25rem;
   --text-2xl: 1.5rem;
-
-  --transition-fast: 0.12s ease;
-  --transition-normal: 0.2s ease;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-
-    --bg-app: #111618;
-    --bg-sidebar: #0d1214;
-    --bg-card: #182023;
-    --bg-card-hover: #1e272b;
-    --bg-input: #131a1d;
-    --bg-sunken: #0f1517;
-    --bg-overlay: rgba(0, 0, 0, 0.6);
-
-    --border-subtle: #222c30;
-    --border-base: #2c383d;
-    --border-strong: #42525a;
-    --border-focus: #45b8c1;
-
-    --text-primary: #e5ecee;
-    --text-secondary: #b3c0c5;
-    --text-muted: #85949b;
-    --text-inverse: #0d1214;
-
-    --accent-primary: #3eb2bb;
-    --accent-primary-hover: #63c6cd;
-    --accent-soft: #15353a;
-    --accent-secondary: #3eb2bb;
-    --accent-glow: rgba(62, 178, 187, 0.2);
-
-    --live: #e3a640;
-    --live-soft: #3a2c12;
-
-    --color-success: #5cbf7c;
-    --color-success-bg: #163222;
-    --color-warning: #e3a640;
-    --color-warning-bg: #3a2c12;
-    --color-error: #ec746b;
-    --color-error-bg: #3a1a18;
-    --color-info: #6aa8ec;
-    --color-info-bg: #16273a;
-
-    --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.35);
-    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
-  }
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --sidebar-width: 264px;
+  --panel-width: 280px;
+  --nav-height: 40px;
+  --transition-fast: 120ms ease;
+  --transition-normal: 180ms ease;
 }

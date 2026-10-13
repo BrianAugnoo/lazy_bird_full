@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { Icon } from '@/ui/Icon';
 import type { CallableExtension } from './catalog';
 
 interface ExtensionNavProps {
@@ -12,9 +13,11 @@ interface ExtensionNavProps {
 
 /** The extensions of the Tools and Hooks pages and pickers: one entry per folder. */
 export function ExtensionNav({ extensions, active, onSelect, badge, label }: ExtensionNavProps) {
+  const [collapsed, setCollapsed] = useState(false);
   return (
-    <nav className="extension-nav" aria-label={label}>
-      {extensions.map((entry) => {
+    <div className={`extension-nav ${collapsed ? 'is-collapsed' : ''}`}>
+      <button type="button" className="btn btn-ghost btn-sm panel-toggle" onClick={() => setCollapsed(!collapsed)} aria-expanded={!collapsed} title={collapsed ? 'Show extensions' : 'Hide extensions'}><Icon name="panel" size={16} /><span>{collapsed ? 'Show' : 'Extensions'}</span></button>
+      {!collapsed && <nav aria-label={label}>{extensions.map((entry) => {
         const selected = entry.extension === active;
         return (
           <button
@@ -28,7 +31,7 @@ export function ExtensionNav({ extensions, active, onSelect, badge, label }: Ext
             <span className="extension-nav-badge">{badge(entry)}</span>
           </button>
         );
-      })}
-    </nav>
+      })}</nav>}
+    </div>
   );
 }

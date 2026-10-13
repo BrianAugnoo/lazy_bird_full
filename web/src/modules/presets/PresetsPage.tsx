@@ -3,6 +3,8 @@ import { ApiError } from '@/api/client';
 import { agentPresets, hooks, instructions, sessionPresets, skills, tools } from '@/api/endpoints/extensions';
 import type { AgentPresetData, ExtensionPreset, SessionPresetData } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
+import { useRoute, useRouteActions } from '@/core/router';
+import { libraryExtensions, librarySelection } from '@/core/library';
 import { CallableField } from '@/modules/tools/CallableField';
 import { AsyncState } from '@/ui/AsyncState';
 import { useDialogs } from '@/ui/dialogContext';
@@ -11,6 +13,8 @@ import { KeyValueEditor } from '@/ui/KeyValueEditor';
 import { Drawer } from '@/ui/Modal';
 import { MultiSelect } from '@/ui/MultiSelect';
 import { PageHeader } from '@/ui/PageHeader';
+import { LibraryBrowser } from '@/ui/LibraryBrowser';
+import { SearchInput } from '@/ui/SearchInput';
 import { useToast } from '@/ui/toastContext';
 
 type Kind = 'agent' | 'session';
@@ -240,9 +244,13 @@ function PresetEditor({ kind, preset, onClose, onSaved }: { kind: Kind; preset: 
 }
 
 export function PresetsPage({ kind }: { kind: Kind }) {
+  const { params } = useRoute();
+  const { setParams } = useRouteActions();
   const list = useResource(() => (API[kind].list as () => Promise<ExtensionPreset<Data>[]>)(), [kind]);
   const [open, setOpen] = useState<{ preset: ExtensionPreset<Data> | null } | null>(null);
   const text = TEXT[kind];
+  const [search, setSearch] = useState('');
+  const extension = librarySelection(list.data ?? [], params.extension);
 
   return (
     <>
@@ -255,10 +263,12 @@ export function PresetsPage({ kind }: { kind: Kind }) {
           </button>
         }
       />
-      <AsyncState {...list} onRetry={list.reload} empty={<span className="muted">No preset yet.</span>}>
+      <AsyncState {...list} onRetry={list.reload} isEmpty={() => false}>
         {(items) => (
+          <LibraryBrowser label={`${kind === 'agent' ? 'Agent' : 'Session'} preset extensions`} extensions={libraryExtensions(items)} active={extension} onSelect={extension => setParams({ extension })}>
+          <SearchInput label={`Search ${kind} presets`} value={search} onChange={setSearch} />
           <div className="card-grid">
-            {items.map((preset) => (
+            {items.filter(preset => preset.extension === extension && `${preset.name} ${preset.data?.description ?? ''}`.toLowerCase().includes(search.toLowerCase())).map((preset) => (
               <button key={preset.id} type="button" className="item-card" onClick={() => setOpen({ preset })}>
                 <span className="item-card-title">
                   <Icon name={kind === 'agent' ? 'agents' : 'team'} size={16} /> {preset.name}
@@ -280,6 +290,8 @@ export function PresetsPage({ kind }: { kind: Kind }) {
               </button>
             ))}
           </div>
+          {!items.some(preset => preset.extension === extension && `${preset.name} ${preset.data?.description ?? ''}`.toLowerCase().includes(search.toLowerCase())) && <div className="state-empty">{search ? 'No matching presets.' : `No presets in ${extension}.`}</div>}
+          </LibraryBrowser>
         )}
       </AsyncState>
       {open && (

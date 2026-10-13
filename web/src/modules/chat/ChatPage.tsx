@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { agents as agentsApi, conversations as conversationsApi, sessions as sessionsApi } from '@/api/endpoints/agents';
-import { buildHash, setParams, useRoute } from '@/core/router';
+import { buildHash, useRoute, useRouteActions } from '@/core/router';
 import type { Agent, Conversation } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { AsyncState } from '@/ui/AsyncState';
 import { Icon } from '@/ui/Icon';
 import { useToast } from '@/ui/toastContext';
+import { useDialogs } from '@/ui/dialogContext';
 import { AgentEditor } from './AgentEditor';
 import { Composer } from './Composer';
 import { ConversationView } from './ConversationView';
@@ -18,12 +19,23 @@ const toNumber = (value: string | undefined) => (value && Number.isFinite(Number
 
 export function ChatPage() {
   const route = useRoute();
+  const { setParams } = useRouteActions();
+  const dialogs = useDialogs();
   const toast = useToast();
   const sessionId = toNumber(route.params.session);
   const conversationId = toNumber(route.params.conversation);
   const agentParam = toNumber(route.params.agent);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [railOpen, setRailOpen] = useState(false);
+  const [railOpen, setRailOpen] = useState(() => window.matchMedia('(min-width: 861px)').matches);
+  const layout = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0 && width < 720) setRailOpen(false);
+    });
+    if (layout.current) observer.observe(layout.current);
+    return () => observer.disconnect();
+  }, []);
   const [firstMessage, setFirstMessage] = useState<{ conversationId: number; content: string } | null>(null);
 
   const sessions = useResource(sessionsApi.list, []);
@@ -37,7 +49,7 @@ export function ChatPage() {
     if (!list || list.length === 0 || session) return;
     const latest = [...list].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
     setParams({ session: latest.id, conversation: null, agent: null });
-  }, [sessions.data, session]);
+  }, [sessions.data, session, setParams]);
 
   const agentList = useMemo(() => agents.data ?? [], [agents.data]);
   const agentIds = useMemo(() => new Set(agentList.map((agent) => agent.id)), [agentList]);
@@ -81,7 +93,7 @@ export function ChatPage() {
   };
 
   const renameConversation = async (item: Conversation) => {
-    const title = window.prompt('Conversation title', item.title)?.trim();
+    const title = (await dialogs.prompt({ title: 'Rename conversation', label: 'Conversation title', initial: item.title, confirmLabel: 'Rename' }))?.trim();
     if (!title || title === item.title) return;
     try {
       await conversationsApi.rename(item.id, title);
@@ -92,7 +104,7 @@ export function ChatPage() {
   };
 
   const deleteConversation = async (item: Conversation) => {
-    if (!window.confirm(`Delete the conversation "${item.title}"?`)) return;
+    if (!await dialogs.confirm({ title: `Delete ${item.title}?`, message: 'Messages in this conversation will be deleted.', confirmLabel: 'Delete', danger: true })) return;
     try {
       await conversationsApi.remove(item.id);
       if (item.id === conversationId) openConversation(null, item.agent_id);
@@ -126,7 +138,7 @@ export function ChatPage() {
   }
 
   return (
-    <div className={`chat-layout ${railOpen ? 'show-rail' : ''}`}>
+    <div ref={layout} className={`chat-layout ${railOpen ? 'show-rail' : 'rail-collapsed'}`}>
       <AsyncState {...sessions} onRetry={sessions.reload}>
         {(list) => (
           <SessionRail
@@ -152,20 +164,20 @@ export function ChatPage() {
 
       <section className="chat-main">
         <header className="chat-header">
-          <button type="button" className="btn btn-ghost btn-icon mobile-inline" onClick={() => setRailOpen(true)} aria-label="Show sessions and conversations">
-            <Icon name="chat" />
+          <button type="button" className="btn btn-ghost btn-icon" onClick={() => setRailOpen(!railOpen)} aria-expanded={railOpen} aria-label={railOpen ? 'Hide sessions and conversations' : 'Show sessions and conversations'}>
+            <Icon name="panel" />
           </button>
           <div className="chat-header-title">
             <span className="truncate">{conversation?.title ?? (activeAgent ? `New chat with ${activeAgent.name}` : session?.title ?? 'Chat')}</span>
           </div>
           <div className="row">
             {conversation && (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => openConversation(null, conversation.agent_id)}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => openConversation(null, conversation.agent_id)} aria-label="New chat" title="New chat">
                 <Icon name="plus" /> <span className="btn-label">New chat</span>
               </button>
             )}
             {activeAgent && (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDialog({ kind: 'agent', agent: activeAgent })} title="Model, instructions, tools…">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDialog({ kind: 'agent', agent: activeAgent })} title="Model, instructions, tools…" aria-label={`Settings of ${activeAgent.name}`}>
                 <Icon name="settings" /> <span className="btn-label">{activeAgent.name}</span>
               </button>
             )}

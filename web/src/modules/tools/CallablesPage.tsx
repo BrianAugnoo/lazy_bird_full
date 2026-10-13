@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ApiError } from '@/api/client';
 import { callableApi } from '@/api/endpoints/extensions';
 import type { SettingsValues } from '@/core/fields/types';
-import { setParams, useRoute } from '@/core/router';
+import { useRoute, useRouteActions } from '@/core/router';
 import type { CallableItem, ModuleSettings } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
 import { SettingsForm } from '@/modules/settings-form/SettingsForm';
@@ -13,6 +13,7 @@ import { PageHeader } from '@/ui/PageHeader';
 import { useToast } from '@/ui/toastContext';
 import { groupByExtension, type CallableKind as Kind, type CallableModule } from './catalog';
 import { ExtensionNav } from './ExtensionNav';
+import { SearchInput } from '@/ui/SearchInput';
 
 const TEXT: Record<Kind, { title: string; description: string; folder: string }> = {
   tools: {
@@ -107,6 +108,7 @@ function CallableEntry({ kind, item }: { kind: Kind; item: CallableItem }) {
       </div>
       {item.description && <p className="callable-description">{item.description}</p>}
       {kind === 'tools' && <Parameters item={item} />}
+      {kind === 'tools' && <details className="schema-details"><summary><Icon name="schema" size={14} /> JSON schema</summary><pre className="code">{JSON.stringify(item.parameters ?? {}, null, 2)}</pre></details>}
       {(item.meta_params.length > 0 || item.accepts_any_meta) && (
         <div className="small muted">
           Reads session values:{' '}
@@ -154,11 +156,13 @@ function ModuleSection({ kind, module, settings, onSettings }: { kind: Kind; mod
 }
 
 export function CallablesPage({ kind }: { kind: Kind }) {
+  const { setParams } = useRouteActions();
   const api = useMemo(() => callableApi(kind), [kind]);
   const toast = useToast();
   const { params } = useRoute();
   const data = useResource(() => load(kind), [kind]);
   const [editing, setEditing] = useState<ModuleSettings | null>(null);
+  const [search, setSearch] = useState('');
   const text = TEXT[kind];
 
   const extensions = useMemo(() => groupByExtension(data.data?.items ?? []), [data.data]);
@@ -186,6 +190,7 @@ export function CallablesPage({ kind }: { kind: Kind }) {
           </button>
         }
       />
+      <SearchInput label={`Search ${kind}`} value={search} onChange={setSearch} />
       <AsyncState {...data} onRetry={data.reload} isEmpty={() => false}>
         {({ settings }) => (
           <div className="extension-browser">
@@ -207,9 +212,10 @@ export function CallablesPage({ kind }: { kind: Kind }) {
                   </p>
                 </div>
               )}
-              {current.modules.map((module) => (
+              {current.modules.map(module => ({ ...module, items: module.items.filter(item => `${item.name} ${item.id} ${item.description}`.toLowerCase().includes(search.toLowerCase())) })).filter(module => module.items.length > 0).map((module) => (
                 <ModuleSection key={module.filePath} kind={kind} module={module} settings={settings.find((entry) => entry.file_path === module.filePath)} onSettings={setEditing} />
               ))}
+              {search && current.items.length > 0 && !current.items.some(item => `${item.name} ${item.id} ${item.description}`.toLowerCase().includes(search.toLowerCase())) && <div className="state-empty">No {kind} match “{search}”.</div>}
             </div>
           </div>
         )}

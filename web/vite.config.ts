@@ -13,6 +13,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: { codeSplitting: { groups: [{ name: 'vendor', test: /node_modules/ }] } },
+    },
+  },
   server: {
     proxy: {
       '/api': {
@@ -29,5 +34,6 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: [],
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 })

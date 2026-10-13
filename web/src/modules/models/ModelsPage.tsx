@@ -8,6 +8,7 @@ import { useDialogs } from '@/ui/dialogContext';
 import { Icon } from '@/ui/Icon';
 import { Drawer } from '@/ui/Modal';
 import { PageHeader } from '@/ui/PageHeader';
+import { SearchInput } from '@/ui/SearchInput';
 import { useToast } from '@/ui/toastContext';
 import { AddModel } from './AddModel';
 
@@ -149,6 +150,7 @@ function HubAccount() {
 }
 
 export function ModelsPage() {
+  const [search, setSearch] = useState('');
   const toast = useToast();
   const dialogs = useDialogs();
   const list = useResource(() => modelsApi.list(), []);
@@ -211,6 +213,7 @@ export function ModelsPage() {
         }
       />
       <HubAccount />
+      <SearchInput label="Search models" value={search} onChange={setSearch} />
       {transfers.length > 0 && (
         <div className="list">
           {transfers.map((task) => (
@@ -243,7 +246,7 @@ export function ModelsPage() {
       >
         {(models) => (
           <div className="list">
-            {models.map((model) => (
+            {models.filter(model => `${model.name} ${model.hf_path} ${model.formats.join(' ')}`.toLowerCase().includes(search.toLowerCase())).map((model) => (
               <div key={model.id} className="list-row">
                 <div className="list-row-main">
                   <div className="list-row-title">
@@ -275,6 +278,7 @@ export function ModelsPage() {
                 </div>
               </div>
             ))}
+            {search && !models.some(model => `${model.name} ${model.hf_path} ${model.formats.join(' ')}`.toLowerCase().includes(search.toLowerCase())) && <div className="state-empty">No matching models.</div>}
           </div>
         )}
       </AsyncState>

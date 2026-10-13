@@ -9,16 +9,20 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:ui": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
     "@types/dompurify": "^3.0.5",
     "dompurify": "^3.4.15",
+    "lucide-react": "^1.55.0",
     "marked": "^18.0.13",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.64.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.13.3",

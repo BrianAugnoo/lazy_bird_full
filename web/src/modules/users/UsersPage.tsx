@@ -109,6 +109,7 @@ export function UsersPage() {
       await users.remove(user.id);
       toast.show('User deleted');
       await Promise.all([list.reload(), current.reload()]);
+      window.dispatchEvent(new Event('profile-changed'));
     } catch (reason) {
       toast.error(reason);
     }
@@ -119,6 +120,7 @@ export function UsersPage() {
       await profile.switchTo(user.id);
       toast.show(`${user.name} is now the active user`);
       await current.reload();
+      window.dispatchEvent(new Event('profile-changed'));
     } catch (reason) {
       toast.error(reason);
     }
@@ -173,6 +175,7 @@ export function UsersPage() {
           onSaved={() => {
             setEditing(null);
             void Promise.all([list.reload(), current.reload()]);
+            window.dispatchEvent(new Event('profile-changed'));
           }}
         />
       )}

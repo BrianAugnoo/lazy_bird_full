@@ -12,6 +12,8 @@ import { CallableField } from '@/modules/tools/CallableField';
 import { Drawer } from '@/ui/Modal';
 import { MultiSelect } from '@/ui/MultiSelect';
 import { useToast } from '@/ui/toastContext';
+import { useDialogs } from '@/ui/dialogContext';
+import { SearchInput } from '@/ui/SearchInput';
 
 const inference = engineApi('inference');
 const INFERENCE_KEYS = ['preset_inference_engine_id', 'inference_engine_id', 'inference_settings'];
@@ -54,6 +56,7 @@ function loadOptions() {
 
 /** Everything about one agent: model, instructions, tools, skills, hooks, sub-agents. */
 export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved, onDeleted }: AgentEditorProps) {
+  const dialogs = useDialogs();
   const toast = useToast();
   const options = useResource(loadOptions, []);
   const seen = useResource(() => (agent ? agentsApi.tools(agent.id) : Promise.resolve([])), [agent?.id]);
@@ -63,6 +66,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
   const [settingsKey, setSettingsKey] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [modelSearch, setModelSearch] = useState('');
 
   const set = <K extends keyof AgentFields>(key: K, value: AgentFields[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const setMeta = (changes: AgentInferenceMeta) => set('meta', { ...meta, ...changes });
@@ -105,7 +109,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
   };
 
   const remove = async () => {
-    if (!agent || !window.confirm(`Delete ${agent.name} and its conversations?`)) return;
+    if (!agent || !await dialogs.confirm({ title: `Delete ${agent.name}?`, message: 'Its conversations will be deleted too.', confirmLabel: 'Delete agent', danger: true })) return;
     try {
       await agentsApi.remove(agent.id);
       toast.show('Agent deleted');
@@ -194,6 +198,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
             </div>
           ) : (
             <div className="form-group">
+              <SearchInput label="Search inference presets" value={modelSearch} onChange={setModelSearch} />
               <select
                 className="form-input"
                 value={meta.preset_inference_engine_id ?? ''}
@@ -201,7 +206,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
                 aria-label="Inference preset"
               >
                 <option value="">Default preset{defaultPreset ? ` (${defaultPreset.name})` : ''}</option>
-                {presets.map((preset) => (
+                {presets.filter(preset => preset.id === meta.preset_inference_engine_id || preset.name.toLowerCase().includes(modelSearch.toLowerCase())).map((preset) => (
                   <option key={preset.id} value={preset.id}>
                     {preset.name}
                     {preset.default ? ' — default' : ''}
@@ -214,6 +219,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
         ) : (
           <>
             <div className="form-group">
+              <SearchInput label="Search inference engines" value={modelSearch} onChange={setModelSearch} />
               <select
                 className="form-input"
                 value={meta.inference_engine_id ?? ''}
@@ -224,7 +230,7 @@ export function AgentEditor({ agent, sessionId, sessionAgents, onClose, onSaved,
                 aria-label="Inference engine"
               >
                 <option value="">Choose an engine…</option>
-                {engines.map((item) => (
+                {engines.filter(item => item.id === meta.inference_engine_id || item.name.toLowerCase().includes(modelSearch.toLowerCase())).map((item) => (
                   <option key={item.id} value={item.id} disabled={!item.available}>
                     {item.name}
                     {item.available ? '' : ' (unavailable)'}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ApiError } from '@/api/client';
 import { files as filesApi } from '@/api/endpoints/files';
 import { getViewer, resolveViewer } from '@/core/file-viewers/registry';
-import { setParams } from '@/core/router';
+import { useRouteActions } from '@/core/router';
 import { onFileChange } from '@/core/tasks/store';
 import type { FileItem } from '@/core/types/api';
 import { useResource } from '@/core/useResource';
@@ -26,6 +26,7 @@ async function loadFile(id: number): Promise<{ file: FileItem; content: string |
 
 /** A file opened full page: its viewer (editable for text), state and actions. */
 export function FileEditor({ fileId }: { fileId: number }) {
+  const { setParams, active } = useRouteActions();
   const toast = useToast();
   const dialogs = useDialogs();
   const data = useResource(() => loadFile(fileId), [fileId]);
@@ -62,7 +63,7 @@ export function FileEditor({ fileId }: { fileId: number }) {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+      if (active && (event.ctrlKey || event.metaKey) && event.key === 's') {
         event.preventDefault();
         void save();
       }
@@ -87,7 +88,7 @@ export function FileEditor({ fileId }: { fileId: number }) {
   const state = file ? (FILE_STATES[file.state] ?? FILE_STATES.new) : null;
 
   return (
-    <div className="file-editor">
+    <div className="file-editor" data-unsaved={dirty}>
       <div className="file-editor-head">
         <button type="button" className="btn btn-ghost btn-sm" onClick={close}>
           <Icon name="back" /> Files

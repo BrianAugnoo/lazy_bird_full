@@ -104,7 +104,8 @@ src/
   styles/                tokens.css (colors, type, radii; light + dark),
                          base.css, components.css (buttons, chips, forms, lists,
                          tables, modals, drawers, toasts…), layout.css (shell),
-                         pages.css (styles specific to pages)
+                         pages.css (styles specific to pages), workspace.css
+                         (Obsidian chrome and shared interaction conventions)
   api/
     client.ts            request(), ApiError, toApiError, downloads, uploadBody() (progress)
     socket.ts            socketUrl(), LiveSocket (reconnecting JSON WebSocket)
@@ -117,7 +118,9 @@ src/
     fields/              settings field contract (§11.2)
     file-viewers/        file viewer contract (§11.3)
     types/api.ts         backend payload types
-  ui/                    shared components: Icon, PageHeader, AsyncState, Modal,
+  file_icon/             SVG assets + registry.json; extension lookup with fallback
+  ui/                    shared components: Icon, FileIcon, SearchInput,
+                         LibraryBrowser, Popover, PageHeader, AsyncState, Modal,
                          Drawer, MultiSelect, ChoiceList, KeyValueEditor, Markdown,
                          Toasts, Dialogs (styled confirm/prompt), Sidebar
   modules/               one folder per feature; an index.ts registers its pages
@@ -276,21 +279,32 @@ Editing a prompt = `PATCH /messages/{id}` + `rewind` + `run`; regenerating =
 
 ## 15. Design language
 
-"Field notebook": cool paper surfaces, ink text, one kingfisher accent
-(`--accent-primary`) for selection and primary actions, amber (`--live`) only for
-things happening now (running tasks, streaming). Status colors are reserved for
-states. Light by default, dark through `prefers-color-scheme`. Use the tokens of
-`styles/tokens.css`, never raw colors. Hairline borders, small radii, no gradients,
-sentence case everywhere. Lists are `.list` / `.list-row`, editing happens in a
+"Obsidian workspace": deep black content, neutral elevated surfaces, gray
+translucent hover/selection overlays and ivory primary buttons. Dark regardless of
+the OS theme. No cyan secondary accent. Sage means success, amber warning/live,
+coral error/destructive, lavender information; navy is reserved for user messages.
+Status color always comes with text or an icon. Use `styles/tokens.css`, never raw
+colors. `workspace.css` applies the shared design to every registered page.
+Hairline borders, 6/8/12px control radii, 20px message/composer radii, no gradients,
+sentence case everywhere. The design charter, portable tokens, Figma prototype and
+reviewed screenshots live in `../web_design/` (explicitly requested design knowledge
+base; implementation reference remains here). Lists are `.list` / `.list-row`, editing happens in a
 `Drawer`, confirmations in `Dialogs`, results in toasts. A dialog offering options
 (`ChoiceList`) never acts on a single click: the user picks, then confirms with the
-primary button or Enter. Escape closes only the overlay opened last. The tools and
+primary button or Enter. Overlays trap focus, restore their invoking control, and
+Escape closes only the overlay opened last. The tools and
 hooks of an agent or agent preset are chosen in a picker (`modules/tools/CallableField`
 opens `CallablePicker`), laid out like the Tools and Hooks pages: extensions on the
 left, modules as sections, a checkbox per item, per module and per extension (dashed
 when partly chosen); Confirm applies the choice to the form, which keeps the order
-items were chosen in (hooks run in that order). Icons come from
-`ui/Icon.tsx` (24×24 line icons; add a path there when a new one is needed).
+items were chosen in (hooks run in that order). Tools expose a native `details`
+disclosure containing the full JSON schema, separate from their parameter summary.
+Instructions, agent presets and session presets have searchable extension submenus,
+with default/custom always present; instruction kinds retain their own tabs.
+Icons come from `ui/Icon.tsx` (Lucide 24×24 line icons with 1.8px rounded strokes,
+selected through SuperIcons). File icons use `file_icon/registry.json`: add an SVG
+and one extension mapping; unknown or missing mappings resolve to document.svg.
+Folder icons use a Finder-inspired silhouette with the centralized folder tokens.
 Layouts must work from 390 px wide (the chat rail becomes an overlay).
 
 ## 16. Conventions
@@ -317,3 +331,73 @@ comes with tests.
 - Tool and hook settings are sent and shown in clear text, including secrets
   (password fields only hide them on screen).
 - The Data model page loads Mermaid from a CDN (needs internet access).
+- Chat file/folder import, image creation and microphone are Coming soon UI only:
+  no requests, recording or browser permission prompts. Files-page upload works.
+
+## 19. Workspace tabs and layout
+
+The shell keeps a mounted page tree for every page visited within a workspace tab.
+Inactive tabs and inactive page views use `hidden` and `inert`; they retain drafts,
+scroll and live sockets. Do not use React
+Activity or unmount inactive trees: suspending effects would disconnect live chats.
+`core/workspace.ts` restores only tab IDs and routes from sessionStorage, validates
+them against the page registry, and ignores malformed/obsolete entries. No form
+drafts, credentials or file contents are persisted. Split pane IDs and their size
+ratio are restored with validated tab addresses. The main sidebar's collapsed
+state is stored in localStorage.
+
+`RouteContext` scopes `useRoute()` and `useRouteActions().setParams` to each tree.
+Pages must use the scoped action hook, never the global `setParams`, so background
+loads cannot change another tab's address. The active tab mirrors its route into
+the existing hash address; hash links remain supported. Normal sidebar, profile
+menu and page-search navigation always changes the focused tab; returning to a
+visited page restores that tab's own route and mounted state. Navigation never
+creates or switches to another tab automatically. Ctrl/Cmd/Shift-click and
+middle-click explicitly open additional tabs. Plus duplicates the focused tab's
+complete current address directly, without a page picker. Ctrl/Cmd+K searches pages,
+Ctrl/Cmd+Shift+T duplicates
+the active address, Alt+[ / Alt+] switches tabs. Tablist supports arrows, Home/End
+and Delete. Draft chat/file tabs require confirmation before closing. Keyboard
+handlers inside a page must check `useRouteActions().active`. `updateTabParams`
+also scopes writes to the originating page, so background chat initialization cannot
+replace the tab's current Files view.
+
+The split-view button (Ctrl/Cmd+Backslash) displays the focused tab alongside another
+open tab, reusing an existing tab to avoid clutter. If only one tab exists, it
+duplicates the current address. Both panes are visible; pointer/focus selects the navigation target without
+reparenting or remounting either tree. The shared tab strip distinguishes the
+focused tab and the other visible pane. Selecting a hidden tab replaces the focused
+pane only. `SplitDivider` resizes from 25–75% with pointer dragging or arrow keys;
+double-click resets 50/50. On screens below 700px the panes stack vertically and
+the divider uses Up/Down. Closing split retains both tabs and their state; closing
+a visible tab collapses the split and focuses the surviving pane. Each pane's
+content uses container queries; narrow chat panes collapse contextual navigation
+and expose its existing reopen button.
+
+The sidebar is 264px with 40px entries; its footer reads the name from `/profile/`,
+falling back to Personal workspace, and opens an anchored Users/Database/Preferences
+dialog. User changes emit `profile-changed`; sidebar profile reloads on this event
+and window focus. Chat and library sidebars have explicit collapse/reopen controls.
+The editor consumes the full content width and available height.
+
+Internal file-manager drag payloads use `application/x-lazy-bird-files`, validated
+by `modules/files/drag.ts`. Selected files move using the existing `{dir}` PATCH;
+folders use the existing directory-move endpoint. Folders, parent rows and
+breadcrumbs are drop targets; folder self/descendant/unchanged-parent moves are
+rejected. Failure reloads the catalog after any partial move. External drops still
+upload; Move… provides the keyboard alternative.
+
+Validation: `npm test` for behavioral/unit contracts, `npm run build` for types and
+production output, `npm run lint`, and `npm run test:ui` for Playwright browser
+checks. Install Chromium once with `npx playwright install chromium`. Browser tests
+mock only HTTP/WS API surfaces, verify mounted tabs/live sockets, move payloads,
+overlays, schema/search and all 21 pages at 1440/390px; axe checks WCAG A/AA contrast
+and controls on primary screens. `LAZY_BIRD_LIVE_QA=1 npx playwright test live.spec.ts`
+runs an optional read-only smoke against the configured running backend. Do not
+mutate the real backend during UI QA. Playwright results are ignored; reviewed
+fixture screenshots are saved in `web_design/`.
+
+Build splits shared third-party code into a vendor chunk. Set
+`LAZY_BIRD_PRODUCTION_QA=1` before `npm run test:ui` to test the built bundle through
+Vite preview on port 4173 (run the build first). Both production and development
+fixtures intercept only API URLs, never frontend source modules.

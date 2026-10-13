@@ -42,12 +42,13 @@ const renderPage = () =>
   );
 
 describe('PresetsPage', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); window.location.hash = ''; });
 
   it('saves the tools and hooks chosen in the picker', async () => {
     const sent = routes({ 'PUT /agent-presets/custom/writer': (body: unknown) => ({ ...writer, data: body }) });
     renderPage();
 
+    fireEvent.click(await screen.findByRole('button', { name: /^custom/ }));
     fireEvent.click(await screen.findByText('writer'));
     fireEvent.click(await screen.findByText('Choose tools…'));
     fireEvent.click(screen.getByLabelText('All tools of default'));
