@@ -1,6 +1,10 @@
 import os
 import threading
 import time
+import subprocess
+from types import SimpleNamespace
+
+import pytest
 
 from lazy_bird.tasks import memory, resources
 from lazy_bird.tasks.memory import Candidate, choose_victims
@@ -45,8 +49,8 @@ def test_nothing_is_preempted_when_nothing_is_missing():
 # -------------------------------------------------------------- what is free now
 def test_system_free_reports_what_it_can_read_and_leaves_out_the_rest(monkeypatch):
     monkeypatch.setattr(memory, "_cached", None)
-    monkeypatch.setattr(memory, "_free_ram_mb", lambda: 2048.0)
-    monkeypatch.setattr(memory, "_free_vram_mb", lambda: None)
+    monkeypatch.setattr(memory, "_ram_usage", lambda: {"total_mb": 4096.0, "used_mb": 2048.0, "available_mb": 2048.0})
+    monkeypatch.setattr(memory, "_vram_usage", lambda: None)
 
     assert memory.system_free() == {"ram_mb": 2048.0}
 
@@ -54,8 +58,8 @@ def test_system_free_reports_what_it_can_read_and_leaves_out_the_rest(monkeypatc
 def test_system_free_is_read_once_per_second(monkeypatch):
     reads = []
     monkeypatch.setattr(memory, "_cached", None)
-    monkeypatch.setattr(memory, "_free_ram_mb", lambda: reads.append(1) or 1000.0)
-    monkeypatch.setattr(memory, "_free_vram_mb", lambda: 500.0)
+    monkeypatch.setattr(memory, "_ram_usage", lambda: reads.append(1) or {"total_mb": 4000.0, "used_mb": 3000.0, "available_mb": 1000.0})
+    monkeypatch.setattr(memory, "_vram_usage", lambda: {"total_mb": 1000.0, "used_mb": 400.0, "available_mb": 500.0})
 
     first, second = memory.system_free(), memory.system_free()
 
@@ -64,6 +68,60 @@ def test_system_free_is_read_once_per_second(monkeypatch):
     monkeypatch.setattr(memory, "READ_CACHE_SECONDS", 0)
     memory.system_free()
     assert len(reads) == 2
+
+
+def test_display_and_admission_share_a_sample_and_callers_cannot_change_it(monkeypatch):
+    monkeypatch.setattr(memory, "_cached", None)
+    monkeypatch.setattr(memory, "_ram_usage", lambda: {"total_mb": 4000.0, "used_mb": 3000.0, "available_mb": 1000.0})
+    monkeypatch.setattr(memory, "_vram_usage", lambda: None)
+    sample = memory.system_usage()
+    sample["ram_mb"]["available_mb"] = 42
+    assert memory.system_free() == {"ram_mb": 1000.0}
+    assert memory.system_usage()["ram_mb"]["used_mb"] == 3000.0
+    monkeypatch.setattr(memory, "READ_CACHE_SECONDS", 0)
+    monkeypatch.setattr(memory, "_ram_usage", lambda: None)
+    assert memory.system_usage() == {"ram_mb": None, "vram_mb": None}
+    assert memory.system_free() == {}
+
+
+def test_ram_usage_counts_reclaimable_cache_as_available(monkeypatch):
+    import psutil
+
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(total=4096 * 1024**2, available=2048 * 1024**2, used=1500 * 1024**2))
+    assert memory._ram_usage() == {"total_mb": 4096.0, "used_mb": 2048.0, "available_mb": 2048.0}
+
+
+def test_gpu_usage_reads_the_pool_device_and_preserves_driver_reserved_memory(monkeypatch):
+    calls = []
+    monkeypatch.setattr(memory, "_nvidia_smi", "nvidia-smi")
+    monkeypatch.setattr(memory.subprocess, "run", lambda args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(stdout="16311, 1003, 15048\n"))
+    assert memory._vram_usage() == {"total_mb": 16311.0, "used_mb": 1003.0, "available_mb": 15048.0}
+    assert "--id=0" in calls[0][0]
+    assert "--query-gpu=memory.total,memory.used,memory.free" in calls[0][0]
+    assert calls[0][1]["timeout"] == 5
+
+
+@pytest.mark.parametrize("output", ["", "N/A, N/A, N/A", "16311, nan, 15048", "16311, -1, 15048", "1000, 2000, 0", "1, 2"])
+def test_bad_gpu_readings_are_unavailable(monkeypatch, output):
+    monkeypatch.setattr(memory, "_nvidia_smi", "nvidia-smi")
+    monkeypatch.setattr(memory.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=output))
+    assert memory._vram_usage() is None
+
+
+def test_gpu_timeout_and_missing_driver_are_unavailable(monkeypatch):
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("nvidia-smi", 5)
+
+    monkeypatch.setattr(memory, "_nvidia_smi", "nvidia-smi")
+    monkeypatch.setattr(memory.subprocess, "run", timeout)
+    assert memory._vram_usage() is None
+    monkeypatch.setattr(memory, "_nvidia_smi", None)
+    assert memory._vram_usage() is None
+
+
+def test_gpu_capacity_uses_the_same_driver_total_without_loading_torch(monkeypatch):
+    monkeypatch.setattr(memory, "system_usage", lambda: {"vram_mb": {"total_mb": 16311.0, "used_mb": 1003.0, "available_mb": 15048.0}})
+    assert resources._total_vram_mb() == 16311.0
 
 
 def test_the_real_machine_reports_its_ram():

@@ -43,6 +43,11 @@ def _total_ram_mb() -> float:
 
 
 def _total_vram_mb() -> float:
+    from lazy_bird.tasks.memory import system_usage
+
+    usage = system_usage()["vram_mb"]
+    if usage is not None:
+        return usage["total_mb"]
     try:
         import torch
 

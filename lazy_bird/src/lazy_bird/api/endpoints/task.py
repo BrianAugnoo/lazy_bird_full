@@ -2,7 +2,7 @@
 
 ``/ws/tasks`` first sends ``{"type": "snapshot", "tasks", "resources", "kinds"}``,
 then every change: ``{"type": "task", "task"}``, ``{"type": "task_deleted", "id"}``,
-``{"type": "resources", "resources"}`` (capacity, used, holders and the models in memory),
+``{"type": "resources", "resources"}`` (pool reservations, live system memory and models),
 ``{"type": "task_unresponsive", "task_id"}``, ``{"type": "waiting", "waiting"}`` and
 ``{"type": "reordered"}`` (refetch the order). Clients send commands:
 

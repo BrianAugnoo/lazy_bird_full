@@ -497,6 +497,18 @@ and `file` (`file_id` whose processing changed) events. Commands:
 `{"action": "update", "task_id", "priority"?, "run_at"?}`, answered by `ack` or
 `error` with the same `request_id`. REST mirrors every command under `/tasks/`.
 
+`GET /tasks/resources` and the socket's `resources` payload distinguish pool
+reservations (`capacity`, `used`, `holders`) from machine-wide memory (`system`).
+`system.ram_mb` and `system.vram_mb` each contain `total_mb`, `used_mb` and
+`available_mb` in MiB, or `null` when unavailable. The scheduler broadcasts resources
+roughly every second, even with an idle queue or smart memory disabled. RAM usage
+is total minus available (reclaimable caches remain available); GPU usage is the
+driver's reported used memory. GPU readings cover NVIDIA GPU 0, the pool's existing
+device, using one `nvidia-smi` query for total/used/free without creating a CUDA
+context or a visible console window. Driver reservations can make GPU used plus
+available less than total. Physical totals in `system` are independent of the
+`tasks.resources` capacity overrides; unavailable usage is never displayed as zero.
+
 ### 7.4 File processing states (`crud/file_processing.py`)
 
 Each file has one row per `(processor, target)`: `chunking` (target `""`) and
@@ -549,9 +561,13 @@ The `smart-memory` preference section decides how much the machine is supervised
 - `enable: true` (default) — RAM and GPU memory are watched. The pool caps what is free
   by what the operating system reports (`tasks/memory.system_free`: `psutil` for RAM,
   `nvidia-smi` for GPU memory, so no CUDA context is created in the server), which
-  counts memory used by other programs too. A reading that is unavailable means "no
-  limit besides the pool". The machine is only asked when a request involves memory
-  (`ram_mb`, `vram_mb`), and readings are kept one second.
+  counts memory used by other programs too. Admission and the live display share
+  `tasks/memory.system_usage`, cached for one second; `system_free` returns its
+  available memory. A reading that is unavailable means "no limit besides the
+  pool". Admission requests involving only CPU slots do not ask the monitor;
+  periodic display updates sample memory independently. Failed readings replace
+  stale samples with `null`. GPU capacity uses the same driver total when available
+  (torch remains the fallback for capacity detection).
 - `fallback: wait | cpu` — a model that does not fit in GPU memory right now either
   waits for it (`wait`, default) or is loaded in RAM instead (`cpu`). It only applies to
   engines whose `device` is left empty; a device chosen in the preset is respected.

@@ -100,6 +100,27 @@ def test_a_task_runs_and_keeps_its_result(sched):
     assert done.result == "A" and done.attempts == 1 and LOG == ["a"]
 
 
+def test_idle_scheduler_publishes_live_memory_even_with_smart_memory_disabled(sched, monkeypatch):
+    from lazy_bird.preferences import SmartMemory
+    import importlib
+
+    scheduler_module = importlib.import_module("lazy_bird.tasks.scheduler")
+    sample = {"ram_mb": {"total_mb": 4000, "used_mb": 1000, "available_mb": 3000}, "vram_mb": None}
+    monkeypatch.setattr(scheduler_module, "smart_memory", lambda: SmartMemory(enable=False))
+    monkeypatch.setattr(scheduler_module, "system_usage", lambda: {name: dict(value) if value else None for name, value in sample.items()})
+    events = []
+    monkeypatch.setattr(sched.events, "publish", events.append)
+    sched.start()
+    wait_until(lambda: any(event["type"] == "resources" for event in events))
+    sample["ram_mb"] = {"total_mb": 4000, "used_mb": 2000, "available_mb": 2000}
+    wait_until(lambda: len([event for event in events if event["type"] == "resources"]) >= 2)
+    sched.stop()
+    updates = [event for event in events if event["type"] == "resources"]
+    assert updates[0]["resources"]["system"]["ram_mb"]["used_mb"] == 1000
+    assert updates[-1]["resources"]["system"]["ram_mb"]["used_mb"] == 2000
+    assert updates[-1]["resources"]["used"] == {}
+
+
 def test_lower_priority_number_runs_first(sched):
     sched.workers = 1
     low, high = record.submit(name="low"), record.submit(name="high", priority=1)

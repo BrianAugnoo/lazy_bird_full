@@ -35,7 +35,7 @@ from lazy_bird.schemas.task import TaskOut
 from lazy_bird.tasks.context import TaskContext
 from lazy_bird.tasks.events import EventHub
 from lazy_bird.tasks.registry import TaskCancelled, TaskDefinition, TaskInterrupted, TaskPaused, definition, listeners
-from lazy_bird.tasks.memory import Candidate, choose_victims
+from lazy_bird.tasks.memory import Candidate, choose_victims, system_usage
 from lazy_bird.tasks.resources import ResourcePool, Resources
 
 MEMORY = {"vram_mb", "ram_mb"}
@@ -91,6 +91,7 @@ class Scheduler:
         self._asked: dict[int, float] = {}  # running tasks asked to stop (pause, cancel, make room), and since when
         self._unresponsive: set[int] = set()  # asked, but not stopped within the interrupt timeout
         self._hosts: dict[int, Any] = {}  # processes of the isolated tasks running now (task_host.TaskHost)
+        self._last_resource_publish = float("-inf")
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -144,6 +145,8 @@ class Scheduler:
         while not self._stop.is_set():
             try:
                 self.schedule_once()
+                if time.monotonic() - self._last_resource_publish >= 1.0:
+                    self._publish_resources()
             except Exception:
                 logger.exception("Task scheduling pass failed")
             self._wake.wait(self.poll_interval)
@@ -411,13 +414,14 @@ class Scheduler:
 
     def _publish_resources(self) -> None:
         self.events.publish({"type": "resources", "resources": self.resources()})
+        self._last_resource_publish = time.monotonic()
 
     def resources(self) -> dict:
-        """The pool (capacity, used, holders), the models in memory and the processes of isolated tasks."""
+        """Pool reservations, live system memory, resident models and isolated task processes."""
         with self._lock:
             hosts = dict(self._hosts)
         processes = {str(task_id): {"pid": host.pid, "memory_mb": host.memory_mb()} for task_id, host in hosts.items()}
-        return {**self.pool.snapshot(), "models": residency().describe(), "processes": processes}
+        return {**self.pool.snapshot(), "system": system_usage(), "models": residency().describe(), "processes": processes}
 
     # ------------------------------------------------------------------- commands
     def submit(self, task_definition: TaskDefinition, params: dict[str, Any], *, title=None, priority=None, run_at=None, dedupe_key=None, resources=None) -> TaskOut:

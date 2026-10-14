@@ -36,24 +36,34 @@ export function LoadedModels({ models }: { models: LoadedModel[] }) {
 }
 
 export function Resources({ resources }: { resources: ResourceSnapshot }) {
-  const names = Object.keys(resources.capacity ?? {});
+  const names = [...new Set([...Object.keys(resources.capacity ?? {}), ...Object.keys(resources.system ?? {})])];
   if (names.length === 0) return null;
   return (
     <div className="resource-grid">
       {names.map((name) => {
-        const capacity = resources.capacity[name] ?? 0;
-        const used = resources.used?.[name] ?? 0;
-        const ratio = capacity > 0 ? Math.min(1, used / capacity) : 0;
+        const memory = name === 'ram_mb' || name === 'vram_mb';
+        const measured = resources.system?.[name];
+        const capacity = measured?.total_mb ?? resources.capacity[name] ?? 0;
+        const reserved = resources.used?.[name] ?? 0;
+        const used = measured?.used_mb ?? 0;
+        const displayed = memory ? used : reserved;
+        const ratio = capacity > 0 ? Math.max(0, Math.min(1, displayed / capacity)) : 0;
         return (
-          <div key={name} className="resource">
+          <div key={name} className="resource" role="group" aria-label={resourceLabel(name)}>
             <div className="row-between small">
               <span className="resource-name">{resourceLabel(name)}</span>
               <span className="muted">
-                {amount(name, used)} / {amount(name, capacity)}
+                {memory && !measured ? 'Usage unavailable' : `${amount(name, displayed)} / ${amount(name, capacity)}`}
               </span>
             </div>
-            <div className="progress">
-              <div className={`progress-bar ${used > 0 ? 'progress-live' : ''}`} style={{ width: `${ratio * 100}%` }} />
+            {(!memory || measured) && (
+              <div className="progress" role="progressbar" aria-label={`${resourceLabel(name)} ${memory ? 'usage' : 'reserved slots'}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)}>
+                <div className={`progress-bar ${displayed > 0 ? 'progress-live' : ''}`} style={{ width: `${ratio * 100}%` }} />
+              </div>
+            )}
+            <div className="small muted">
+              {measured && <div>Whole PC · {amount(name, measured.available_mb)} available</div>}
+              <div>{amount(name, reserved)} reserved by lazy_bird (limit {amount(name, resources.capacity[name] ?? 0)})</div>
             </div>
           </div>
         );

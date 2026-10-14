@@ -155,6 +155,11 @@ export interface ResourceSnapshot {
   capacity: Record<string, number>;
   used: Record<string, number>;
   holders: Record<string, Record<string, number>>;
+  /** Machine-wide memory in MiB, refreshed each second even when no tasks run.
+   * Null means the measurement is unavailable; absent on older servers.
+   * RAM used excludes reclaimable caches; GPU used is the driver's measurement.
+   */
+  system?: Record<string, { total_mb: number; used_mb: number; available_mb: number } | null>;
   /** The local models in memory (absent from older servers). */
   models?: LoadedModel[];
   /** The processes of the isolated tasks running now, by task id. */

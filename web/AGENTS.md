@@ -204,6 +204,15 @@ by side / preview, text).
   queue order: running, waiting by priority (lowest number first, 5 by default) and position, finished). `taskAction()` (pause, resume, cancel, retry, delete and `run_now` = priority 0),
   `moveTask()`, `setTaskPriority()` send commands over the socket (HTTP fallback). `unresponsive`
   lists the running tasks that were asked to make room for a more urgent one and have not stopped yet.
+  `resources.system` carries machine-wide RAM and NVIDIA GPU 0 memory, updated
+  roughly every second even when the queue is idle or smart memory is off. Each
+  reading is `{total_mb, used_mb, available_mb}` in MiB, or `null` if unavailable.
+  Tasks-page memory bars show whole-PC usage against physical totals, with
+  available memory and lazy_bird reservations/capacity limits separately. RAM usage
+  excludes reclaimable caches; GPU usage comes directly from the driver (driver
+  reservations can make used + available differ from total). Missing telemetry,
+  including older servers without `system`, says "Usage unavailable" and has no
+  usage bar. Worker slots still show scheduler reservations, not CPU utilization.
   `onFileChange(listener)` is called with a file id whenever one of its processings
   changes (the backend sends `{"type": "file", "file_id"}` on the same socket).
 - **Conversation socket** (`modules/chat/useConversation.ts`): see §14.

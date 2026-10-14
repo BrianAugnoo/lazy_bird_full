@@ -1,19 +1,22 @@
 """Memory supervision: what the machine really has free, and who should make room.
 
-Used when the ``smart-memory`` preference is on. The pool only knows what its holders
-declared; ``system_free`` tells what the operating system reports, so memory used by
+Live readings are displayed regardless of the ``smart-memory`` preference. The pool
+only knows what its holders declared; ``system_free`` tells what the OS reports, so memory used by
 other programs (or by a holder that under-declared) is taken into account too.
 ``choose_victims`` picks which running work has to yield to a more urgent request.
 """
 
 from __future__ import annotations
 
+import math
+import os
 import shutil
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
 from itertools import combinations
+from typing import TypedDict
 
 from loguru import logger
 
@@ -22,23 +25,32 @@ Resources = dict[str, float]
 MAX_CANDIDATES = 12  # subsets are enumerated: only the least urgent ones are considered
 READ_CACHE_SECONDS = 1.0
 
+
+class MemoryUsage(TypedDict):
+    total_mb: float
+    used_mb: float
+    available_mb: float
+
+
 _lock = threading.Lock()
-_cached: tuple[float, Resources] | None = None
+_cached: tuple[float, dict[str, MemoryUsage | None]] | None = None
 _nvidia_smi: str | None | bool = True  # True: not looked up yet, None: not installed
 
 
-def _free_ram_mb() -> float | None:
+def _ram_usage() -> MemoryUsage | None:
     try:
         import psutil
 
-        return psutil.virtual_memory().available / 1024**2
+        ram = psutil.virtual_memory()
+        # Reclaimable caches are available for new work, on Linux as well as Windows.
+        return {"total_mb": ram.total / 1024**2, "used_mb": (ram.total - ram.available) / 1024**2, "available_mb": ram.available / 1024**2}
     except Exception as error:
-        logger.debug("Could not read the free RAM: {}", error)
+        logger.debug("Could not read RAM usage: {}", error)
         return None
 
 
-def _free_vram_mb() -> float | None:
-    """Free memory of the first NVIDIA GPU, without creating a CUDA context in this process."""
+def _vram_usage() -> MemoryUsage | None:
+    """Memory of GPU 0, the pool's device, without creating a CUDA context."""
     global _nvidia_smi
     if _nvidia_smi is True:
         _nvidia_smi = shutil.which("nvidia-smi")
@@ -46,28 +58,38 @@ def _free_vram_mb() -> float | None:
         return None
     try:
         output = subprocess.run(
-            [_nvidia_smi, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            [_nvidia_smi, "--id=0", "--query-gpu=memory.total,memory.used,memory.free", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=5, check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         ).stdout
-        return float(output.splitlines()[0])
+        total, used, available = (float(value.strip()) for value in output.splitlines()[0].split(","))
+        if not all(math.isfinite(value) and value >= 0 for value in (total, used, available)) or used > total or available > total:
+            raise ValueError("Invalid GPU memory reading")
+        # Driver-reserved memory means used + free need not equal total.
+        return {"total_mb": total, "used_mb": used, "available_mb": available}
     except Exception as error:
-        logger.debug("Could not read the free GPU memory: {}", error)
+        logger.debug("Could not read GPU memory usage: {}", error)
         return None
 
 
-def system_free() -> Resources:
-    """Memory the operating system reports free right now (MiB): ``ram_mb`` and, with an NVIDIA GPU, ``vram_mb``.
+def system_usage() -> dict[str, MemoryUsage | None]:
+    """Machine-wide memory in MiB, including other programs; unavailable readings are null.
 
-    A kind that cannot be read is left out, which means "no known limit". Readings are
-    cached for a second: the scheduler asks on every pass.
+    The UI and admission checks share one sample, cached for at most a second.
+    Failed reads replace stale samples, so they cannot appear as current usage.
     """
     global _cached
     with _lock:
         if _cached is not None and time.monotonic() - _cached[0] < READ_CACHE_SECONDS:
-            return dict(_cached[1])
-        free = {name: value for name, value in (("ram_mb", _free_ram_mb()), ("vram_mb", _free_vram_mb())) if value is not None}
-        _cached = (time.monotonic(), free)
-        return dict(free)
+            return {name: dict(value) if value is not None else None for name, value in _cached[1].items()}
+        usage = {"ram_mb": _ram_usage(), "vram_mb": _vram_usage()}
+        _cached = (time.monotonic(), usage)
+        return {name: dict(value) if value is not None else None for name, value in usage.items()}
+
+
+def system_free() -> Resources:
+    """Available memory from the same live sample used by the UI; omit unknown limits."""
+    return {name: value["available_mb"] for name, value in system_usage().items() if value is not None}
 
 
 @dataclass(frozen=True)
