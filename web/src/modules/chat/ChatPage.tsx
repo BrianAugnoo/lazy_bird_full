@@ -75,7 +75,6 @@ export function ChatPage() {
   }, [conversations]);
 
   const openConversation = (id: number | null, agentId: number | null = null) => {
-    setRailOpen(false);
     setParams({ conversation: id, agent: agentId });
   };
   const conversationHref = useCallback((id: number) => buildHash('chat', { session: sessionId, conversation: id }), [sessionId]);

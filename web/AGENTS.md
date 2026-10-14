@@ -154,6 +154,8 @@ Pages keep their state in the address when it should survive a reload or be
 linkable (`useRoute()`, `setParams({...})`, `navigate(page, params)`), e.g.
 `#/chat?session=1&conversation=3`, `#/files?dir=docs&file=12`,
 `#/instructions?kind=sub`.
+Set `sidebar: false` on a page registration to omit its main-navigation entry;
+the page remains registered, searchable and reachable by address.
 
 ### 11.2 Settings fields — `core/fields/`
 
@@ -254,6 +256,10 @@ cross-encoder preset the page links to the Cross-encoder page instead of searchi
 Layout (`ChatPage`): a rail (session picker, agents as a tree — masters first, then
 their sub-agents — each with its conversations) and the conversation. The address
 holds `session`, `conversation` and, for a new chat, `agent`.
+Selecting a conversation preserves the rail's open state; users close it with its
+explicit hide control.
+Composer focus uses the rounded container's subtle border change, without a
+second rectangular outline around the textarea.
 
 `useConversation(id)` opens `/ws/conversations/{id}` and feeds `chatReducer`
 (`modules/chat/state.ts`, pure and unit-tested):
@@ -376,7 +382,9 @@ and expose its existing reopen button.
 
 The sidebar is 264px with 40px entries; its footer reads the name from `/profile/`,
 falling back to Personal workspace, and opens an anchored Users/Database/Preferences
-dialog. User changes emit `profile-changed`; sidebar profile reloads on this event
+dialog. Users, Databases and Preferences appear only in this profile menu, not
+again in the main navigation (all three remain available in page search).
+User changes emit `profile-changed`; sidebar profile reloads on this event
 and window focus. Chat and library sidebars have explicit collapse/reopen controls.
 The editor consumes the full content width and available height.
 

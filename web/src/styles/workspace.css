@@ -149,6 +149,7 @@ kbd { color: var(--text-muted); border: 1px solid var(--border-base); border-rad
 .composer-box { gap: var(--space-8); padding: var(--space-12); border-radius: var(--radius-message); background: var(--bg-card); border: 1px solid var(--border-base); box-shadow: none; }
 .composer-box:focus-within { border-color: var(--border-strong); box-shadow: none; }
 .composer-input { min-width: 0; padding: 6px 0; line-height: 1.7; }
+.composer-input:focus-visible { outline: none; }
 .composer-button { width: 36px; height: 36px; min-height: 36px; border-radius: var(--radius-full); }
 .composer-add { position: relative; flex-shrink: 0; }
 .composer-menu { bottom: calc(100% + 16px); left: 0; width: 290px; }

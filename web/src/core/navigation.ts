@@ -18,6 +18,8 @@ export interface PageDefinition {
   component: ComponentType;
   /** Full-bleed pages (chat) manage their own scrolling and padding. */
   flush?: boolean;
+  /** Hide duplicate navigation entries while retaining the route and page search. */
+  sidebar?: boolean;
 }
 
 const pages = new Map<string, PageDefinition>();

@@ -52,6 +52,9 @@ export function Sidebar({ current, open, onNavigate, onOpen, onCollapse, onSearc
   const running = tasks.filter((task) => task.status === 'running').length;
   const waiting = tasks.filter((task) => task.status === 'queued' && !isScheduled(task)).length;
   const failed = tasks.filter((task) => task.status === 'failed').length;
+  const navigationGroups = pagesByGroup()
+    .map(({ group, pages }) => ({ group, pages: pages.filter(page => page.sidebar !== false) }))
+    .filter(({ pages }) => pages.length > 0);
 
   return (
     <aside className={`sidebar ${open ? 'is-open' : ''}`} aria-label="Main navigation" inert={narrow && !open} aria-hidden={narrow && !open ? true : undefined}>
@@ -62,7 +65,7 @@ export function Sidebar({ current, open, onNavigate, onOpen, onCollapse, onSearc
       </div>
       <button type="button" className="sidebar-search" onClick={onSearch}><Icon name="search" size={16} /><span>Go to…</span><kbd>Ctrl K</kbd></button>
       <nav className="sidebar-nav">
-        {pagesByGroup().map(({ group, pages }) => (
+        {navigationGroups.map(({ group, pages }) => (
           <div key={group} className="nav-group">
             <div className="nav-group-title">{group}</div>
             {pages.map((page) => (
